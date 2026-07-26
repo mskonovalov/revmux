@@ -1072,23 +1072,23 @@ Standalone helpers planned (justification why NOT a method):
 Exports (justification per item: who outside the package calls this?):
 - none — used only inside `app/pipeline`
 
-- [ ] create `app/pipeline/stagger.go` releasing index 0 immediately and every other index once `leaderStarted` fires or `stagger_delay` elapses, with a `max_parallel` semaphore; the gate **latches** open on either path and never re-arms, which is what lets task 10 run a second stage through the same instance
-- [ ] the stagger must not group, reorder or filter agents by model or executor — it releases in roster order and nothing else
-- [ ] wire the leader's `sink` first-activity callback to `stagger.leaderStarted`, fired before the event reaches the channel and guarded by `sync.Once`
-- [ ] convert `finder.run` to run the roster concurrently through the stagger, preserving deterministic result ordering
-- [ ] **`Pipeline` constructs the `stagger` and passes it to `finder`; `finder` does not own it.** Task 10 runs the verify stage through the same instance, and an instance owned by one stage cannot be reached by another — deciding ownership here costs nothing and moving it later means editing `find.go` again
-- [ ] implement retry-once on `IdleTimedOut`, process failure, or a `rate_limit_event` whose status is not `allowed`, emitting the retry `EventKind` task 6 defined
-- [ ] implement degrade: second failure marks the source degraded, the pipeline continues, and `SourceStatus` records it
-- [ ] **every source degraded is a tool error**, not a clean empty report: `Pipeline.Run` returns it as an error and `package main` exits `2`, since a run with nothing reporting has no review in it
-- [ ] write tests asserting agent 1 is released before the others and that `max_parallel` is respected
-- [ ] write tests for both release paths: `leaderStarted` fires and the rest launch immediately, and agent 1 never emits so the `stagger_delay` timeout releases them instead
-- [ ] write tests for retry-once **succeeding**, and separately for retry-once then degrade asserting the pipeline completes and `Degraded()` is true
-- [ ] write a test asserting the retry cancels the first attempt's context before invoking `Run` a second time. It cannot assert on a process group: this test drives a mocked `pipeline.Runner`, which has no process — the kill itself is task 3's `processGroupCleanup` test
-- [ ] write a test asserting a rate-limited result triggers the retry path
-- [ ] write a test asserting a degraded source is loud in both places that exist at this task: `SourceStatus.degraded` in JSON and the markdown banner. The third place the rules require, the `{{SOURCES}}` block, is built by `synthesizer.vars` in task 9 and is asserted there
-- [ ] write a test asserting result ordering is deterministic regardless of completion order
-- [ ] write a main-level test asserting an all-degraded run exits `2` and prints no report that could be mistaken for a clean one
-- [ ] run tests - must pass before task 8
+- [x] create `app/pipeline/stagger.go` releasing index 0 immediately and every other index once `leaderStarted` fires or `stagger_delay` elapses, with a `max_parallel` semaphore; the gate **latches** open on either path and never re-arms, which is what lets task 10 run a second stage through the same instance
+- [x] the stagger must not group, reorder or filter agents by model or executor — it releases in roster order and nothing else
+- [x] wire the leader's `sink` first-activity callback to `stagger.leaderStarted`, fired before the event reaches the channel and guarded by `sync.Once`
+- [x] convert `finder.run` to run the roster concurrently through the stagger, preserving deterministic result ordering
+- [x] **`Pipeline` constructs the `stagger` and passes it to `finder`; `finder` does not own it.** Task 10 runs the verify stage through the same instance, and an instance owned by one stage cannot be reached by another — deciding ownership here costs nothing and moving it later means editing `find.go` again
+- [x] implement retry-once on `IdleTimedOut`, process failure, or a `rate_limit_event` whose status is not `allowed`, emitting the retry `EventKind` task 6 defined
+- [x] implement degrade: second failure marks the source degraded, the pipeline continues, and `SourceStatus` records it
+- [x] **every source degraded is a tool error**, not a clean empty report: `Pipeline.Run` returns it as an error and `package main` exits `2`, since a run with nothing reporting has no review in it
+- [x] write tests asserting agent 1 is released before the others and that `max_parallel` is respected
+- [x] write tests for both release paths: `leaderStarted` fires and the rest launch immediately, and agent 1 never emits so the `stagger_delay` timeout releases them instead
+- [x] write tests for retry-once **succeeding**, and separately for retry-once then degrade asserting the pipeline completes and `Degraded()` is true
+- [x] write a test asserting the retry cancels the first attempt's context before invoking `Run` a second time. It cannot assert on a process group: this test drives a mocked `pipeline.Runner`, which has no process — the kill itself is task 3's `processGroupCleanup` test
+- [x] write a test asserting a rate-limited result triggers the retry path
+- [x] write a test asserting a degraded source is loud in both places that exist at this task: `SourceStatus.degraded` in JSON and the markdown banner. The third place the rules require, the `{{SOURCES}}` block, is built by `synthesizer.vars` in task 9 and is asserted there
+- [x] write a test asserting result ordering is deterministic regardless of completion order
+- [x] write a main-level test asserting an all-degraded run exits `2` and prints no report that could be mistaken for a clean one
+- [x] run tests - must pass before task 8
 
 ### Task 8: Codex executor
 

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -131,7 +132,10 @@ func TestRun_reviewGate(t *testing.T) {
 
 func TestRun_review(t *testing.T) {
 	root := taskRoot(t)
-	base := options{Task: "pr-1", Run: "round-1", TasksDir: root, Profile: "focused", Lenses: []string{"bugs"}}
+	base := options{
+		Task: "pr-1", Run: "round-1", TasksDir: root, Profile: "focused", Lenses: []string{"bugs"},
+		StaggerDelay: 30 * time.Second, MaxParallel: 4,
+	}
 
 	t.Run("markdown to stdout, progress to stderr, exit 1", func(t *testing.T) {
 		r := newRunOpts(t, base)
@@ -195,10 +199,14 @@ func TestRun_review(t *testing.T) {
 
 	t.Run("every source degraded exits 2 with no report", func(t *testing.T) {
 		r := newRunOpts(t, base)
-		r.runErr = errors.New("stalled twice")
+		r.runErr = errors.New("stalled")
 		assert.Equal(t, 2, run(r.opts()))
 		assert.Empty(t, r.stdout.String(), "an empty report would read as a clean run")
 		assert.Contains(t, r.stderr.String(), "review failed")
+		assert.Contains(t, r.stderr.String(), "every source degraded")
+		assert.Contains(t, r.stderr.String(), "retrying:", "the source was retried before it was given up on")
+		assert.Contains(t, r.stderr.String(), "degraded:")
+		assert.Equal(t, 2, r.attempts(), "one launch plus one retry, then the run stops")
 	})
 
 	t.Run("a report that cannot be written exits 2", func(t *testing.T) {
@@ -245,7 +253,12 @@ type runHarness struct {
 	stderr *strings.Builder
 	result executor.Result
 	runErr error
+	runs   atomic.Int64
 }
+
+// attempts is how many processes the run launched, which is what proves a failing source was retried
+// exactly once rather than not at all or forever.
+func (r *runHarness) attempts() int { return int(r.runs.Load()) }
 
 func newRunOpts(t *testing.T, o options) *runHarness {
 	t.Helper()
@@ -253,7 +266,15 @@ func newRunOpts(t *testing.T, o options) *runHarness {
 }
 
 func (r *runHarness) opts() runOpts {
-	clk := &mocks.ClockMock{NowFunc: func() time.Time { return time.Date(2026, 7, 26, 16, 2, 11, 0, time.UTC) }}
+	clk := &mocks.ClockMock{
+		NowFunc: func() time.Time { return time.Date(2026, 7, 26, 16, 2, 11, 0, time.UTC) },
+		AfterFuncFunc: func(time.Duration, func()) executor.Timer {
+			return &mocks.TimerMock{
+				StopFunc:  func() bool { return true },
+				ResetFunc: func(time.Duration) bool { return true },
+			}
+		},
+	}
 	return runOpts{
 		opts: r.o, clock: clk, stdout: r.stdout, stderr: r.stderr,
 		openTTY:   func() (*os.File, error) { return nil, errors.New("no tty in tests") },
@@ -264,6 +285,7 @@ func (r *runHarness) opts() runOpts {
 func (r *runHarness) newRunner(pipeline.RunnerSpec) pipeline.Runner {
 	return &pmocks.RunnerMock{
 		RunFunc: func(_ context.Context, req executor.Request, _ executor.EventSink) (executor.Result, error) {
+			r.runs.Add(1)
 			if req.RawOutput != nil {
 				_, _ = req.RawOutput.Write([]byte(r.result.Raw))
 			}

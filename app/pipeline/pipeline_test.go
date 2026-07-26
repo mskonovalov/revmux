@@ -49,15 +49,18 @@ func TestPipeline_Run(t *testing.T) {
 	assert.Equal(t, 140, rep.Stats.Tokens, "run total is the sum of the per-agent counts")
 
 	seen := <-events
-	kinds := make([]EventKind, 0, len(seen))
-	for _, ev := range seen {
-		kinds = append(kinds, ev.Kind)
+	require.NotEmpty(t, seen)
+	assert.Equal(t, EventStage, seen[0].Kind, "the stage change opens the run")
+
+	// the roster runs concurrently, so agents interleave; what is fixed is each agent's own sequence
+	byAgent := map[string][]EventKind{}
+	for _, ev := range seen[1:] {
+		byAgent[ev.Agent] = append(byAgent[ev.Agent], ev.Kind)
 	}
-	assert.Equal(t, []EventKind{
-		EventStage,
-		EventAgentStarted, EventFindings, EventAgentDone,
-		EventAgentStarted, EventFindings, EventAgentDone,
-	}, kinds)
+	assert.Equal(t, map[string][]EventKind{
+		"bugs": {EventAgentStarted, EventFindings, EventAgentDone},
+		"impl": {EventAgentStarted, EventFindings, EventAgentDone},
+	}, byAgent)
 }
 
 func TestPipeline_Run_stats(t *testing.T) {
@@ -80,6 +83,99 @@ func TestPipeline_Run_stats(t *testing.T) {
 	assert.Equal(t, stageFind, rep.Stats.Stages[0].Name)
 	assert.Positive(t, rep.Stats.Stages[0].DurationMS)
 	assert.Equal(t, 10, rep.Stats.Tokens)
+}
+
+func TestNew_stagger(t *testing.T) {
+	t.Run("a configured delay holds the gate shut", func(t *testing.T) {
+		h := newHarness(t)
+		h.cfg.StaggerDelay = time.Minute
+		p := New(h.cfg)
+		require.NotNil(t, p.stagger, "the pipeline owns the instance so a later stage can reuse it")
+		assert.False(t, p.stagger.open(), "followers wait for the leader or the delay")
+	})
+
+	t.Run("no delay means no stagger", func(t *testing.T) {
+		h := newHarness(t)
+		p := New(h.cfg)
+		assert.True(t, p.stagger.open())
+	})
+
+	t.Run("the parallel cap comes from config", func(t *testing.T) {
+		h := newHarness(t)
+		h.cfg.MaxParallel = 3
+		p := New(h.cfg)
+		assert.Equal(t, 3, cap(p.stagger.sem))
+	})
+}
+
+func TestPipeline_Run_degrade(t *testing.T) {
+	t.Run("one dead source degrades and the run continues", func(t *testing.T) {
+		h := newHarness(t)
+		h.cfg.NewRunner = h.runner(map[string]executor.Result{
+			"bugs": {StructuredOutput: findingsJSON(
+				`{"file":"a.go","line":10,"severity":"major","confidence":90,"title":"leak"}`), Tokens: 100},
+		})
+
+		p := New(h.cfg)
+		events := drain(p)
+		rep, err := p.Run(context.Background())
+		require.NoError(t, err, "one flaky agent must not waste the others' work")
+
+		assert.Equal(t, 2, rep.Sources.Expected)
+		assert.Equal(t, 1, rep.Sources.Reported)
+		assert.True(t, rep.Sources.Degraded())
+		assert.Equal(t, []string{"impl"}, rep.Sources.DegradedSources)
+		require.Len(t, rep.Findings, 1, "the surviving source still reports")
+
+		kinds := map[EventKind]int{}
+		for _, ev := range <-events {
+			kinds[ev.Kind]++
+		}
+		assert.Equal(t, 1, kinds[EventAgentRetried], "the dead source was retried once")
+		assert.Equal(t, 1, kinds[EventAgentDegraded])
+	})
+
+	t.Run("a degraded source is loud in the JSON and in the markdown banner", func(t *testing.T) {
+		h := newHarness(t)
+		h.cfg.NewRunner = h.runner(map[string]executor.Result{
+			"bugs": {StructuredOutput: findingsJSON(`{"file":"a.go","line":1,"severity":"minor","confidence":50,"title":"x"}`)},
+		})
+
+		p := New(h.cfg)
+		drain(p)
+		rep, err := p.Run(context.Background())
+		require.NoError(t, err)
+
+		out := &bytes.Buffer{}
+		require.NoError(t, rep.JSON(out))
+		var wire struct {
+			Sources struct {
+				Degraded []string `json:"degraded"`
+			} `json:"sources"`
+		}
+		require.NoError(t, json.Unmarshal(out.Bytes(), &wire))
+		assert.Equal(t, []string{"impl"}, wire.Sources.Degraded)
+
+		md := &bytes.Buffer{}
+		require.NoError(t, rep.Markdown(md))
+		assert.Contains(t, md.String(), "Degraded run")
+		assert.Contains(t, md.String(), "impl")
+	})
+
+	t.Run("every source degraded is a tool error, never an empty report", func(t *testing.T) {
+		h := newHarness(t)
+		h.cfg.NewRunner = func(RunnerSpec) Runner {
+			return &mocks.RunnerMock{RunFunc: func(context.Context, executor.Request, executor.EventSink) (executor.Result, error) {
+				return executor.Result{}, errors.New("stalled")
+			}}
+		}
+
+		p := New(h.cfg)
+		drain(p)
+		rep, err := p.Run(context.Background())
+		require.ErrorIs(t, err, errNoSources)
+		assert.Empty(t, rep.Findings)
+	})
 }
 
 func TestPipeline_Run_archiveFailures(t *testing.T) {
@@ -242,6 +338,12 @@ func (h *harness) writer(name string) (io.WriteCloser, error) {
 	b := &syncBuffer{}
 	h.archived[name] = b
 	return b, nil
+}
+
+// finder builds a find stage over the harness config with an already-open stagger, so a test that is
+// not about release ordering never has to drive one.
+func (h *harness) finder(emit func(Event)) *finder {
+	return &finder{cfg: h.cfg, emit: emit, stagger: newStagger(0, h.cfg.MaxParallel, h.cfg.Clock)}
 }
 
 func (h *harness) get(name string) *syncBuffer {

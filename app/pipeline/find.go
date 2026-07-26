@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/umputun/revmux/app/executor"
 	"github.com/umputun/revmux/app/finding"
@@ -19,15 +20,31 @@ import (
 // verbatim tee gets a different extension.
 const executorCodex = "codex"
 
+// maxAttempts is one launch plus one retry. A second failure degrades the source and the run
+// continues, because one flaky agent must not waste every other agent's work.
+const maxAttempts = 2
+
 // errNoSources is what a run with nothing reporting returns. A clean empty report would tell a
 // scripted caller the code is fine.
 var errNoSources = errors.New("every source degraded, no review to report")
 
 // finder owns the find stage: every roster entry runs its own process and returns structured
-// findings.
+// findings. The stagger is handed in rather than owned, since the verify stage runs through the same
+// instance and one owned by a single stage could not be reached from another.
 type finder struct {
-	cfg  Config
-	emit func(Event)
+	cfg     Config
+	emit    func(Event)
+	stagger *stagger
+}
+
+// attemptOpts is one launch of one agent. n is the attempt number, which decides where the verbatim
+// tee goes: a retry writes its own file, since appending would splice its first line onto the
+// stalled attempt's partial one and truncating would discard the stream most worth having.
+type attemptOpts struct {
+	spec   prompt.AgentSpec
+	prompt string
+	leader bool
+	n      int
 }
 
 // sourceResult is one agent's outcome. It carries the spec because the report needs the roster entry
@@ -48,10 +65,14 @@ func (f *finder) run(ctx context.Context) ([]sourceResult, error) {
 		return nil, errors.New("roster is empty")
 	}
 
-	out := make([]sourceResult, 0, len(f.cfg.Roster))
-	for _, spec := range f.cfg.Roster {
-		out = append(out, f.runAgent(ctx, spec))
+	// results are indexed rather than appended, so the report stays in roster order however the
+	// agents finish and two runs of one roster do not produce diff-noisy reports
+	out := make([]sourceResult, len(f.cfg.Roster))
+	var wg sync.WaitGroup
+	for i, spec := range f.cfg.Roster {
+		wg.Go(func() { out[i] = f.runAgent(ctx, spec, i) })
 	}
+	wg.Wait()
 
 	for _, r := range out {
 		if r.ok() {
@@ -61,7 +82,9 @@ func (f *finder) run(ctx context.Context) ([]sourceResult, error) {
 	return nil, errNoSources
 }
 
-func (f *finder) runAgent(ctx context.Context, spec prompt.AgentSpec) sourceResult {
+// runAgent runs one roster entry, retrying once when the first launch fails in a way a second might
+// survive. A second failure degrades this source alone and the run continues.
+func (f *finder) runAgent(ctx context.Context, spec prompt.AgentSpec, index int) sourceResult {
 	res := sourceResult{spec: spec, stat: finding.SourceStat{
 		Name: spec.Name, Lenses: spec.Lenses, Executor: spec.Executor,
 		RequestedModel: spec.Model, Effort: spec.Effort,
@@ -73,33 +96,82 @@ func (f *finder) runAgent(ctx context.Context, spec prompt.AgentSpec) sourceResu
 		return f.degrade(res, err)
 	}
 
-	raw, err := f.cfg.Archive.Writer(f.rawName(spec))
+	if slotErr := f.stagger.acquire(ctx, index); slotErr != nil {
+		return f.degrade(res, slotErr)
+	}
+	defer f.stagger.release()
+
+	opts := attemptOpts{spec: spec, prompt: text, leader: index == 0}
+	var fault error
+	for opts.n = 0; opts.n < maxAttempts; opts.n++ {
+		result, runErr := f.attempt(ctx, opts)
+		res.stat.Tokens += result.Tokens
+		if result.ActualModel != "" {
+			res.stat.ActualModel = result.ActualModel
+		}
+
+		if fault = f.fault(spec, result, runErr); fault != nil {
+			if ctx.Err() != nil || opts.n == maxAttempts-1 {
+				break
+			}
+			f.emit(Event{Kind: EventAgentRetried, Agent: spec.Name, Text: fault.Error()})
+			continue
+		}
+
+		res.findings, err = f.parse(spec, result.StructuredOutput)
+		if err != nil {
+			return f.degrade(res, err)
+		}
+		f.emit(Event{Kind: EventFindings, Agent: spec.Name, Findings: res.findings})
+		f.emit(Event{Kind: EventAgentDone, Agent: spec.Name, Text: strconv.Itoa(len(res.findings)) + " findings"})
+		return res
+	}
+	return f.degrade(res, fault)
+}
+
+// attempt runs one process under its own cancellable context, so a retry tears the stalled attempt's
+// process group down rather than leaving it alive alongside its replacement.
+func (f *finder) attempt(ctx context.Context, opts attemptOpts) (executor.Result, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	raw, err := f.cfg.Archive.Writer(f.rawName(opts.spec, opts.n))
 	if err != nil {
-		return f.degrade(res, fmt.Errorf("open raw output for %s: %w", spec.Name, err))
+		return executor.Result{}, fmt.Errorf("open raw output for %s: %w", opts.spec.Name, err)
 	}
 
+	var first func()
+	if opts.leader {
+		first = f.stagger.leaderStarted
+	}
+
+	spec := opts.spec
 	result, runErr := f.cfg.NewRunner(RunnerSpec{Executor: spec.Executor, Model: spec.Model, Effort: spec.Effort}).
 		Run(ctx, executor.Request{
-			Prompt: text, Model: spec.Model, Effort: spec.Effort,
+			Prompt: opts.prompt, Model: spec.Model, Effort: spec.Effort,
 			Schema: finding.FinderSchema(), RawOutput: raw,
-		}, newSink(spec.Name, f.emit, nil))
+		}, newSink(spec.Name, f.emit, first))
 
-	res.stat.ActualModel, res.stat.Tokens = result.ActualModel, result.Tokens
 	if closeErr := raw.Close(); closeErr != nil && runErr == nil {
 		runErr = fmt.Errorf("close raw output for %s: %w", spec.Name, closeErr)
 	}
-	if runErr != nil {
-		return f.degrade(res, runErr)
-	}
+	return result, runErr
+}
 
-	res.findings, err = f.parse(spec, result.StructuredOutput)
-	if err != nil {
-		return f.degrade(res, err)
+// fault judges one attempt. A nil return means the process delivered; anything else is what a retry
+// would be attempting to survive — a stall, a rate limit, a dead process or a transport error.
+func (f *finder) fault(spec prompt.AgentSpec, res executor.Result, err error) error {
+	switch {
+	case res.IdleTimedOut:
+		return fmt.Errorf("agent %s stalled", spec.Name)
+	case res.RateLimited:
+		return fmt.Errorf("agent %s rate limited: %s", spec.Name, res.RateLimit.Status)
+	case err != nil:
+		return err
+	case res.ExitCode != 0:
+		return fmt.Errorf("agent %s exited %d", spec.Name, res.ExitCode)
 	}
-
-	f.emit(Event{Kind: EventFindings, Agent: spec.Name, Findings: res.findings})
-	f.emit(Event{Kind: EventAgentDone, Agent: spec.Name, Text: strconv.Itoa(len(res.findings)) + " findings"})
-	return res
+	return nil
 }
 
 // parse turns one agent's structured output into findings, assigning both attribution fields in Go.
@@ -144,12 +216,16 @@ func (f *finder) lenses(spec prompt.AgentSpec, named []string) []string {
 	return out
 }
 
-// rawName is where the agent's verbatim tee goes. Per-agent streams live under agents/ so an agent
-// named events cannot collide with events.jsonl.
-func (f *finder) rawName(spec prompt.AgentSpec) string {
+// rawName is where the attempt's verbatim tee goes. Per-agent streams live under agents/ so an agent
+// named events cannot collide with events.jsonl, and a retry gets its own file so neither attempt is
+// spliced onto or overwritten by the other.
+func (f *finder) rawName(spec prompt.AgentSpec, attempt int) string {
 	ext := ".jsonl"
 	if spec.Executor == executorCodex {
 		ext = ".log"
+	}
+	if attempt > 0 {
+		ext = ".retry" + ext
 	}
 	return path.Join("agents", spec.Name+ext)
 }

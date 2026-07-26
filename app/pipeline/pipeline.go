@@ -76,8 +76,9 @@ type Config struct {
 // Pipeline runs one review. Run is a thin stage orchestrator: the stages own their own logic so no
 // single type accumulates all three plus event fan-out plus I/O.
 type Pipeline struct {
-	cfg    Config
-	events chan Event
+	cfg     Config
+	events  chan Event
+	stagger *stagger
 
 	mu  sync.Mutex
 	log io.WriteCloser
@@ -86,8 +87,15 @@ type Pipeline struct {
 }
 
 // New builds a pipeline over cfg. The event channel is buffered and lossy by design.
+//
+// The stagger is built here and handed to each stage rather than owned by one: its gate latches open
+// on the first release and never re-arms, so a later stage runs through the same instance instead of
+// paying a second stagger delay to re-prove auth the first stage already proved.
 func New(cfg Config) *Pipeline {
-	return &Pipeline{cfg: cfg, events: make(chan Event, eventBuffer)}
+	return &Pipeline{
+		cfg: cfg, events: make(chan Event, eventBuffer),
+		stagger: newStagger(cfg.StaggerDelay, cfg.MaxParallel, cfg.Clock),
+	}
 }
 
 // Events returns the event channel. It has exactly one reader — the active renderer — because a Go
@@ -127,7 +135,7 @@ func (p *Pipeline) runFind(ctx context.Context) (finding.Report, error) {
 	p.emit(Event{Kind: EventStage, Stage: stageFind})
 	at := p.cfg.Clock.Now()
 
-	f := &finder{cfg: p.cfg, emit: p.emit}
+	f := &finder{cfg: p.cfg, emit: p.emit, stagger: p.stagger}
 	sources, err := f.run(ctx)
 	if err != nil {
 		return finding.Report{}, err
