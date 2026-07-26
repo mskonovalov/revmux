@@ -50,9 +50,9 @@ type Finding struct {
 	Verdict    Verdict  `json:"verdict"`
 }
 
-// location renders the three shapes a finding anchor can take: a file with no line at all,
+// Location renders the three shapes a finding anchor can take: a file with no line at all,
 // a single line, and a range.
-func (f Finding) location() string {
+func (f Finding) Location() string {
 	switch {
 	case f.File == "":
 		return "(no file)"
@@ -65,7 +65,7 @@ func (f Finding) location() string {
 }
 
 func (f Finding) markdownLines() []string {
-	out := []string{"### " + f.Title, "", "`" + f.location() + "`", ""}
+	out := []string{"### " + f.Title, "", "`" + f.Location() + "`", ""}
 	if f.Body != "" {
 		out = append(out, f.Body, "")
 	}

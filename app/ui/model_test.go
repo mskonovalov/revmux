@@ -176,11 +176,11 @@ func TestModel_Update(t *testing.T) {
 		assert.NotNil(t, cmd, "the model keeps watching the channel")
 	})
 
-	t.Run("a closed channel quits", func(t *testing.T) {
+	t.Run("a closed channel does not quit, the report is still coming", func(t *testing.T) {
 		m := New(ModelConfig{Roster: roster()})
-		_, cmd := m.Update(eventsDone{})
-		require.NotNil(t, cmd)
-		assert.IsType(t, tea.QuitMsg{}, cmd())
+		next, cmd := m.Update(eventsDone{})
+		assert.Nil(t, cmd, "quitting here would drop the findings browser before it opened")
+		assert.Nil(t, next.(Model).findings)
 	})
 
 	t.Run("an unrelated message changes nothing", func(t *testing.T) {

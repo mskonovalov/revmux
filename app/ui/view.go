@@ -29,11 +29,14 @@ func (m Model) detailPane() []string {
 	return out
 }
 
-// paneLines is what the focused tab shows: the compact combined log on tab 0, one agent's full
-// scrollback on the rest.
+// paneLines is what the focused tab shows: the compact combined log on tab 0, the findings browser
+// on the tab the report opens, one agent's full scrollback on the rest.
 func (m Model) paneLines() []string {
-	if m.view.tab == 0 {
+	switch m.view.tab {
+	case 0:
 		return m.combinedLines()
+	case m.findingsTab():
+		return m.findingsPane()
 	}
 	return m.agentLines()
 }
@@ -44,12 +47,17 @@ func (m Model) paneHeight() int { return max(1, m.view.height()-len(m.agents)-3)
 // maxScroll is how far back the focused pane can be scrolled, zero when it all fits.
 func (m Model) maxScroll() int { return max(0, len(m.paneLines())-m.paneHeight()) }
 
-// tabBar names every pane, the focused one in reverse video.
+// tabBar names every pane, the focused one in reverse video. The browser is keyed f rather than by
+// its number: it appears only once the report has arrived, so a fixed digit would name nothing for
+// most of the run.
 func (m Model) tabBar() string {
-	labels := make([]string, 0, len(m.agents)+1)
+	labels := make([]string, 0, len(m.agents)+2)
 	labels = append(labels, " 0 · all ")
 	for i, a := range m.agents {
 		labels = append(labels, " "+strconv.Itoa(i+1)+" · "+a.spec.Name+" ")
+	}
+	if m.findings != nil {
+		labels = append(labels, " f · findings ")
 	}
 	if m.view.tab < len(labels) {
 		labels[m.view.tab] = m.highlight(labels[m.view.tab])

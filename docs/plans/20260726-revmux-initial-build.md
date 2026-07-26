@@ -1524,14 +1524,32 @@ Exports (justification per item: who outside the package calls this?):
 - `CompletedMsg` — `package main` constructs and sends it after `Pipeline.Run` returns, so it must be
   nameable from outside `app/ui`; everything else is task 12's `Model`, `ModelConfig` and `New`
 
-- [ ] create `app/ui/findings.go` rendering findings grouped by severity with cursor, expansion and filter
-- [ ] add `CompletedMsg{Report finding.Report}` and have `package main` send it after `Pipeline.Run` returns; `Update` stores the report and switches to the findings pane, keeping agent tabs reachable
-- [ ] bind `j`/`k` to move, `enter` to expand body and fix, `/` to filter, `f` to jump to findings
-- [ ] have `app/main.go` write `Pipeline.Run`'s report to stdout **after** `Program.Run()` returns, with a comment recording that the ordering is what keeps the report from interleaving with the TUI's final frame
-- [ ] write tests for navigation, expansion, filtering and the empty-findings state
-- [ ] write a main-level test asserting the report is written exactly once under the TUI path and once under `--no-tui`, and never twice
-- [ ] write a test asserting the TUI is gated on the tty being openable and **not** on stdout being a TTY, driving it through `runOpts.openTTY`: one case where the opener succeeds while stdout is a pipe (TUI runs), one where it fails (plain renderer). That is the `revmux --json > file` invocation, where the two conditions disagree
-- [ ] run tests - must pass before task 14
+- [x] create `app/ui/findings.go` rendering findings grouped by severity with cursor, expansion and filter
+- [x] add `CompletedMsg{Report finding.Report}` and have `package main` send it after `Pipeline.Run` returns; `Update` stores the report and switches to the findings pane, keeping agent tabs reachable
+- [x] bind `j`/`k` to move, `enter` to expand body and fix, `/` to filter, `f` to jump to findings
+- [x] have `app/main.go` write `Pipeline.Run`'s report to stdout **after** `Program.Run()` returns, with a comment recording that the ordering is what keeps the report from interleaving with the TUI's final frame
+- [x] write tests for navigation, expansion, filtering and the empty-findings state
+- [x] write a main-level test asserting the report is written exactly once under the TUI path and once under `--no-tui`, and never twice
+- [x] write a test asserting the TUI is gated on the tty being openable and **not** on stdout being a TTY, driving it through `runOpts.openTTY`: one case where the opener succeeds while stdout is a pipe (TUI runs), one where it fails (plain renderer). That is the `revmux --json > file` invocation, where the two conditions disagree
+- [x] run tests - must pass before task 14
+
+- ➕ `eventsDone` no longer quits, which is the other half of what `CompletedMsg` replaces. The model
+  keeps the frame up until the report arrives, and the reader closes the browser himself — so under a
+  tty a finished run waits for a keystroke, and a non-interactive caller passes `--no-tui`
+- ➕ `package main` holds the renderer as a small `renderer` handle rather than running it inline.
+  `Pipeline.Run` has to return before there is a report to hand over, so `review` starts the
+  subscriber, runs the pipeline, sends `CompletedMsg` and only then waits. A failed run has nothing
+  to browse, so it gets `Program.Quit()` instead and its error reaches stderr
+- ➕ `findingsPane` returns `[]string`, matching `detailPane` and the pane router rather than the
+  contract's `string`. `render` returns the lines **and** the line each row landed on, from one walk:
+  keeping the cursor in view needs both, and locating it separately would be the same loop twice
+- ➕ `Finding.location` is now exported as `Location`. The browser renders the same three anchor
+  shapes as the markdown report, and a second copy in `app/ui` would be the one to drift
+- ➕ the browser's tab is keyed `f`, not by number: it exists only once the report has arrived, so a
+  fixed digit would name nothing for most of the run
+- ➕ a tty test file cannot carry both frames and keystrokes — the frame written at open advances the
+  shared offset past the input — so `main_test.go` has two openers: a file for asserting on rendered
+  output, a pipe for feeding keys
 
 ### Task 14: Full default prompt set
 

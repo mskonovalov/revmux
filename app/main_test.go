@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -288,43 +289,173 @@ func TestRunOpts_tty(t *testing.T) {
 func TestRunOpts_render(t *testing.T) {
 	roster := []prompt.AgentSpec{{Name: "bugs", Color: "6"}}
 
-	t.Run("with no tty the plain renderer takes the events", func(t *testing.T) {
-		events := make(chan pipeline.Event, 1)
-		events <- pipeline.Event{Kind: pipeline.EventStage, Stage: "find", At: time.Now()}
-		close(events)
+	// finished drives one renderer through a whole run: two events, the channel closed, then the
+	// report handed over the way review does it. The channel is unbuffered and the sends are waited
+	// on, because the second one returns only after the renderer applied the first — without that
+	// the frame under assertion races the quit.
+	finished := func(t *testing.T, ro runOpts, rep finding.Report, err error) {
+		t.Helper()
+		events, sent := make(chan pipeline.Event), make(chan struct{})
+		go func() {
+			defer close(sent)
+			events <- pipeline.Event{Kind: pipeline.EventStage, Stage: "find", At: time.Now()}
+			events <- pipeline.Event{Kind: pipeline.EventAgentStarted, Agent: "bugs", Text: "bugs", At: time.Now()}
+			close(events)
+		}()
 
+		r := ro.render(roster, events)
+		<-sent
+		done := make(chan struct{})
+		go func() { defer close(done); r.finish(rep, err) }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the renderer must let go of the terminal once the report is in")
+		}
+	}
+
+	t.Run("with no tty the plain renderer takes the events", func(t *testing.T) {
 		r := newRunOpts(t, options{})
-		r.opts().render(roster, events)
+		finished(t, r.opts(), finding.Report{}, nil)
 		assert.Contains(t, r.stderr.String(), "stage find")
 		assert.Empty(t, r.stdout.String(), "stdout belongs to the report alone")
 	})
 
-	t.Run("with a tty the ui renders there and returns when the run ends", func(t *testing.T) {
-		events := make(chan pipeline.Event, 2)
-		events <- pipeline.Event{Kind: pipeline.EventStage, Stage: "find", At: time.Now()}
-		events <- pipeline.Event{Kind: pipeline.EventAgentStarted, Agent: "bugs", Text: "bugs", At: time.Now()}
-		close(events)
-
-		tty, err := os.CreateTemp(t.TempDir(), "tty")
-		require.NoError(t, err)
+	t.Run("with a tty the ui renders there, and a failed run gets the terminal back", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "tty")
 		r := newRunOpts(t, options{})
 		ro := r.opts()
-		ro.openTTY = func() (*os.File, error) { return tty, nil }
+		ro.openTTY = ttyFile(t, path)
 
-		done := make(chan struct{})
-		go func() { defer close(done); ro.render(roster, events) }()
-		select {
-		case <-done:
-		case <-time.After(10 * time.Second):
-			t.Fatal("the ui must return once the pipeline closes its channel")
-		}
+		finished(t, ro, finding.Report{}, errors.New("every source degraded"))
 
-		frame, err := os.ReadFile(tty.Name())
+		frame, err := os.ReadFile(path) //nolint:gosec // path from t.TempDir
 		require.NoError(t, err)
 		assert.Contains(t, string(frame), "stage find", "the ui renders to the tty")
 		assert.Empty(t, r.stdout.String(), "and never to stdout")
 		assert.Empty(t, r.stderr.String(), "nor to the plain renderer's stream")
 	})
+
+	t.Run("a finished report goes to the browser, and the reader closing it ends the wait", func(t *testing.T) {
+		r := newRunOpts(t, options{})
+		ro := r.opts()
+		ro.openTTY = ttyKeys(t, "q")
+
+		finished(t, ro, finding.Report{Findings: []finding.Finding{{Title: "unchecked error"}}}, nil)
+		assert.Empty(t, r.stdout.String(), "the browser renders the report, it does not write it")
+	})
+}
+
+func TestRun_reportWrittenOnce(t *testing.T) {
+	base := func(t *testing.T) options {
+		t.Helper()
+		return options{
+			Task: "pr-1", Run: "round-1", TasksDir: taskRoot(t), Profile: "focused", Lenses: []string{"bugs"},
+			StaggerDelay: 30 * time.Second, MaxParallel: 4, KeepRuns: 10, NoSynthesis: true,
+		}
+	}
+	found := executor.Result{StructuredOutput: json.RawMessage(
+		`{"findings":[{"file":"a.go","line":1,"severity":"major","confidence":90,"title":"unchecked error"}]}`)}
+
+	// the reader may close the browser before or after the report reaches it; either way package
+	// main is the one writer, which is what these assert
+	t.Run("under the tui", func(t *testing.T) {
+		r := newRunOpts(t, base(t))
+		r.result = found
+		ro := r.opts()
+		ro.openTTY = ttyKeys(t, "q")
+
+		assert.Equal(t, 1, run(ro))
+		out := r.stdout.String()
+		assert.Equal(t, 1, strings.Count(out, "# Review: pr-1 / round-1"), "written once, by package main only")
+		assert.Equal(t, 1, strings.Count(out, "unchecked error"))
+		assert.Empty(t, r.stderr.String(), "the ui took the events, so the plain renderer saw none")
+	})
+
+	t.Run("under --no-tui", func(t *testing.T) {
+		o := base(t)
+		o.NoTUI = true
+		r := newRunOpts(t, o)
+		r.result = found
+
+		assert.Equal(t, 1, run(r.opts()))
+		out := r.stdout.String()
+		assert.Equal(t, 1, strings.Count(out, "# Review: pr-1 / round-1"))
+		assert.Equal(t, 1, strings.Count(out, "unchecked error"))
+		assert.Contains(t, r.stderr.String(), "stage find", "and the plain renderer took the events")
+	})
+}
+
+func TestRun_ttyGate(t *testing.T) {
+	// the report is redirected here, so stdout is a pipe and not a terminal: that must not decide
+	// whether the ui runs, or `revmux --json > findings.json` would silently lose it
+	base := func(t *testing.T) options {
+		t.Helper()
+		return options{
+			Task: "pr-1", Run: "round-1", TasksDir: taskRoot(t), Profile: "focused", Lenses: []string{"bugs"},
+			StaggerDelay: 30 * time.Second, MaxParallel: 4, KeepRuns: 10, NoSynthesis: true, JSON: true,
+		}
+	}
+
+	redirected := func(t *testing.T, ro runOpts) string {
+		t.Helper()
+		pr, pw, err := os.Pipe()
+		require.NoError(t, err)
+		ro.stdout = pw
+
+		assert.Equal(t, 1, run(ro))
+		require.NoError(t, pw.Close())
+		out, err := io.ReadAll(pr)
+		require.NoError(t, err)
+		return string(out)
+	}
+
+	t.Run("an openable tty runs the ui even though stdout is a pipe", func(t *testing.T) {
+		r := newRunOpts(t, base(t))
+		r.result = executor.Result{StructuredOutput: json.RawMessage(
+			`{"findings":[{"file":"a.go","line":1,"severity":"major","confidence":90,"title":"unchecked error"}]}`)}
+		ro := r.opts()
+		ro.openTTY = ttyKeys(t, "q")
+
+		out := redirected(t, ro)
+
+		var rep finding.Report
+		require.NoError(t, json.Unmarshal([]byte(out), &rep), "the redirected report is still whole json")
+		require.Len(t, rep.Findings, 1)
+		assert.Empty(t, r.stderr.String(), "the ui took the events, so the plain renderer never ran")
+	})
+
+	t.Run("a tty that will not open falls back to the plain renderer", func(t *testing.T) {
+		r := newRunOpts(t, base(t))
+		r.result = executor.Result{StructuredOutput: json.RawMessage(
+			`{"findings":[{"file":"a.go","line":1,"severity":"major","confidence":90,"title":"unchecked error"}]}`)}
+
+		out := redirected(t, r.opts()) // the harness opener always fails
+
+		var rep finding.Report
+		require.NoError(t, json.Unmarshal([]byte(out), &rep))
+		assert.Contains(t, r.stderr.String(), "stage find")
+	})
+}
+
+// ttyFile stands in for the terminal a run renders to: a real file, so a test can read the frames
+// back. It carries no input, so only a quit ends the program. No test opens a real tty.
+func ttyFile(t *testing.T, path string) func() (*os.File, error) {
+	t.Helper()
+	return func() (*os.File, error) { return os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600) } //nolint:gosec // path from t.TempDir
+}
+
+// ttyKeys stands in for the terminal a reader types into: a pipe holding his keystrokes. Frames
+// written back to it go nowhere, so a test asserting on rendered output wants ttyFile instead — one
+// file cannot serve both, since the frame written at open advances the offset past the input.
+func ttyKeys(t *testing.T, keys string) func() (*os.File, error) {
+	t.Helper()
+	pr, pw, err := os.Pipe()
+	require.NoError(t, err)
+	_, err = pw.WriteString(keys)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = pw.Close(), pr.Close() })
+	return func() (*os.File, error) { return pr, nil }
 }
 
 func TestRunOpts_runnerFactory(t *testing.T) {

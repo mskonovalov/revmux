@@ -11,24 +11,39 @@ import (
 // digit selects the tab and listing ten bindings here would say the same thing ten times.
 var keys = struct {
 	quit, nextTab, prevTab, up, down, pageUp, pageDown, top, bottom key.Binding
+	findings, expand, startFilter                                   key.Binding
 }{
-	quit:     key.NewBinding(key.WithKeys("q", "ctrl+c", "esc")),
-	nextTab:  key.NewBinding(key.WithKeys("tab", "right", "l")),
-	prevTab:  key.NewBinding(key.WithKeys("shift+tab", "left", "h")),
-	up:       key.NewBinding(key.WithKeys("up", "k")),
-	down:     key.NewBinding(key.WithKeys("down", "j")),
-	pageUp:   key.NewBinding(key.WithKeys("pgup", "ctrl+b")),
-	pageDown: key.NewBinding(key.WithKeys("pgdown", "ctrl+f")),
-	top:      key.NewBinding(key.WithKeys("home", "g")),
-	bottom:   key.NewBinding(key.WithKeys("end", "G")),
+	quit:        key.NewBinding(key.WithKeys("q", "ctrl+c", "esc")),
+	nextTab:     key.NewBinding(key.WithKeys("tab", "right", "l")),
+	prevTab:     key.NewBinding(key.WithKeys("shift+tab", "left", "h")),
+	up:          key.NewBinding(key.WithKeys("up", "k")),
+	down:        key.NewBinding(key.WithKeys("down", "j")),
+	pageUp:      key.NewBinding(key.WithKeys("pgup", "ctrl+b")),
+	pageDown:    key.NewBinding(key.WithKeys("pgdown", "ctrl+f")),
+	top:         key.NewBinding(key.WithKeys("home", "g")),
+	bottom:      key.NewBinding(key.WithKeys("end", "G")),
+	findings:    key.NewBinding(key.WithKeys("f")),
+	expand:      key.NewBinding(key.WithKeys("enter")),
+	startFilter: key.NewBinding(key.WithKeys("/")),
 }
 
 // key handles one keystroke. Quitting stops watching the run, it does not stop the run: package main
 // still holds the report and writes it once the program has returned.
 func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyCtrlC {
+		// checked ahead of the filter editor, which treats every other key as text: a half-typed
+		// query must never be a trap
+		return m, tea.Quit
+	}
+	if m.browsing() && m.browseKey(msg) {
+		return m, nil
+	}
+
 	switch {
 	case key.Matches(msg, keys.quit):
 		return m, tea.Quit
+	case key.Matches(msg, keys.findings):
+		m.focus(m.findingsTab())
 	case key.Matches(msg, keys.nextTab):
 		m.focus(m.view.tab + 1)
 	case key.Matches(msg, keys.prevTab):
@@ -56,10 +71,92 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // focus switches panes, ignoring a tab that does not exist so a stray digit cannot blank the view.
 // The new pane opens at its newest line, which is where a live log is worth reading from.
 func (m *Model) focus(tab int) {
-	if tab < 0 || tab > len(m.agents) {
+	if tab < 0 || tab > m.lastTab() {
 		return
 	}
 	m.view.tab, m.view.scroll = tab, 0
+}
+
+// lastTab is the rightmost pane: the last agent, or the findings browser once the report has opened
+// one past it.
+func (m Model) lastTab() int {
+	if m.findings != nil {
+		return len(m.agents) + 1
+	}
+	return len(m.agents)
+}
+
+// browsing says the reader is in the findings browser, which is where the cursor, expansion and
+// filter keys mean something and where up and down move a cursor rather than scroll.
+func (m Model) browsing() bool { return m.findings != nil && m.view.tab == m.findingsTab() }
+
+// browseKey handles the keys that mean something only in the browser and reports whether it took the
+// keystroke. What it does not take falls through to the pane keys, so quitting and tab switching
+// work from here too.
+func (m *Model) browseKey(msg tea.KeyMsg) bool {
+	if m.findings.typing {
+		m.editFilter(msg)
+		return true
+	}
+
+	switch {
+	case key.Matches(msg, keys.startFilter):
+		m.findings.typing = true
+	case key.Matches(msg, keys.expand):
+		m.findings.toggle()
+		m.showCursor()
+	case key.Matches(msg, keys.up):
+		m.findings.move(-1)
+		m.showCursor()
+	case key.Matches(msg, keys.down):
+		m.findings.move(1)
+		m.showCursor()
+	default:
+		return false
+	}
+	return true
+}
+
+// editFilter feeds one keystroke to the filter query. Esc abandons it and enter accepts it; every
+// other key is text, so a query can carry a q or a j without acting on the browser.
+func (m *Model) editFilter(msg tea.KeyMsg) {
+	f := m.findings
+	switch msg.Type {
+	case tea.KeyEsc:
+		f.typing = false
+		f.filter("")
+	case tea.KeyEnter:
+		f.typing = false
+	case tea.KeyBackspace:
+		if q := []rune(f.query); len(q) > 0 {
+			f.filter(string(q[:len(q)-1]))
+		}
+	case tea.KeyRunes, tea.KeySpace:
+		f.filter(f.query + string(msg.Runes))
+	default: // a named key carries no text, so it edits nothing
+	}
+	m.showCursor()
+}
+
+// showCursor scrolls the browser so the cursor row stays on screen. The pane window is measured back
+// from the newest line, so an offset is how far above the end the window sits.
+func (m *Model) showCursor() {
+	lines, height := m.paneLines(), m.paneHeight()
+	if len(lines) <= height {
+		m.view.scroll = 0
+		return
+	}
+
+	line, start := m.findings.cursorLine(), len(lines)-height-m.view.scroll
+	switch {
+	case line < start:
+		m.view.scroll = len(lines) - height - line
+	case line >= start+height:
+		m.view.scroll = len(lines) - line - 1
+	default:
+		return
+	}
+	m.view.scroll = min(max(m.view.scroll, 0), len(lines)-height)
 }
 
 // scroll moves the window back through the log by n lines, clamped to what the pane actually holds.

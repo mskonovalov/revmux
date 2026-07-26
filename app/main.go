@@ -85,6 +85,8 @@ func run(o runOpts) int {
 	if err := o.archiveRun(arc, cfg, rep); err != nil {
 		return o.fail(err)
 	}
+	// the report goes to stdout only here, after review returned and with it the bubbletea program:
+	// writing it while the TUI still owns the terminal interleaves it with the final frame
 	if err := o.write(rep); err != nil {
 		return o.fail(err)
 	}
@@ -144,41 +146,69 @@ func (o runOpts) pipelineConfig() (pipeline.Config, *archive.Archive, error) {
 	}, arc, nil
 }
 
-// review runs the pipeline with a renderer subscribed to its events, and returns only once that
-// renderer has finished with the channel.
+// review runs the pipeline with a renderer subscribed to its events, hands the finished report to
+// that renderer, and returns only once the renderer has let go of the terminal.
 func (o runOpts) review(cfg pipeline.Config) (finding.Report, error) {
 	p := pipeline.New(cfg)
-
-	rendered := make(chan struct{})
-	go func() {
-		defer close(rendered)
-		o.render(cfg.Roster, p.Events())
-	}()
+	r := o.render(cfg.Roster, p.Events())
 
 	rep, err := p.Run(context.Background())
-	<-rendered
+	r.finish(rep, err)
 	if err != nil {
 		return finding.Report{}, fmt.Errorf("review failed: %w", err)
 	}
 	return rep, nil
 }
 
+// renderer is the active event subscriber, held so the finished report can be handed to it and the
+// run can wait for it to release the terminal. prog is nil under the plain renderer, which has
+// nothing to browse and needs no report.
+type renderer struct {
+	prog *tea.Program
+	done chan struct{}
+}
+
 // render subscribes the active renderer to the run's events — the TUI when the tty opens, the plain
 // stderr renderer otherwise. Exactly one of them reads the channel: a Go channel distributes rather
 // than broadcasts, so a second reader would take an arbitrary half of the events.
-func (o runOpts) render(roster []prompt.AgentSpec, events <-chan pipeline.Event) {
+func (o runOpts) render(roster []prompt.AgentSpec, events <-chan pipeline.Event) *renderer {
+	r := &renderer{done: make(chan struct{})}
+
 	tty := o.tty()
 	if tty == nil {
-		(&progress{w: o.stderr, roster: roster}).run(events)
-		return
+		go func() {
+			defer close(r.done)
+			(&progress{w: o.stderr, roster: roster}).run(events)
+		}()
+		return r
 	}
-	defer func() { _ = tty.Close() }()
 
 	m := ui.New(ui.ModelConfig{Roster: roster, Events: events})
-	prog := tea.NewProgram(m, tea.WithInput(tty), tea.WithOutput(tty), tea.WithAltScreen())
-	if _, err := prog.Run(); err != nil {
-		_, _ = fmt.Fprintf(o.stderr, "warning: terminal ui: %v\n", err)
+	r.prog = tea.NewProgram(m, tea.WithInput(tty), tea.WithOutput(tty), tea.WithAltScreen())
+	go func() {
+		defer close(r.done)
+		defer func() { _ = tty.Close() }()
+		if _, err := r.prog.Run(); err != nil {
+			_, _ = fmt.Fprintf(o.stderr, "warning: terminal ui: %v\n", err)
+		}
+	}()
+	return r
+}
+
+// finish hands the report to the findings browser and waits for the reader to close it. A failed run
+// has nothing to browse and its error belongs on stderr, so the program is asked to quit instead.
+//
+// The wait is what keeps the report off stdout until the terminal is free: writing it while the TUI
+// still owns the screen would interleave it with the final frame.
+func (r *renderer) finish(rep finding.Report, err error) {
+	switch {
+	case r.prog == nil:
+	case err != nil:
+		r.prog.Quit()
+	default:
+		r.prog.Send(ui.CompletedMsg{Report: rep})
 	}
+	<-r.done
 }
 
 // tty opens the terminal the TUI renders to, nil when there is none to render on. The gate is the tty

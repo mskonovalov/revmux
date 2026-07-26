@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/umputun/revmux/app/finding"
 	"github.com/umputun/revmux/app/pipeline"
 	"github.com/umputun/revmux/app/prompt"
 )
@@ -55,6 +56,7 @@ type Model struct {
 	view     viewState
 	agents   []*agentState
 	combined *combinedState
+	findings *findingsState
 	stage    string
 }
 
@@ -108,9 +110,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.apply(msg)
 		return m, m.next()
 	case eventsDone:
-		return m, tea.Quit
+		return m, nil
+	case CompletedMsg:
+		m.complete(msg.Report)
+		return m, nil
 	}
 	return m, nil
+}
+
+// complete opens the findings browser over the finished report. The run being over is not a reason
+// to quit: package main writes the report once the reader is done with the terminal, and the agent
+// tabs stay reachable so he can check why a finding was raised.
+func (m *Model) complete(rep finding.Report) {
+	m.findings = newFindings(rep)
+	m.focus(m.findingsTab())
+}
+
+// findingsTab is the browser's tab, one past the last agent, or -1 while there is no report to
+// browse. Nothing ever focuses -1, so the pane router cannot reach the browser early.
+func (m Model) findingsTab() int {
+	if m.findings == nil {
+		return -1
+	}
+	return len(m.agents) + 1
 }
 
 // next reads one event in a command goroutine and delivers it as a message.
