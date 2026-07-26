@@ -13,8 +13,8 @@ revmux runs a review and returns findings, and does nothing else. It performs no
 operations, no PR fetching and no source modification. All review context is written to a task directory by
 the caller and passed in with `--task`.
 
-**Status: initial build in progress.** The review pipeline is not wired up yet. The build sequence is
-`docs/plans/20260726-revmux-initial-build.md`.
+**Status: initial build in progress.** The find stage runs end to end; synthesis, verification and the
+terminal UI are not wired up yet. The build sequence is `docs/plans/20260726-revmux-initial-build.md`.
 
 ## Flags
 
@@ -67,6 +67,22 @@ Review context reaches revmux only as a task directory the caller has filled, na
 
 Variables in the prompt tree expand to the **paths** of these files, never their contents — the agent reads
 them itself. An absent optional file expands to `none provided`.
+
+## Output
+
+The report goes to **stdout** — markdown by default, the machine shape with `--json`. Everything else goes
+to the terminal or to stderr, so `revmux --task pr-123 --json > findings.json` works while the progress
+display is running.
+
+Exit codes:
+
+| Code | Meaning |
+|---|---|
+| `0` | no findings above `--min-confidence` |
+| `1` | findings above `--min-confidence` |
+| `2` | tool error: bad config, unreadable prompt tree, missing `scope.md`, an unwritable run artifact, or every source degraded |
+
+`1` is a normal outcome, not a failure.
 
 ## Development
 

@@ -1002,30 +1002,30 @@ Exports (justification per item: who outside the package calls this?):
   `app/progress.go` and later `app/ui` consume events
 - `Runner`, `RunnerSpec` — `package main` implements the factory and must name both
 
-- [ ] create `app/pipeline/event.go` with `Event`, `EventKind` (agent started, tool activity, state change, agent done, agent retried, agent degraded, findings emitted, stage change, rate limit) and a buffered channel that drops rather than blocks. The findings-emitted kind carries `[]finding.Finding` and the agent name, because `tui.md` requires findings in the combined view and no other transport reaches it
-- [ ] there is deliberately **no** pipeline-complete kind: completion must not be droppable, so `package main` signals it directly to the TUI after `Pipeline.Run` returns (task 13), rather than racing it through a channel that sheds under load
-- [ ] create `app/pipeline/sink.go` with the `sink` adapter tagging executor events with the agent name and exposing a `sync.Once`-guarded first-activity callback for task 7
-- [ ] create `app/pipeline/pipeline.go` with `Config`, `New`, `Run`, `Events`, `emit`, the exported `Runner` / `RunnerSpec`, the consumer-side `archiver`, and moq directives. **Spell the directives out with an alias for the unexported interface**: `//go:generate moq -out mocks/archiver.go -pkg mocks -skip-ensure -fmt goimports . archiver:ArchiverMock` — without the alias moq names the type `archiverMock`, unexported in package `mocks` and therefore unreachable from `app/pipeline`'s own tests
-- [ ] `emit` writes to the archive first and synchronously under a mutex, then offers the event to the channel; `Events()` has exactly one reader and the archive is never a second subscriber, since a Go channel distributes rather than broadcasts
-- [ ] `Pipeline` carries a sticky first archive error that `emit` records and `Run` returns, so a failed archive write reaches `package main` as a tool error rather than a logged warning
-- [ ] create `app/pipeline/find.go` with `finder` running `Config.Roster` sequentially for now, parsing each agent's structured output, stamping `sources` **and `id`**, and collecting `sourceResult` values
-- [ ] **`Pipeline.Run` populates `finding.Stats`** — `StartedAt` and `FinishedAt` from `Config.Clock`, `DurationMS` from their difference, and one `StageTiming` appended per stage it runs. Nothing else can: task 11 reads `Stats.Stages` for `manifest.json` and `stats.started_at` for the prior-round history, and a struct that only ever round-trips in a test is zero-valued in production while every test still passes
-- [ ] `finder.report` sums `Stats.Tokens` from the per-agent `SourceStat` values, so the run total and the per-agent breakdown cannot disagree
-- [ ] `Pipeline.Run` closes the events writer in a `defer` and folds the close error into the same sticky archive error, since a close is where a deferred write failure surfaces and nothing else can reach that handle — `archiver` hands out `io.WriteCloser` values and `package main` never sees them
-- [ ] each agent goroutine closes its own `RawOutput` tee and reports a close failure through `sourceResult`, for the same reason
-- [ ] create `app/progress.go` with the `progress` type subscribing to the channel and writing timestamped lines to stderr
-- [ ] wire `app/main.go`: parse options, load prompt set, **resolve the roster once via `Profile.Roster(o.Lenses, set.LensNames())`** and pass the slice on `Config.Roster`, build the `NewRunner` factory (claude only at this task; task 8 adds codex), run the pipeline, filter via `Above`, write the report to stdout, exit with `ExitCode`
-- [ ] write pipeline tests with a mocked `Runner` asserting the emitted event sequence
-- [ ] write tests for the find stage collecting results and for `sourceResult.ok`
-- [ ] write a test asserting `finder.parse` discards model-supplied `sources` and replaces them with the executing agent's name, including when the model invents two entries for itself
-- [ ] write a test asserting `finder.parse` rewrites `id` to `<agent>-<n>`, and that two agents both returning `id: "1"` end up with distinct ids — the collision that would silently corrupt task 9's `sources` derivation
-- [ ] write a test asserting a close failure on the events writer surfaces as a run error rather than being swallowed by the `defer`
-- [ ] write a test with a fake clock asserting `Stats.StartedAt`, `FinishedAt` and one `StageTiming` per stage are non-zero after a run, and that `Stats.Tokens` equals the sum of the per-agent counts
-- [ ] write a test asserting `emit` archives an event that the channel drops, so a slow renderer cannot cost the audit record
-- [ ] write a test asserting a failing archive writer makes `Run` return an error and `package main` exit 2, and that `-race` is clean when `emit` is driven concurrently from several agent goroutines
-- [ ] write tests for the stderr progress renderer against a synthetic event sequence
-- [ ] write a main-level test running the whole slice with a mocked runner and asserting stdout markdown and exit code
-- [ ] run tests - must pass before task 7
+- [x] create `app/pipeline/event.go` with `Event`, `EventKind` (agent started, tool activity, state change, agent done, agent retried, agent degraded, findings emitted, stage change, rate limit) and a buffered channel that drops rather than blocks. The findings-emitted kind carries `[]finding.Finding` and the agent name, because `tui.md` requires findings in the combined view and no other transport reaches it
+- [x] there is deliberately **no** pipeline-complete kind: completion must not be droppable, so `package main` signals it directly to the TUI after `Pipeline.Run` returns (task 13), rather than racing it through a channel that sheds under load
+- [x] create `app/pipeline/sink.go` with the `sink` adapter tagging executor events with the agent name and exposing a `sync.Once`-guarded first-activity callback for task 7
+- [x] create `app/pipeline/pipeline.go` with `Config`, `New`, `Run`, `Events`, `emit`, the exported `Runner` / `RunnerSpec`, the consumer-side `archiver`, and moq directives. **Spell the directives out with an alias for the unexported interface**: `//go:generate moq -out mocks/archiver.go -pkg mocks -skip-ensure -fmt goimports . archiver:ArchiverMock` — without the alias moq names the type `archiverMock`, unexported in package `mocks` and therefore unreachable from `app/pipeline`'s own tests
+- [x] `emit` writes to the archive first and synchronously under a mutex, then offers the event to the channel; `Events()` has exactly one reader and the archive is never a second subscriber, since a Go channel distributes rather than broadcasts
+- [x] `Pipeline` carries a sticky first archive error that `emit` records and `Run` returns, so a failed archive write reaches `package main` as a tool error rather than a logged warning
+- [x] create `app/pipeline/find.go` with `finder` running `Config.Roster` sequentially for now, parsing each agent's structured output, stamping `sources` **and `id`**, and collecting `sourceResult` values
+- [x] **`Pipeline.Run` populates `finding.Stats`** — `StartedAt` and `FinishedAt` from `Config.Clock`, `DurationMS` from their difference, and one `StageTiming` appended per stage it runs. Nothing else can: task 11 reads `Stats.Stages` for `manifest.json` and `stats.started_at` for the prior-round history, and a struct that only ever round-trips in a test is zero-valued in production while every test still passes
+- [x] `finder.report` sums `Stats.Tokens` from the per-agent `SourceStat` values, so the run total and the per-agent breakdown cannot disagree
+- [x] `Pipeline.Run` closes the events writer in a `defer` and folds the close error into the same sticky archive error, since a close is where a deferred write failure surfaces and nothing else can reach that handle — `archiver` hands out `io.WriteCloser` values and `package main` never sees them
+- [x] each agent goroutine closes its own `RawOutput` tee and reports a close failure through `sourceResult`, for the same reason
+- [x] create `app/progress.go` with the `progress` type subscribing to the channel and writing timestamped lines to stderr
+- [x] wire `app/main.go`: parse options, load prompt set, **resolve the roster once via `Profile.Roster(o.Lenses, set.LensNames())`** and pass the slice on `Config.Roster`, build the `NewRunner` factory (claude only at this task; task 8 adds codex), run the pipeline, filter via `Above`, write the report to stdout, exit with `ExitCode`
+- [x] write pipeline tests with a mocked `Runner` asserting the emitted event sequence
+- [x] write tests for the find stage collecting results and for `sourceResult.ok`
+- [x] write a test asserting `finder.parse` discards model-supplied `sources` and replaces them with the executing agent's name, including when the model invents two entries for itself
+- [x] write a test asserting `finder.parse` rewrites `id` to `<agent>-<n>`, and that two agents both returning `id: "1"` end up with distinct ids — the collision that would silently corrupt task 9's `sources` derivation
+- [x] write a test asserting a close failure on the events writer surfaces as a run error rather than being swallowed by the `defer`
+- [x] write a test with a fake clock asserting `Stats.StartedAt`, `FinishedAt` and one `StageTiming` per stage are non-zero after a run, and that `Stats.Tokens` equals the sum of the per-agent counts
+- [x] write a test asserting `emit` archives an event that the channel drops, so a slow renderer cannot cost the audit record
+- [x] write a test asserting a failing archive writer makes `Run` return an error and `package main` exit 2, and that `-race` is clean when `emit` is driven concurrently from several agent goroutines
+- [x] write tests for the stderr progress renderer against a synthetic event sequence
+- [x] write a main-level test running the whole slice with a mocked runner and asserting stdout markdown and exit code
+- [x] run tests - must pass before task 7
 
 ### Task 7: Parallel fan-out, staggered launch and degrade policy
 

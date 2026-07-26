@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -13,7 +15,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/umputun/revmux/app/executor"
 	"github.com/umputun/revmux/app/executor/mocks"
+	"github.com/umputun/revmux/app/finding"
+	"github.com/umputun/revmux/app/pipeline"
+	pmocks "github.com/umputun/revmux/app/pipeline/mocks"
 )
 
 func TestPrintVersion(t *testing.T) {
@@ -98,44 +104,147 @@ func TestRun_metaCommands(t *testing.T) {
 }
 
 func TestRun_reviewGate(t *testing.T) {
-	root := t.TempDir()
-	dir := filepath.Join(root, "pr-1")
-	require.NoError(t, os.MkdirAll(dir, 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, scopeFileName), []byte("review the diff"), 0o600))
+	root := taskRoot(t)
 
 	tests := []struct {
 		name    string
 		opts    options
-		want    int
 		wantErr string
 	}{
-		{name: "resolves", opts: options{Task: "pr-1", TasksDir: root, Profile: "focused"}, want: 0},
-		{name: "no task", opts: options{TasksDir: root, Profile: "focused"}, want: 2, wantErr: "--task is required"},
-		{name: "bad task name", opts: options{Task: "../out", TasksDir: root, Profile: "focused"}, want: 2, wantErr: "path separator"},
-		{name: "bad run name", opts: options{Task: "pr-1", Run: "a/b", TasksDir: root, Profile: "focused"}, want: 2, wantErr: "--run"},
-		{name: "missing task dir", opts: options{Task: "pr-2", TasksDir: root, Profile: "focused"}, want: 2, wantErr: "task directory"},
-		{name: "unknown profile", opts: options{Task: "pr-1", TasksDir: root, Profile: "nope"}, want: 2, wantErr: "resolve profile"},
+		{name: "no task", opts: options{TasksDir: root, Profile: "focused"}, wantErr: "--task is required"},
+		{name: "bad task name", opts: options{Task: "../out", TasksDir: root, Profile: "focused"}, wantErr: "path separator"},
+		{name: "bad run name", opts: options{Task: "pr-1", Run: "a/b", TasksDir: root, Profile: "focused"}, wantErr: "--run"},
+		{name: "missing task dir", opts: options{Task: "pr-2", TasksDir: root, Profile: "focused"}, wantErr: "task directory"},
+		{name: "unknown profile", opts: options{Task: "pr-1", TasksDir: root, Profile: "nope"}, wantErr: "resolve profile"},
+		{name: "unknown lens", opts: options{Task: "pr-1", TasksDir: root, Profile: "focused", Lenses: []string{"nope"}}, wantErr: "resolve roster"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := newRunOpts(t, tt.opts)
-			assert.Equal(t, tt.want, run(r.opts()))
+			assert.Equal(t, 2, run(r.opts()))
 			assert.Empty(t, r.stdout.String(), "nothing but the report may reach stdout")
-			if tt.wantErr != "" {
-				assert.Contains(t, r.stderr.String(), tt.wantErr)
-				return
-			}
-			assert.Empty(t, r.stderr.String())
+			assert.Contains(t, r.stderr.String(), tt.wantErr)
 		})
 	}
 }
 
-// runHarness holds the writers a run wrote to, so a test can assert on each stream separately.
+func TestRun_review(t *testing.T) {
+	root := taskRoot(t)
+	base := options{Task: "pr-1", Run: "round-1", TasksDir: root, Profile: "focused", Lenses: []string{"bugs"}}
+
+	t.Run("markdown to stdout, progress to stderr, exit 1", func(t *testing.T) {
+		r := newRunOpts(t, base)
+		r.result = executor.Result{
+			StructuredOutput: json.RawMessage(`{"findings":[{"file":"app/main.go","line":42,"severity":"major",` +
+				`"confidence":90,"title":"unchecked error","body":"the write error is dropped","lenses":["bugs"]}]}`),
+			Tokens: 4210, ActualModel: "claude-opus-5",
+		}
+
+		assert.Equal(t, 1, run(r.opts()), "findings above the threshold exit 1")
+
+		out := r.stdout.String()
+		assert.Contains(t, out, "# Review: pr-1 / round-1")
+		assert.Contains(t, out, "## Major")
+		assert.Contains(t, out, "unchecked error")
+		assert.Contains(t, out, "`app/main.go:42`")
+		assert.Contains(t, out, "sources: lenses", "Go stamps the executing agent's name")
+		assert.Contains(t, out, "claude-opus-5")
+		assert.Contains(t, out, "4210")
+
+		assert.Contains(t, r.stderr.String(), "stage find")
+		assert.Contains(t, r.stderr.String(), "lenses: done, 1 findings")
+	})
+
+	t.Run("json to stdout", func(t *testing.T) {
+		o := base
+		o.JSON = true
+		r := newRunOpts(t, o)
+		r.result = executor.Result{StructuredOutput: json.RawMessage(
+			`{"findings":[{"file":"a.go","line":1,"severity":"minor","confidence":55,"title":"x"}]}`)}
+
+		assert.Equal(t, 1, run(r.opts()))
+
+		var rep finding.Report
+		require.NoError(t, json.Unmarshal([]byte(r.stdout.String()), &rep))
+		assert.Equal(t, "pr-1", rep.Scope.Task)
+		assert.Equal(t, "round-1", rep.Scope.Run)
+		assert.Equal(t, filepath.Join(root, "pr-1", scopeFileName), rep.Scope.ScopePath)
+		require.Len(t, rep.Findings, 1)
+		assert.Equal(t, []string{"lenses"}, rep.Findings[0].Sources)
+	})
+
+	t.Run("min-confidence filters the report and the exit code together", func(t *testing.T) {
+		o := base
+		o.MinConfidence = 80
+		r := newRunOpts(t, o)
+		r.result = executor.Result{StructuredOutput: json.RawMessage(
+			`{"findings":[{"file":"a.go","line":1,"severity":"minor","confidence":55,"title":"below the bar"}]}`)}
+
+		assert.Equal(t, 0, run(r.opts()))
+		assert.Contains(t, r.stdout.String(), "No findings.")
+		assert.NotContains(t, r.stdout.String(), "below the bar")
+	})
+
+	t.Run("nothing found exits 0", func(t *testing.T) {
+		r := newRunOpts(t, base)
+		r.result = executor.Result{StructuredOutput: json.RawMessage(`{"findings":[]}`)}
+		assert.Equal(t, 0, run(r.opts()))
+		assert.Contains(t, r.stdout.String(), "No findings.")
+	})
+
+	t.Run("every source degraded exits 2 with no report", func(t *testing.T) {
+		r := newRunOpts(t, base)
+		r.runErr = errors.New("stalled twice")
+		assert.Equal(t, 2, run(r.opts()))
+		assert.Empty(t, r.stdout.String(), "an empty report would read as a clean run")
+		assert.Contains(t, r.stderr.String(), "review failed")
+	})
+
+	t.Run("a report that cannot be written exits 2", func(t *testing.T) {
+		r := newRunOpts(t, base)
+		r.result = executor.Result{StructuredOutput: json.RawMessage(`{"findings":[]}`)}
+		ro := r.opts()
+		ro.stdout = failingWriter{}
+		assert.Equal(t, 2, run(ro))
+		assert.Contains(t, r.stderr.String(), "write markdown report")
+	})
+}
+
+func TestRunOpts_runnerFactory(t *testing.T) {
+	t.Run("a supplied factory wins", func(t *testing.T) {
+		r := newRunOpts(t, options{})
+		got := r.opts().runnerFactory(reviewContext{})(pipeline.RunnerSpec{Executor: "claude"})
+		assert.IsType(t, &pmocks.RunnerMock{}, got)
+	})
+
+	t.Run("defaults to the claude executor", func(t *testing.T) {
+		r := newRunOpts(t, options{IdleTimeout: time.Minute, HardTimeout: 20 * time.Minute})
+		ro := r.opts()
+		ro.newRunner = nil
+		got := ro.runnerFactory(reviewContext{WorkDir: t.TempDir()})(pipeline.RunnerSpec{Executor: "claude"})
+		assert.IsType(t, &executor.Claude{}, got)
+	})
+}
+
+// taskRoot builds a tasks root holding one filled task directory, never the real ./.revmux/tasks.
+func taskRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, "pr-1")
+	require.NoError(t, os.MkdirAll(dir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, scopeFileName), []byte("review the diff"), 0o600))
+	return root
+}
+
+// runHarness holds the writers a run wrote to, so a test can assert on each stream separately, plus
+// the canned executor result every agent gets back.
 type runHarness struct {
 	o      options
 	stdout *strings.Builder
 	stderr *strings.Builder
+	result executor.Result
+	runErr error
 }
 
 func newRunOpts(t *testing.T, o options) *runHarness {
@@ -147,7 +256,19 @@ func (r *runHarness) opts() runOpts {
 	clk := &mocks.ClockMock{NowFunc: func() time.Time { return time.Date(2026, 7, 26, 16, 2, 11, 0, time.UTC) }}
 	return runOpts{
 		opts: r.o, clock: clk, stdout: r.stdout, stderr: r.stderr,
-		openTTY: func() (*os.File, error) { return nil, errors.New("no tty in tests") },
+		openTTY:   func() (*os.File, error) { return nil, errors.New("no tty in tests") },
+		newRunner: r.newRunner,
+	}
+}
+
+func (r *runHarness) newRunner(pipeline.RunnerSpec) pipeline.Runner {
+	return &pmocks.RunnerMock{
+		RunFunc: func(_ context.Context, req executor.Request, _ executor.EventSink) (executor.Result, error) {
+			if req.RawOutput != nil {
+				_, _ = req.RawOutput.Write([]byte(r.result.Raw))
+			}
+			return r.result, r.runErr
+		},
 	}
 }
 
