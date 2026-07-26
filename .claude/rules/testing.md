@@ -32,6 +32,11 @@ The supervisor's behavior is defined by these, so they are written before the co
   to prove the executor reports what actually ran
 - **truncated** — a stream cut off mid-line, to prove malformed input degrades rather than panics
 - **codex clean / codex prose-wrapped / codex no-JSON / codex stalled** — the same coverage for the other executor
+- **codex stderr** — `codex-clean.err.txt`, the stderr of that same run.
+  It is a second file from one recording rather than a third recording, and it is what the header
+  forwarding, the model read-back and the diagnostic gate are tested against.
+  The single capture prints each header line once and so cannot exercise the dedup at all —
+  the doubled-banner fixture is derived from it, like every other derivation here.
 
 Fixtures are recorded from real CLI output, not hand-written.
 Hand-written fixtures encode what someone assumed the CLI emits, which is exactly the class of bug they should catch.

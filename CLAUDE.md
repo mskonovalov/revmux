@@ -9,10 +9,11 @@ A subprocess does not make the model faster.
 What it buys is control — a watchdog that notices a stall, a kill and retry the caller owns,
 a live view of every agent, per-agent token counts, and a run archive to debug a bad review afterwards.
 
-**Status: initial build in progress.**
-The layout and rules below describe the target, not what is on disk today.
-The build sequence is `docs/plans/20260726-revmux-initial-build.md`.
-When a rule references a file that does not exist yet, the rule is a constraint on the task that creates it.
+**Status: the initial build is complete.**
+The layout and rules below describe what is on disk; the build sequence that produced it is
+`docs/plans/completed/20260726-revmux-initial-build.md`.
+`README.md` is the user-facing description of the same thing — a change to a flag, a roster key, an exit
+code or the JSON shape belongs in both.
 
 ## Working norms
 
@@ -38,6 +39,10 @@ If a note would be equally true of any Go project, it does not belong here.
 
 - `app/main.go` — entrypoint + `run()`
 - `app/config.go` — go-flags options, INI parsing, precedence, `--init` / `--dump-defaults`
+- `app/defaults/config` — the embedded, fully commented-out INI template `--init` materializes;
+  it lives here rather than under `app/prompt/defaults/` because it is settings, not prompt content
+- `app/introspect.go` — the `revmux config` subcommand and the catalog it prints
+- `app/artifacts.go` — the artifacts `package main` owns: `manifest.json`, `report.md`, `findings.json`
 - `app/progress.go` — the non-TTY event subscriber (timestamped lines to stderr)
 - `app/executor/` — supervised subprocess execution for claude and codex
 - `app/prompt/` — front matter and roster parsing, lens composition, `{{VAR}}` substitution, `go:embed` defaults
@@ -115,9 +120,11 @@ half of the events. See `.claude/rules/pipeline.md`.
 
 `--task` and `--run` are caller-supplied and become filesystem paths, so they are validated before use:
 no separators, no `..`, not absolute, and containment re-checked on the resolved path because a symlink
-defeats the lexical test. The same applies to every roster-derived **name** the archive turns into a
-filename — but not to the paths `Archive.Writer` takes, which are relative and must allow a separator
-because `agents/`, `stages/` and `prompts/` all need one.
+defeats the lexical test. Roster agent names carry the same rule, applied at load in
+`prompt.AgentSpec.checkName` — but not the paths `Archive.Writer` takes, which are relative and must allow
+a separator because `agents/`, `stages/` and `prompts/` all need one.
+Names revmux **derives** rather than reads — a verify group's label — are sanitized instead, since their
+parts are directory names from the findings and there is nobody to return an error to.
 
 **Context variables expand to paths, never to content.**
 `{{SCOPE}}` is the absolute path of `scope.md`, not the text inside it; the agent reads the file itself.
@@ -197,13 +204,23 @@ Stamping happens in `find`, not synthesis, or `--no-synthesis` runs carry invent
 
 ## Keep-in-sync conventions
 
-- A new CLI flag needs: the `options` struct tag, the INI key, the README flag table, and the `--dump-defaults` output.
-- A new roster key needs: the `AgentSpec` field, front-matter validation, and the profile examples in README and `.claude/rules/prompts.md`.
+- A new CLI flag needs: the `options` struct tag and the README flag table.
+  An INI-backed one also needs a commented-out entry in `app/defaults/config`, the template `--init` writes —
+  not `--dump-defaults`, which extracts the prompt tree and knows nothing about settings.
+  It is reported by `revmux config` automatically: `knobs` is built by reflection over the `options` struct.
+- A new roster key needs: the `agentYAML` field it parses into, the `AgentSpec` field it resolves to,
+  front-matter validation, and the profile examples in README and `.claude/rules/prompts.md`.
 - A new pipeline `EventKind` needs a case in `app/progress.go` **and** in the TUI's `apply`, or it is silently invisible in one renderer.
 - A new lens file needs an entry in at least one shipped profile, or nothing will ever run it.
 - A new prompt input — a variable, an injected block, a per-agent knob — needs a matching record in
   `manifest.json` or the archived prompt, or a reflection agent cannot tell what shaped the review.
-- Changing any of the three stage schemas means changing `app/finding/schema.go`, the `Report.JSON` shape, the README output section, and every recorded executor fixture carrying a `structured_output`.
+- Changing any of the three stage schemas means changing the embedded JSON under `app/finding/`
+  (`finder-schema.json`, `synthesis-schema.json`, `verify-schema.json` — `schema.go` only embeds them),
+  the `Report.JSON` shape, the README output section, and every recorded executor fixture carrying a
+  `structured_output`.
+  `finder-schema.json` is the harder one: `app/executor/testdata/finder-schema.json` is the copy the live
+  capture was recorded under and is authoritative, so both files move together or the executor tests assert
+  a shape the CLI never emitted.
 
 ## Subsystem notes (path-scoped rules)
 

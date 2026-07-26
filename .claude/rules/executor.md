@@ -134,7 +134,16 @@ Codex is a peer executor, not a special case in the pipeline — but the executo
 - Extraction must tolerate JSON wrapped in surrounding prose; finding no JSON is a degraded source, not a crash.
 - Codex stderr is noisy — startup banner, exec echo, hook lifecycle lines, reasoning stream.
   Forward at most the resolved `model:` / `sandbox:` / `reasoning effort:` header lines, once per process, and suppress the rest.
+  Once per process is a `seen` map keyed on the header name, not a position check:
+  codex reprints the banner in some runs, and the guard is what makes "once" true.
+  **stderr drains in its own goroutine alongside the stdout parse**, so where a forwarded header lands
+  relative to the stdout events is unspecified — assert that a repeated header is forwarded once, never that
+  it arrives at a particular index. A test doing the latter is flaky by construction and was.
+- The resolved `model:` header is also where codex's actual model comes from, since there is no `result`
+  event to read it off.
 - Plan-quota errors arrive on **stderr with an empty stdout**, so a stdout-only error check misses them entirely.
+  Only lines prefixed `error:` are read as diagnostics — that prefix gate is what keeps a reasoning stream
+  discussing a rate limit from being mistaken for one.
 - `--sandbox read-only` always. revmux never lets an agent write.
 
 ### Error and limit patterns

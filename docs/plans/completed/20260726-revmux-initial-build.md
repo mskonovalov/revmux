@@ -1702,9 +1702,40 @@ The single live capture prints each header line once and could not exercise the 
 
 ### Task 17: [Final] Update documentation
 
-- [ ] write README.md covering install, the three stages, the config tree, profiles and lenses, every flag, exit codes, and `revmux config` with a sample of its output — the caller model reads that section to learn how to drive the tool
-- [ ] update CLAUDE.md and `.claude/rules/*.md` where the build diverged from what they describe
-- [ ] move this plan to `docs/plans/completed/`
+- [x] write README.md covering install, the three stages, the config tree, profiles and lenses, every flag, exit codes, and `revmux config` with a sample of its output — the caller model reads that section to learn how to drive the tool
+- [x] update CLAUDE.md and `.claude/rules/*.md` where the build diverged from what they describe
+- [x] move this plan to `docs/plans/completed/`
+
+**Documentation notes:**
+
+➕ Divergences found and corrected in the rules, each one the docs describing something the build does
+differently rather than a gap:
+
+- `.claude/rules/config.md` listed the INI keys with underscores (`idle_timeout`); `ini-name` is the long
+  flag name verbatim, so they are hyphenated. Same fix in `.claude/rules/pipeline.md` for `stagger-delay`
+  and `max-parallel`.
+- `pipeline.md` gave the stagger two release paths; there are three. `runFind` latches the gate on
+  completion, and without it a single-agent roster deadlocks verify — the failure the `app` end-to-end test
+  hit in task 10.
+- `pipeline.md` described `sources` stamping but not the `id` rewrite beside it, nor `merged_ids`, which is
+  how synthesis re-derives attribution. Both are load-bearing for the source count.
+- `pipeline.md` had no verifier failure policy at all; a failing verifier degrades its group, not the stage.
+- `config.md` claimed a verify group's label is validated like an agent name. It is sanitized, not
+  validated — its parts are directory names from the findings, so there is no author to reject. The rule now
+  states the distinction as a rule: reject authored names, sanitize derived ones.
+- `config.md`'s exit-code section implied any archive-path failure exits `2`; a `Prune` failure deliberately
+  does not, since it is housekeeping after the report was written.
+- `tui.md` said the report is "emitted exactly once on quit"; the model never quits itself, and `eventsDone`
+  does nothing but stop the read loop.
+- `CLAUDE.md`'s keep-in-sync list pointed a new flag's default at `--dump-defaults`, which extracts the
+  prompt tree and knows nothing about settings; the template is `app/defaults/config`. It also pointed a
+  schema change at `schema.go`, which only embeds the three JSON files.
+
+➕ `app/introspect.go`, `app/artifacts.go` and `app/defaults/config` were missing from `CLAUDE.md`'s
+project structure and are now listed.
+
+➕ No code changed in this task, so no tests were added. `make test` and the linter were run to confirm the
+tree is unchanged and green.
 
 ## Post-Completion
 

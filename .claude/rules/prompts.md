@@ -88,6 +88,10 @@ the alternative would change the source count, and a caller asking for two lense
 not for two corroborating votes.
 The synthesized entry inherits the profile's top-level `model` and `effort` and runs on `claude`;
 a roster's codex entry does not survive the override, since the caller named the lens set explicitly.
+It is named `lenses`, and that name is not cosmetic: it reaches `Finding.sources` and becomes
+`agents/lenses.jsonl` and `prompts/agents/lenses.md`, so it can never be empty.
+It validates through `AgentSpec.validate` like any authored entry, which is what gives the override the
+name and lens checks for free.
 
 Profiles and stage prompts share a parsed shape but not an interface:
 a stage prompt has no roster, so it must not expose a roster method,

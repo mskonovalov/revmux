@@ -36,12 +36,14 @@ config's other keys.
 
 ### What belongs in the config file
 
-Runtime knobs only: `idle_timeout`, `hard_timeout`, `stagger_delay`, `max_parallel`, `tasks_dir`, `keep_runs`,
-verifier group cap, default profile.
+Runtime knobs only: `idle-timeout`, `hard-timeout`, `stagger-delay`, `max-parallel`, `verify-groups`,
+`tasks-dir`, `keep-runs`, `profile`.
+The key is the long flag name verbatim, hyphens included — that is what `ini-name` is set to, and it is what
+makes the key guessable from `--help`.
 
-`tasks_dir` is a location, not review content, so it belongs here — a user who wants task directories on `/tmp`
+`tasks-dir` is a location, not review content, so it belongs here — a user who wants task directories on `/tmp`
 sets it once rather than passing it on every invocation.
-`keep_runs` prunes `runs/` subdirectories **within** a task directory and never the task directory itself,
+`keep-runs` prunes `runs/` subdirectories **within** a task directory and never the task directory itself,
 because everything above `runs/` was written by the caller.
 
 Everything that shapes a review — rosters, models, effort, prompt text, lenses — lives in markdown.
@@ -112,14 +114,23 @@ absolute / leading-`.` rules above apply to it, and they apply **before** any fi
 An agent called `events` would otherwise collide with `events.jsonl`, which is why per-agent streams live
 in their own subdirectory as well.
 
+That check is `prompt.AgentSpec.checkName`, run at **load**, not in the archive. Load is the earliest point
+still ahead of any filename, it is where every other roster-entry rule already lives, and it covers the
+`--lenses` override for free because that path validates through the same method.
+An invalid agent name is therefore a startup error, like every other bad front-matter value.
+
 `Archive.Writer` itself validates something else: it takes a clean **relative path** and rejects only what
 resolves outside the run root after symlink evaluation. A separator is legal there and must be, since
 `prompts/agents/`, `prompts/stages/`, `stages/` and `agents/` all need one.
 Making `Writer` reject separators would make "`Writer` accepts `prompts/agents/x.md`" and "a separator in
 a name is rejected" mutually unsatisfiable — two tests that both have to pass.
 
-Any other caller-derived string that becomes a filename — a verify group's label, for instance — is
-validated at the same layer as an agent name, before it reaches `Writer`.
+A **derived** string that becomes a filename is sanitized rather than rejected, and a verify group's label
+is the one case of it. Its parts are directory names taken from the findings, so there is no author to send
+an error back to and refusing one would fail a stage over the shape of a path under review. Everything
+outside `[a-zA-Z0-9_.-]` collapses to a dash, leading and trailing `-` and `.` are trimmed, and an empty
+result becomes `root` — so the label is safe by construction, never by validation.
+Reject caller-**authored** names; sanitize revmux-**derived** ones. Do not swap the two.
 
 `--tasks-dir` and `--config-dir` are different roots and must not be conflated:
 the first holds per-review context and run artifacts, the second holds config and the prompt tree.
@@ -155,6 +166,16 @@ run where nothing reported has no review in it, and returning `0` tells a script
 without re-running it, so a report emitted alongside a half-written archive is worse than no report: it looks
 complete, and the gap only surfaces later when someone tries to audit it. Either every required artifact is
 written or the run exits `2`.
+
+**A failed `Prune` is not one of those, and must not be.** It runs after the report has been written, and an
+old run directory that will not delete is housekeeping rather than a missing artifact of *this* run. It warns
+on stderr and leaves the review's own exit code alone; turning a finished review into exit `2` over it would
+tell a scripted caller the review failed.
+For the same reason `Prune` runs last: a failed run keeps its artifacts.
+
+`keep-runs` counts the run being written, so `10` leaves ten directories including the current one, and `0`
+or `1` leaves only the current one. The run being written is never a deletion candidate whatever the number
+says.
 
 ### Config-management flags
 

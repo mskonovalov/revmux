@@ -24,7 +24,13 @@ and `package main` writes it to stdout after the bubbletea program returns.
 
 It arrives as a bubbletea message rather than a pipeline event on purpose:
 the event channel drops under load, and a dropped completion would park the TUI on the agent panes forever.
-That split is also what makes "the report is emitted exactly once on quit" testable without a terminal.
+That split is also what makes the handoff testable without a terminal.
+
+**The run ending is not a reason to quit, and the model must never quit itself.**
+The channel closing yields `eventsDone`, which stops the read loop and does nothing else; `CompletedMsg`
+opens the findings browser. Quitting is the reader's decision, or `package main`'s when the run failed and
+there is nothing to browse. The wait for the program to return is what keeps the report off stdout until the
+terminal is free — writing it while the TUI still owns the screen interleaves it with the final frame.
 
 ### Output streams
 
@@ -64,6 +70,13 @@ Below it, one focused detail pane, switched with tab and number keys.
   For a styled substring inside a lipgloss container — a status separator, an agent-name prefix, a severity chip —
   emit raw ANSI sequences instead.
   Never call `lipgloss.NewStyle().Render()` for an inline element inside a lipgloss-rendered parent.
+- As built, that leaves **lipgloss doing measuring and clipping only, never color**: `lipgloss.Width` to size
+  the status column and `MaxWidth(...).Render` to clip a pane line, because both have to count display cells
+  while ignoring the ANSI a colored line carries. Every color in this package is raw SGR.
+  lipgloss's default renderer also reads its color profile from **stdout**, which is not where the TUI
+  writes, so a color decision made through it would be taken against the wrong stream.
+- The agent-name painter is `prompt.AgentSpec.Paint`, not a helper here.
+  Both renderers call it, which is what makes one agent one color in the TUI and under `--no-tui`.
 - Pane rendering and viewport padding emit plain spaces after a reset, so themed panes show the terminal's
   default background in the gaps. Pad lines to full width before assembly.
 - A factory returning a typed nil pointer through an interface return type produces a non-nil interface.
@@ -76,6 +89,10 @@ Below it, one focused detail pane, switched with tab and number keys.
 - The model must tolerate events for an agent it has not seen yet and events arriving after an agent finished.
   Ordering across concurrent agents is not guaranteed.
 - Never block on the event channel inside `Update` — a slow render must not stall the pipeline.
+- **Elapsed time is measured between event timestamps, so this package takes no clock.**
+  `Event.At` is stamped by the pipeline off the injected clock; an agent's elapsed is the span between the
+  events it produced. Reading a clock here would be OS work by the definition above, and it would make the
+  displayed elapsed disagree with the timings the archive recorded.
 
 ### Receivers
 
