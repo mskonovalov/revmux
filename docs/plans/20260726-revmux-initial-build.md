@@ -1650,16 +1650,16 @@ is no report to collide with and no TUI to gate — it prints and exits before a
 It reports what **resolved**, never what is embedded. A user who overrode one lens and added another must
 see his tree, or the catalog describes a review that will not happen.
 
-- [ ] add `configCmd` to `app/config.go` and register it with `parser.SubcommandsOptional = true`, verifying in the same step that a plain `revmux --task x` still parses with no command word
-- [ ] implement `options.knobs` reading the `knobOrigins` map task 5 records during config load — do not re-derive it here, and do not add a second tracking mechanism
-- [ ] implement `options.catalog` assembling knobs, profiles with resolved rosters and descriptions, lenses with descriptions, the vocabularies from `prompt.Efforts()` and `prompt.Executors()`, and the resolved paths plus existing task names
-- [ ] emit the catalog as indented JSON to `runOpts.stdout` from `run`, returning 0 before any pipeline, archive or TUI is constructed — `Execute` itself writes nothing
-- [ ] write a test asserting the emitted JSON contains every shipped profile, its full roster with per-agent model and effort, and every shipped lens with a non-empty description
-- [ ] write a test with `t.TempDir()` config and prompt trees asserting an overridden lens is reported with the override's own description and an added lens appears, since the catalog must describe what resolves rather than what is embedded
-- [ ] write a test asserting a knob set by flag reports source `flag` and an untouched one reports `default`
-- [ ] write a test comparing the catalog's effort and executor vocabularies against `prompt.Efforts()` and `prompt.Executors()` directly. Comparing against a literal here would verify nothing — it would only assert that two hardcoded lists in the test and the catalog agree, which is the drift the accessor exists to prevent
-- [ ] write a test asserting `revmux config` writes nothing to the tasks directory and creates no run directory
-- [ ] run tests - must pass before task 16
+- [x] add `configCmd` to `app/config.go` and register it with `parser.SubcommandsOptional = true`, verifying in the same step that a plain `revmux --task x` still parses with no command word
+- [x] implement `options.knobs` reading the `knobOrigins` map task 5 records during config load — do not re-derive it here, and do not add a second tracking mechanism
+- [x] implement `options.catalog` assembling knobs, profiles with resolved rosters and descriptions, lenses with descriptions, the vocabularies from `prompt.Efforts()` and `prompt.Executors()`, and the resolved paths plus existing task names
+- [x] emit the catalog as indented JSON to `runOpts.stdout` from `run`, returning 0 before any pipeline, archive or TUI is constructed — `Execute` itself writes nothing
+- [x] write a test asserting the emitted JSON contains every shipped profile, its full roster with per-agent model and effort, and every shipped lens with a non-empty description
+- [x] write a test with `t.TempDir()` config and prompt trees asserting an overridden lens is reported with the override's own description and an added lens appears, since the catalog must describe what resolves rather than what is embedded
+- [x] write a test asserting a knob set by flag reports source `flag` and an untouched one reports `default`
+- [x] write a test comparing the catalog's effort and executor vocabularies against `prompt.Efforts()` and `prompt.Executors()` directly. Comparing against a literal here would verify nothing — it would only assert that two hardcoded lists in the test and the catalog agree, which is the drift the accessor exists to prevent
+- [x] write a test asserting `revmux config` writes nothing to the tasks directory and creates no run directory
+- [x] run tests - must pass before task 16
 
 ### Task 16: Verify acceptance criteria
 

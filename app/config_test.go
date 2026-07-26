@@ -75,6 +75,31 @@ func TestParseArgs_lensesAcceptCommasAndRepetition(t *testing.T) {
 	}
 }
 
+func TestParseArgs_configSubcommand(t *testing.T) {
+	home := isolate(t)
+	cfg := filepath.Join(home, "cfg")
+
+	t.Run("the command word selects the catalog", func(t *testing.T) {
+		o, err := parseArgs([]string{"--config-dir", cfg, "config"})
+		require.NoError(t, err)
+		assert.True(t, o.showConfig)
+		assert.Equal(t, cfg, o.layers.user, "the command still resolves the layers it reports")
+	})
+
+	t.Run("a review still parses with no command word", func(t *testing.T) {
+		o, err := parseArgs([]string{"--task", "pr-1", "--config-dir", cfg})
+		require.NoError(t, err)
+		assert.False(t, o.showConfig)
+		assert.Equal(t, "pr-1", o.Task)
+	})
+
+	t.Run("only the command word selects it", func(t *testing.T) {
+		o, err := parseArgs([]string{"--config-dir", cfg, "confgi"})
+		require.NoError(t, err)
+		assert.False(t, o.showConfig, "a typo must not print a catalog in place of the review that was asked for")
+	})
+}
+
 func TestParseArgs_unknownFlag(t *testing.T) {
 	isolate(t)
 

@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -104,6 +106,96 @@ func TestRun_metaCommands(t *testing.T) {
 		ro.stdout = failingWriter{}
 		assert.Equal(t, 2, run(ro))
 		assert.Contains(t, r.stderr.String(), "write version")
+	})
+}
+
+func TestRun_config(t *testing.T) {
+	root := taskRoot(t)
+
+	emitted := func(t *testing.T, o options) (catalog, *runHarness) {
+		t.Helper()
+		o.showConfig = true
+		r := newRunOpts(t, o)
+		require.Equal(t, 0, run(r.opts()))
+		assert.Empty(t, r.stderr.String(), "the catalog is the whole output")
+
+		var c catalog
+		require.NoError(t, json.Unmarshal([]byte(r.stdout.String()), &c), "the caller model parses this")
+		return c, r
+	}
+
+	t.Run("every shipped profile and lens is reported", func(t *testing.T) {
+		c, r := emitted(t, options{TasksDir: root, Profile: "comprehensive"})
+		assert.Contains(t, r.stdout.String(), "\n  \"knobs\"", "indented, since a human reads it occasionally")
+
+		names := make([]string, 0, len(c.Profiles))
+		for _, p := range c.Profiles {
+			names = append(names, p.Name)
+			assert.NotEmpty(t, p.Description, "profile %s has no description", p.Name)
+			assert.NotEmpty(t, p.Roster, "profile %s reports no roster", p.Name)
+			for _, a := range p.Roster {
+				assert.NotEmpty(t, a.Lenses, "agent %s carries no lens", a.Name)
+				assert.NotEmpty(t, a.Model, "agent %s reports no model", a.Name)
+				assert.NotEmpty(t, a.Effort, "agent %s reports no effort", a.Name)
+				assert.NotEmpty(t, a.Executor, "agent %s reports no executor", a.Name)
+				assert.NotEmpty(t, a.Color, "agent %s reports no color, so the palette assignment is invisible", a.Name)
+			}
+		}
+		assert.Equal(t, []string{"comprehensive", "final", "focused"}, names)
+
+		set, err := prompt.Load(prompt.LoadOpts{})
+		require.NoError(t, err)
+		require.Len(t, c.Lenses, len(set.LensNames()))
+		for _, l := range c.Lenses {
+			assert.NotEmpty(t, l.Description, "lens %s is uncomposable without a description", l.Name)
+		}
+	})
+
+	t.Run("a roster matches what a run of that profile dispatches", func(t *testing.T) {
+		c, _ := emitted(t, options{TasksDir: root})
+
+		set, err := prompt.Load(prompt.LoadOpts{})
+		require.NoError(t, err)
+		for _, p := range c.Profiles {
+			profile, err := set.Profile(p.Name)
+			require.NoError(t, err)
+			want, err := profile.Roster(nil, set.LensNames())
+			require.NoError(t, err)
+			assert.Equal(t, want, p.Roster, "profile %s", p.Name)
+		}
+	})
+
+	t.Run("nothing is written to the tasks directory", func(t *testing.T) {
+		before := treeOf(t, root)
+		c, _ := emitted(t, options{TasksDir: root, Task: "pr-1", Run: "round-1"})
+
+		assert.Equal(t, before, treeOf(t, root), "the catalog runs before any archive exists")
+		assert.NoDirExists(t, filepath.Join(root, "pr-1", "runs"))
+		assert.Equal(t, []string{"pr-1"}, c.Paths.Tasks, "a caller picks a --run name from what is already there")
+	})
+
+	t.Run("an unreadable prompt tree exits 2", func(t *testing.T) {
+		cfg := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(cfg, "lenses"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(cfg, "lenses", "bugs.md"), []byte("---\nnope:\n---\nbody\n"), 0o600))
+
+		r := newRunOpts(t, options{showConfig: true, TasksDir: root, layers: configLayers{user: cfg}})
+		assert.Equal(t, 2, run(r.opts()))
+		assert.Empty(t, r.stdout.String(), "a half-written catalog would parse as a complete one")
+		assert.Contains(t, r.stderr.String(), "load prompts")
+	})
+
+	t.Run("an unwritable stdout exits 2", func(t *testing.T) {
+		r := newRunOpts(t, options{showConfig: true, TasksDir: root})
+		ro := r.opts()
+		ro.stdout = failingWriter{}
+		assert.Equal(t, 2, run(ro))
+		assert.Contains(t, r.stderr.String(), "write catalog")
+	})
+
+	t.Run("an unresolvable profile still reports the tree", func(t *testing.T) {
+		c, _ := emitted(t, options{TasksDir: root, Profile: "nope"})
+		assert.NotEmpty(t, c.Profiles, "the caller running this is the one whose --profile does not resolve")
 	})
 }
 
@@ -487,6 +579,25 @@ func TestRunOpts_runnerFactory(t *testing.T) {
 			})
 		}
 	})
+}
+
+// treeOf lists every path under dir, relative and sorted, so a test can assert a whole directory is
+// untouched rather than naming the files it expects not to appear.
+func treeOf(t *testing.T, dir string) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(dir, func(p string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, p)
+		require.NoError(t, err)
+		out = append(out, rel)
+		return nil
+	})
+	require.NoError(t, err)
+	slices.Sort(out)
+	return out
 }
 
 // taskRoot builds a tasks root holding one filled task directory, never the real ./.revmux/tasks.

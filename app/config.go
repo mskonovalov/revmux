@@ -74,8 +74,11 @@ type options struct {
 	DumpDefaults string `long:"dump-defaults" no-ini:"true" description:"extract the embedded prompt tree into a directory"`
 	Version      bool   `long:"version" no-ini:"true" description:"show version and exit"`
 
+	Config configCmd `command:"config" description:"print the resolved configuration as JSON"`
+
 	layers      configLayers
 	knobOrigins map[string]string
+	showConfig  bool
 }
 
 // configLayers are the two on-disk roots searched ahead of the embedded defaults, resolved once during
@@ -101,6 +104,8 @@ type reviewContext struct {
 func parseArgs(args []string) (options, error) {
 	var o options
 	p := flags.NewParser(&o, flags.HelpFlag|flags.PassDoubleDash)
+	p.SubcommandsOptional = true // a plain `revmux --task pr-123` carries no command word
+	o.Config.opts = &o           // the back-pointer is only how Execute records the selection during this parse
 	if _, err := p.ParseArgs(args); err != nil {
 		return o, fmt.Errorf("parse arguments: %w", err)
 	}

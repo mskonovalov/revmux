@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -69,6 +70,11 @@ func run(o runOpts) int {
 			return o.fail(err)
 		}
 		return 0
+	case o.opts.showConfig:
+		if err := o.writeCatalog(); err != nil {
+			return o.fail(err)
+		}
+		return 0
 	}
 
 	cfg, arc, err := o.pipelineConfig()
@@ -92,6 +98,24 @@ func run(o runOpts) int {
 	}
 	o.prune(arc)
 	return rep.ExitCode()
+}
+
+// writeCatalog prints the resolved configuration as JSON. It is the one carve-out in "stdout belongs
+// to the report": no pipeline, archive or TUI exists yet, so there is nothing for it to collide with.
+//
+// The prompt tree is loaded directly rather than through promptSet: a caller running this to discover
+// which profiles exist is exactly the caller whose --profile does not resolve.
+func (o runOpts) writeCatalog() error {
+	set, err := prompt.Load(o.opts.promptOpts())
+	if err != nil {
+		return fmt.Errorf("load prompts: %w", err)
+	}
+	enc := json.NewEncoder(o.stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(o.opts.catalog(set)); err != nil {
+		return fmt.Errorf("write catalog: %w", err)
+	}
+	return nil
 }
 
 // pipelineConfig resolves everything the pipeline needs, plus the archive package main writes its own
