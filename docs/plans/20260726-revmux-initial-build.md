@@ -384,9 +384,13 @@ which would otherwise produce a fixture that looks recorded but is empty.
 
   ```
   claude --print --output-format stream-json --verbose \
-         --json-schema app/executor/testdata/finder-schema.json \
+         --json-schema "$(cat app/executor/testdata/finder-schema.json)" \
          < some-review-prompt.txt > app/executor/testdata/claude-clean.jsonl
   ```
+
+  ⚠️ `--json-schema` takes the schema JSON as the argument value, not a path — an earlier draft of this
+  block passed the path and the capture failed with an empty stdout, which is indistinguishable from an
+  agent that found nothing. Recorded in `.claude/rules/executor.md`.
 
 - `app/executor/testdata/finder-schema.json` — the schema used for that capture, hand-written and committed
   alongside it. **This file is authoritative and task 2 conforms to it**, not the reverse: `FinderSchema()`
@@ -541,6 +545,13 @@ Exports (justification per item: who outside the package calls this?):
 - Already present from the Prerequisites, **not created here**: `app/executor/testdata/claude-clean.jsonl`,
   `app/executor/testdata/codex-clean.txt`, `app/executor/testdata/finder-schema.json`.
   Every other fixture is derived from those inside a `_test.go` helper, never written to disk
+- ➕ Also captured: `app/executor/testdata/codex-clean.err.txt`, codex's stderr from the same run. Task 8
+  filters that stream down to the `model:` / `sandbox:` / `reasoning effort:` header lines and reads the
+  session id out of it; neither is derivable from stdout, so recording it now avoids a second live capture
+  no agent can run. Home-directory paths in all three captures are rewritten to `/home/reviewer` — the repo
+  ships publicly and nothing in the wire shape depends on the path
+- ➕ `app/executor/procgroup.go` — `processGroupCleanup` itself, untagged so both builds see one type. The
+  plan named the file pair but not the shared declaration's home
 
 **Design Contract:**
 
@@ -624,25 +635,25 @@ Exports (justification per item: who outside the package calls this?):
 - `Clock`, `Timer`, `NewRunner`, `NewClock` — `package main` supplies the production runner and clock; `app/pipeline` and `app/archive` take the same `Clock` so one fake drives every timing path in a test
 - `EventSink`, `Event` — `app/pipeline`'s adapter implements the interface and consumes the event
 
-- [ ] validate both prerequisite captures before writing any code: `testdata/claude-clean.jsonl` parses line-by-line and ends in a `result` event carrying `structured_output`, `testdata/codex-clean.txt` is non-empty and holds an extractable JSON block. Either failing stops the build and asks — a silently-empty capture makes every derived fixture empty and every executor test vacuous
-- [ ] create `app/executor/executor.go` with `CommandRunner`, `EventSink`, `Event`, `Clock`, `Opts`, `Request`, `Result` and the moq `go:generate` directive
-- [ ] create `app/executor/proc.go` with the shared `proc`: start, idle-timeout arming and reset via the injected `Clock`, hard timeout, child-env scrubbing (`CLAUDECODE` always, `ANTHROPIC_API_KEY` unless `Opts.PreserveAPIKey`), a verbatim tee to `Request.RawOutput` before parsing, and `readLines` as a method (no standalone `linereader.go`)
-- [ ] create `app/executor/procgroup_unix.go` / `procgroup_windows.go` with `Setsid`, SIGTERM→grace→SIGKILL on the process group, early return on `ESRCH`, and kill-on-normal-exit to reap orphans; declare `processGroupCleanup` in a shared untagged file so both builds see one type
-- [ ] create `app/executor/stream.go` decoding stream-json lines, extracting `structured_output`, `modelUsage`, per-model `usage` token counts and `rate_limit_event`
-- [ ] create `app/executor/claude.go` embedding `proc`, building flags from `Opts` + `Request`, setting `Result.IdleTimedOut` when the derived context fired but the parent is alive
-- [ ] derive the remaining claude fixtures from `testdata/claude-clean.jsonl` in a `_test.go` helper: truncated is the clean bytes cut mid-line, stalling is cut early, rate-limited and model-mismatch are the clean bytes with one field patched — real CLI output either way, and re-recording the clean capture regenerates all four
-- [ ] run `go generate ./...` to produce `app/executor/mocks/`
-- [ ] write tests for the clean run (findings extracted, tokens and model reported)
-- [ ] write tests for the stall fixture using a fake clock the test advances and a `CommandRunner` that emits fixture bytes then blocks until cancellation, asserting the idle timeout fires and `IdleTimedOut` is set with no error returned
-- [ ] write a test asserting `Request.RawOutput` receives bytes identical to what the runner produced, including for a stream that fails to parse
-- [ ] write tests for the rate-limit and truncated-stream fixtures
-- [ ] write a test asserting `Result` reports the model from `modelUsage`, not the requested one
-- [ ] write a test asserting `CLAUDECODE` is absent from the child environment, that `ANTHROPIC_API_KEY` is stripped by default, and that `Opts.PreserveAPIKey` passes it through — the flag that sets that field does not exist until task 5, which tests the flag-to-field mapping itself
-- [ ] write a test asserting a nil `Opts.Clock` is replaced by `NewClock()` rather than panicking on the first `AfterFunc`, since the composition root builds `Opts` from a struct that carries no clock
-- [ ] write a test running two `Claude.Run` calls concurrently on one instance under `-race`, proving `proc` holds no per-run state — the roster runs concurrently from task 7 on, and no other planned test exercises one executor instance from two goroutines
-- [ ] write tests for `args(req)` covering every flag including `--disable-slash-commands` and the schema
-- [ ] verify `GOOS=windows GOARCH=amd64 go build ./...`
-- [ ] run tests - must pass before task 4
+- [x] validate both prerequisite captures before writing any code: `testdata/claude-clean.jsonl` parses line-by-line and ends in a `result` event carrying `structured_output`, `testdata/codex-clean.txt` is non-empty and holds an extractable JSON block. Either failing stops the build and asks — a silently-empty capture makes every derived fixture empty and every executor test vacuous
+- [x] create `app/executor/executor.go` with `CommandRunner`, `EventSink`, `Event`, `Clock`, `Opts`, `Request`, `Result` and the moq `go:generate` directive
+- [x] create `app/executor/proc.go` with the shared `proc`: start, idle-timeout arming and reset via the injected `Clock`, hard timeout, child-env scrubbing (`CLAUDECODE` always, `ANTHROPIC_API_KEY` unless `Opts.PreserveAPIKey`), a verbatim tee to `Request.RawOutput` before parsing, and `readLines` as a method (no standalone `linereader.go`)
+- [x] create `app/executor/procgroup_unix.go` / `procgroup_windows.go` with `Setsid`, SIGTERM→grace→SIGKILL on the process group, early return on `ESRCH`, and kill-on-normal-exit to reap orphans; declare `processGroupCleanup` in a shared untagged file so both builds see one type
+- [x] create `app/executor/stream.go` decoding stream-json lines, extracting `structured_output`, `modelUsage`, per-model `usage` token counts and `rate_limit_event`
+- [x] create `app/executor/claude.go` embedding `proc`, building flags from `Opts` + `Request`, setting `Result.IdleTimedOut` when the derived context fired but the parent is alive
+- [x] derive the remaining claude fixtures from `testdata/claude-clean.jsonl` in a `_test.go` helper: truncated is the clean bytes cut mid-line, stalling is cut early, rate-limited and model-mismatch are the clean bytes with one field patched — real CLI output either way, and re-recording the clean capture regenerates all four
+- [x] run `go generate ./...` to produce `app/executor/mocks/`
+- [x] write tests for the clean run (findings extracted, tokens and model reported)
+- [x] write tests for the stall fixture using a fake clock the test advances and a `CommandRunner` that emits fixture bytes then blocks until cancellation, asserting the idle timeout fires and `IdleTimedOut` is set with no error returned
+- [x] write a test asserting `Request.RawOutput` receives bytes identical to what the runner produced, including for a stream that fails to parse
+- [x] write tests for the rate-limit and truncated-stream fixtures
+- [x] write a test asserting `Result` reports the model from `modelUsage`, not the requested one
+- [x] write a test asserting `CLAUDECODE` is absent from the child environment, that `ANTHROPIC_API_KEY` is stripped by default, and that `Opts.PreserveAPIKey` passes it through — the flag that sets that field does not exist until task 5, which tests the flag-to-field mapping itself
+- [x] write a test asserting a nil `Opts.Clock` is replaced by `NewClock()` rather than panicking on the first `AfterFunc`, since the composition root builds `Opts` from a struct that carries no clock
+- [x] write a test running two `Claude.Run` calls concurrently on one instance under `-race`, proving `proc` holds no per-run state — the roster runs concurrently from task 7 on, and no other planned test exercises one executor instance from two goroutines
+- [x] write tests for `args(req)` covering every flag including `--disable-slash-commands` and the schema
+- [x] verify `GOOS=windows GOARCH=amd64 go build ./...`
+- [x] run tests - must pass before task 4
 
 ### Task 4: Prompt loading, roster parsing and lens composition
 

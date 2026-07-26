@@ -16,6 +16,10 @@ Measured directly against the real CLI. Do not re-derive, and do not assume any 
   The model is forced through a `StructuredOutput` tool call,
   and the terminal `result` event carries a **pre-parsed `structured_output` object** alongside the raw `result` string.
   Read `structured_output`. Never scrape JSON out of prose, and never parse the `result` string when the object is present.
+- **`--json-schema` takes the schema JSON itself as the argument value, never a path to a file holding it.**
+  Passing a path fails immediately with `--json-schema is not valid JSON: JSON Parse error: Unrecognized token '/'`,
+  and since a failed launch writes nothing to stdout, it looks exactly like an agent that produced no findings.
+  `Request.Schema` therefore goes in as `string(req.Schema)`.
 - The stream carries a typed `rate_limit_event`:
   `{"type":"rate_limit_event","rate_limit_info":{"status","resetsAt","rateLimitType","overageStatus"}}`.
   Use it. It is strictly better than matching error strings.
