@@ -1,0 +1,21 @@
+# private, machine-local notes — never commit
+CLAUDE.local.md
+
+# build output
+.bin/
+coverage.out
+coverage_no_mocks.out
+
+# per-review task directories: caller-written context plus revmux run artifacts
+.revmux/tasks/
+
+# track .claude/rules despite global gitignore
+!.claude/
+.claude/*
+!.claude/rules
+!.claude/rules/**
+
+# local claude/editor state
+.claude/settings.local.json
+.claude/worktrees/
+.DS_Store
