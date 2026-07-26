@@ -513,23 +513,23 @@ Exports (justification per item: who outside the package calls this?):
 - `SourceStatus.Degraded` — called from `app/pipeline` synthesis and from `app/ui` for the banner
 - `FinderSchema` / `SynthesisSchema` / `VerifySchema` — called from `app/pipeline` to build each stage's `--json-schema` argument
 
-- [ ] create `app/finding/finding.go` with `Finding` (id, file, line, end_line, severity, confidence, title, body, fix, `sources` agent names, `lenses` lens names, verdict) — no `tags` field, and `sources` never holds a lens name
-- [ ] `line` is the anchor and `end_line` is optional: zero means a single line, and `line` itself zero means a file-level finding with no line at all
-- [ ] create `app/finding/report.go` with `Report` (`Findings`, `OpenQuestions`, `PreExisting`, `Immaterial`, `Scope`, `SourceStatus`, `Stats`), `Scope`, `SourceStatus`, `SourceStat`, `Stats`, `StageTiming`, and the `Degraded()` method; `Stats` carries start, finish, duration, the run's token total and per-stage timings, `SourceStat` carries the per-agent breakdown including lenses and effort
-- [ ] implement `Report.Markdown` grouping by severity with a degraded-sources banner when `Degraded()`, rendering open questions, pre-existing and immaterial as their own sections, and printing per-agent tokens and actual model from `SourceStat`
-- [ ] implement `Report.JSON` emitting the documented shape, plus `Above` and `ExitCode`; `Above` filters `Findings` only and passes the other three lists through untouched
-- [ ] create `app/finding/schema.go` with `FinderSchema()`, `SynthesisSchema()` and `VerifySchema()` — the finder's omits `sources` and `verdict`, synthesis returns merged input ids so Go derives the unions, verify returns id plus verdict
-- [ ] write tests for markdown rendering (with and without degraded banner, empty report, all severities, and both extra sections)
-- [ ] write tests for JSON round-trip, `Above` filtering and `ExitCode` mapping (0/1)
-- [ ] write a test asserting `Above` does not drop open questions, pre-existing or immaterial findings even below the threshold
-- [ ] write a test asserting all three schemas are valid JSON; that **no** schema exposes `sources`; that `FinderSchema` also omits `verdict` while `VerifySchema` requires one; that `SynthesisSchema` describes the three-list shape and carries merged input ids
-- [ ] `FinderSchema()` returns the bytes of `app/executor/testdata/finder-schema.json` — the file the prerequisite capture was recorded under — by embedding a copy of it under `app/finding/`. Write a test asserting the two are identical. That binding is the only thing tying the recorded `structured_output` shape to the code that parses it; if they drift, every executor and find-stage test asserts against a shape the CLI will never emit. **The fixture wins any disagreement** — changing it invalidates a capture no agent can retake
-- [ ] write a test asserting `Stats` round-trips start, finish and per-stage timings, since `manifest.json` and the prior-round history both read them and neither can recompute them
-- [ ] write a test covering every `Verdict` and `Severity` value in markdown rendering, so an unhandled enum case cannot ship silently
-- [ ] write a test asserting `SourceStat` survives a JSON round-trip with per-agent tokens and both model fields, since `manifest.json` and task 16 both read them
-- [ ] write a test asserting `sources` and `lenses` are distinct fields that survive a JSON round-trip independently, so a future refactor cannot quietly merge them
-- [ ] write tests for location rendering across all three shapes: single line, `line`-`end_line` range, and file-level with no line
-- [ ] run tests - must pass before task 3
+- [x] create `app/finding/finding.go` with `Finding` (id, file, line, end_line, severity, confidence, title, body, fix, `sources` agent names, `lenses` lens names, verdict) — no `tags` field, and `sources` never holds a lens name
+- [x] `line` is the anchor and `end_line` is optional: zero means a single line, and `line` itself zero means a file-level finding with no line at all
+- [x] create `app/finding/report.go` with `Report` (`Findings`, `OpenQuestions`, `PreExisting`, `Immaterial`, `Scope`, `SourceStatus`, `Stats`), `Scope`, `SourceStatus`, `SourceStat`, `Stats`, `StageTiming`, and the `Degraded()` method; `Stats` carries start, finish, duration, the run's token total and per-stage timings, `SourceStat` carries the per-agent breakdown including lenses and effort
+- [x] implement `Report.Markdown` grouping by severity with a degraded-sources banner when `Degraded()`, rendering open questions, pre-existing and immaterial as their own sections, and printing per-agent tokens and actual model from `SourceStat`
+- [x] implement `Report.JSON` emitting the documented shape, plus `Above` and `ExitCode`; `Above` filters `Findings` only and passes the other three lists through untouched
+- [x] create `app/finding/schema.go` with `FinderSchema()`, `SynthesisSchema()` and `VerifySchema()` — the finder's omits `sources` and `verdict`, synthesis returns merged input ids so Go derives the unions, verify returns id plus verdict
+- [x] write tests for markdown rendering (with and without degraded banner, empty report, all severities, and both extra sections)
+- [x] write tests for JSON round-trip, `Above` filtering and `ExitCode` mapping (0/1)
+- [x] write a test asserting `Above` does not drop open questions, pre-existing or immaterial findings even below the threshold
+- [x] write a test asserting all three schemas are valid JSON; that **no** schema exposes `sources`; that `FinderSchema` also omits `verdict` while `VerifySchema` requires one; that `SynthesisSchema` describes the three-list shape and carries merged input ids
+- [x] `FinderSchema()` returns the bytes of `app/executor/testdata/finder-schema.json` — the file the prerequisite capture was recorded under — by embedding a copy of it under `app/finding/`. Write a test asserting the two are identical. That binding is the only thing tying the recorded `structured_output` shape to the code that parses it; if they drift, every executor and find-stage test asserts against a shape the CLI will never emit. **The fixture wins any disagreement** — changing it invalidates a capture no agent can retake
+- [x] write a test asserting `Stats` round-trips start, finish and per-stage timings, since `manifest.json` and the prior-round history both read them and neither can recompute them
+- [x] write a test covering every `Verdict` and `Severity` value in markdown rendering, so an unhandled enum case cannot ship silently
+- [x] write a test asserting `SourceStat` survives a JSON round-trip with per-agent tokens and both model fields, since `manifest.json` and task 16 both read them
+- [x] write a test asserting `sources` and `lenses` are distinct fields that survive a JSON round-trip independently, so a future refactor cannot quietly merge them
+- [x] write tests for location rendering across all three shapes: single line, `line`-`end_line` range, and file-level with no line
+- [x] run tests - must pass before task 3
 
 ### Task 3: Supervised claude executor
 
