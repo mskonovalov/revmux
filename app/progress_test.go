@@ -9,6 +9,8 @@ import (
 
 	"github.com/umputun/revmux/app/finding"
 	"github.com/umputun/revmux/app/pipeline"
+	"github.com/umputun/revmux/app/prompt"
+	"github.com/umputun/revmux/app/ui"
 )
 
 var progressAt = time.Date(2026, 7, 26, 16, 2, 11, 0, time.UTC)
@@ -70,6 +72,61 @@ func TestProgress_line(t *testing.T) {
 			assert.Equal(t, tt.want, pr.line(ev))
 		})
 	}
+}
+
+func TestProgress_paint(t *testing.T) {
+	roster := []prompt.AgentSpec{{Name: "bugs+impl", Color: "6"}, {Name: "codex", Color: "#ff8800"}}
+	pr := &progress{roster: roster}
+
+	tests := []struct {
+		name string
+		ev   pipeline.Event
+		want string
+	}{
+		{
+			"the agent's own color prefixes its line",
+			pipeline.Event{Kind: pipeline.EventAgentActivity, Agent: "bugs+impl", Text: "tool: Read", At: progressAt},
+			"16:02:11 \x1b[36mbugs+impl\x1b[39m: tool: Read",
+		},
+		{
+			"a hex color reaches the line as truecolor",
+			pipeline.Event{Kind: pipeline.EventAgentActivity, Agent: "codex", Text: "tool: Grep", At: progressAt},
+			"16:02:11 \x1b[38;2;255;136;0mcodex\x1b[39m: tool: Grep",
+		},
+		{
+			"an agent the roster does not name keeps the default foreground",
+			pipeline.Event{Kind: pipeline.EventAgentActivity, Agent: "stranger", Text: "tool: Read", At: progressAt},
+			"16:02:11 stranger: tool: Read",
+		},
+		{
+			"a stage change belongs to no agent",
+			pipeline.Event{Kind: pipeline.EventStage, Stage: "find", At: progressAt},
+			"16:02:11 stage find",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, pr.line(tt.ev))
+		})
+	}
+}
+
+// the roster carries the resolved color, so a reviewer switching renderers sees the same agent the
+// same way. A color picked inside either renderer would exist in that one only.
+func TestProgress_colorsAgreeWithTheTUI(t *testing.T) {
+	roster := []prompt.AgentSpec{{Name: "bugs+impl", Color: "6"}, {Name: "codex", Color: "#ff8800"}}
+	ev := pipeline.Event{Kind: pipeline.EventAgentActivity, Agent: "codex", Text: "tool: Grep", At: progressAt}
+
+	plain := (&progress{roster: roster}).line(ev)
+
+	m := ui.New(ui.ModelConfig{Roster: roster})
+	tui, _ := m.Update(ev)
+	rendered := tui.(ui.Model).View()
+
+	prefix := roster[1].Paint("codex")
+	assert.Contains(t, plain, prefix)
+	assert.Contains(t, rendered, prefix)
 }
 
 func TestProgress_run(t *testing.T) {

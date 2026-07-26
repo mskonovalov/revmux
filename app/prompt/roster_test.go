@@ -126,6 +126,49 @@ func TestProfile_Roster_Colors(t *testing.T) {
 	})
 }
 
+func TestAgentSpec_Paint(t *testing.T) {
+	tests := []struct {
+		name  string
+		color string
+		want  string
+	}{
+		{"an index picks a color out of the reader's own theme", "6", "\x1b[36mbugs\x1b[39m"},
+		{"the first index", "0", "\x1b[30mbugs\x1b[39m"},
+		{"a bright index has its own range", "12", "\x1b[94mbugs\x1b[39m"},
+		{"the last bright index", "15", "\x1b[97mbugs\x1b[39m"},
+		{"hex asks for that exact shade", "#ff8800", "\x1b[38;2;255;136;0mbugs\x1b[39m"},
+		{"black hex is not an absent color", "#000000", "\x1b[38;2;0;0;0mbugs\x1b[39m"},
+		{"no color leaves the text alone", "", "bugs"},
+		{"and so does an unresolvable one", "chartreuse", "bugs"},
+		{"or an index outside the ansi-16 set", "16", "bugs"},
+		{"or a malformed hex value", "#nothex", "bugs"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, AgentSpec{Name: "bugs", Color: tt.color}.Paint("bugs"))
+		})
+	}
+
+	t.Run("the reset restores the foreground only", func(t *testing.T) {
+		// a full reset would clear the enclosing pane's background along with the color
+		assert.NotContains(t, AgentSpec{Color: "6"}.Paint("bugs"), "\x1b[0m")
+	})
+
+	t.Run("an empty string is not worth a color sequence", func(t *testing.T) {
+		assert.Empty(t, AgentSpec{Color: "6"}.Paint(""))
+	})
+
+	t.Run("every resolved roster color paints", func(t *testing.T) {
+		_, p := loadProfile(t, "agents:\n  - {name: a, lenses: [bugs]}\n  - {name: b, lenses: [bugs], color: red}\n")
+		specs, err := p.Roster(nil, map[string]struct{}{"bugs": {}})
+		require.NoError(t, err)
+		for _, s := range specs {
+			assert.NotEqual(t, s.Name, s.Paint(s.Name), "a resolved color always reaches the renderers")
+		}
+	})
+}
+
 func TestProfile_Roster_LensOverride(t *testing.T) {
 	known := map[string]struct{}{"bugs": {}, "adversarial": {}}
 	_, p := loadProfile(t, `model: opus

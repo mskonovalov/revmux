@@ -1444,21 +1444,40 @@ Standalone helpers planned (justification why NOT a method):
 Exports (justification per item: who outside the package calls this?):
 - `Model`, `ModelConfig`, `New` — `package main` constructs and runs the bubbletea program
 
-- [ ] create `app/ui/model.go` with `Model`, `ModelConfig`, `New` and the state sub-structs
-- [ ] create `app/ui/status.go` rendering one row per agent: name, state, elapsed, last activity
-- [ ] create `app/ui/combined.go` with tab `0 · all`, chronological, agent-prefixed and colored, one compact line per tool call, state change and finding, deliberately excluding thinking text
-- [ ] color the agent prefix from `AgentSpec.Color` in both the status table and the combined view, emitting raw ANSI for the inline prefix rather than `lipgloss.Render()` — `tui.md` records that a nested render emits a full reset and kills the enclosing pane's background
-- [ ] teach `app/progress.go` the same roster so `--no-tui` prefixes each agent in its own color too, and a reviewer switching renderers sees the same agent the same way
-- [ ] create `app/ui/agentpane.go` with tabs `1-9` showing full per-agent scrollback including thinking
-- [ ] create `app/ui/handlers.go` for tab and number switching, scrolling, and quit
-- [ ] wire `app/main.go` to run the TUI when the tty is openable and `--no-tui` is unset, rendering to the tty
-- [ ] write tests driving `Update` with synthetic `pipeline.Event` values and asserting rendered output
-- [ ] write tests for tab switching, scrollback bounds and the combined view's compact filtering
-- [ ] write a test asserting the combined view is focused by default
-- [ ] write a test asserting events for an unknown agent and events after an agent finished are tolerated, including that an unrostered name renders in the default foreground rather than panicking
-- [ ] write a test asserting the TUI and the plain renderer emit the same color for the same agent
-- [ ] add `bubbletea`, `bubbles` and `lipgloss` and run `go mod vendor` — first import of all three
-- [ ] run tests - must pass before task 13
+- [x] create `app/ui/model.go` with `Model`, `ModelConfig`, `New` and the state sub-structs
+- [x] create `app/ui/status.go` rendering one row per agent: name, state, elapsed, last activity
+- [x] create `app/ui/combined.go` with tab `0 · all`, chronological, agent-prefixed and colored, one compact line per tool call, state change and finding, deliberately excluding thinking text
+- [x] color the agent prefix from `AgentSpec.Color` in both the status table and the combined view, emitting raw ANSI for the inline prefix rather than `lipgloss.Render()` — `tui.md` records that a nested render emits a full reset and kills the enclosing pane's background
+- [x] teach `app/progress.go` the same roster so `--no-tui` prefixes each agent in its own color too, and a reviewer switching renderers sees the same agent the same way
+- [x] create `app/ui/agentpane.go` with tabs `1-9` showing full per-agent scrollback including thinking
+- [x] create `app/ui/handlers.go` for tab and number switching, scrolling, and quit
+- [x] wire `app/main.go` to run the TUI when the tty is openable and `--no-tui` is unset, rendering to the tty
+- [x] write tests driving `Update` with synthetic `pipeline.Event` values and asserting rendered output
+- [x] write tests for tab switching, scrollback bounds and the combined view's compact filtering
+- [x] write a test asserting the combined view is focused by default
+- [x] write a test asserting events for an unknown agent and events after an agent finished are tolerated, including that an unrostered name renders in the default foreground rather than panicking
+- [x] write a test asserting the TUI and the plain renderer emit the same color for the same agent
+- [x] add `bubbletea`, `bubbles` and `lipgloss` and run `go mod vendor` — first import of all three
+- [x] run tests - must pass before task 13
+
+- ➕ the raw-ANSI painter is `prompt.AgentSpec.Paint`, not a helper inside `app/ui`. Both renderers
+  call the one implementation, which is what "the TUI and the plain renderer emit the same color"
+  actually needs — two implementations reading one resolved value can still drift. It emits
+  `\x1b[39m` rather than a full reset, for the reason `tui.md` gives, and `app/prompt` still imports
+  no lipgloss
+- ➕ **lipgloss is used for measuring and clipping only, never for color.** Its default renderer
+  detects the color profile from **stdout**, which is not where the TUI writes: under
+  `revmux --json > file` it would strip every color while the reviewer sits at a terminal — the same
+  class of mistake as gating the TUI on stdout being a TTY. `lipgloss.Width` and `MaxWidth` are
+  profile-independent and are what keeps a clip from cutting an escape sequence in half
+- ➕ elapsed time is measured between event timestamps rather than off a clock. `app/ui` takes no
+  `Clock`, and a table that renders identically in a test and in a terminal needs no fake for it
+- ➕ the model quits when the pipeline closes its channel, so `render` returns and `package main`
+  writes the report as it already did. `q` stops watching without stopping the run. Task 13 replaces
+  the first half of that with `CompletedMsg`
+- ➕ `app/ui/view.go` also carries `tabBar`, the scroll window and the clipping helpers; the plan
+  named the file without saying what beyond `View` lives in it. `doc.go` holds the package comment
+  and no code, so it has no test file
 
 ### Task 13: TUI — findings browser
 

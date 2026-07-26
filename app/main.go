@@ -7,12 +7,15 @@ import (
 	"io"
 	"os"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jessevdk/go-flags"
 
 	"github.com/umputun/revmux/app/archive"
 	"github.com/umputun/revmux/app/executor"
 	"github.com/umputun/revmux/app/finding"
 	"github.com/umputun/revmux/app/pipeline"
+	"github.com/umputun/revmux/app/prompt"
+	"github.com/umputun/revmux/app/ui"
 )
 
 var revision = "unknown"
@@ -141,16 +144,15 @@ func (o runOpts) pipelineConfig() (pipeline.Config, *archive.Archive, error) {
 	}, arc, nil
 }
 
-// review runs the pipeline with the plain renderer subscribed to its events, and returns only once
-// that renderer has drained the channel.
+// review runs the pipeline with a renderer subscribed to its events, and returns only once that
+// renderer has finished with the channel.
 func (o runOpts) review(cfg pipeline.Config) (finding.Report, error) {
 	p := pipeline.New(cfg)
 
 	rendered := make(chan struct{})
 	go func() {
 		defer close(rendered)
-		pr := &progress{w: o.stderr}
-		pr.run(p.Events())
+		o.render(cfg.Roster, p.Events())
 	}()
 
 	rep, err := p.Run(context.Background())
@@ -159,6 +161,38 @@ func (o runOpts) review(cfg pipeline.Config) (finding.Report, error) {
 		return finding.Report{}, fmt.Errorf("review failed: %w", err)
 	}
 	return rep, nil
+}
+
+// render subscribes the active renderer to the run's events — the TUI when the tty opens, the plain
+// stderr renderer otherwise. Exactly one of them reads the channel: a Go channel distributes rather
+// than broadcasts, so a second reader would take an arbitrary half of the events.
+func (o runOpts) render(roster []prompt.AgentSpec, events <-chan pipeline.Event) {
+	tty := o.tty()
+	if tty == nil {
+		(&progress{w: o.stderr, roster: roster}).run(events)
+		return
+	}
+	defer func() { _ = tty.Close() }()
+
+	m := ui.New(ui.ModelConfig{Roster: roster, Events: events})
+	prog := tea.NewProgram(m, tea.WithInput(tty), tea.WithOutput(tty), tea.WithAltScreen())
+	if _, err := prog.Run(); err != nil {
+		_, _ = fmt.Fprintf(o.stderr, "warning: terminal ui: %v\n", err)
+	}
+}
+
+// tty opens the terminal the TUI renders to, nil when there is none to render on. The gate is the tty
+// opening, never stdout being a terminal — that is false whenever the report is redirected, which is
+// one of the most common invocations.
+func (o runOpts) tty() *os.File {
+	if o.opts.NoTUI || o.openTTY == nil {
+		return nil
+	}
+	f, err := o.openTTY()
+	if err != nil {
+		return nil
+	}
+	return f
 }
 
 // runnerFactory builds the per-spec executor factory. A caller-supplied one wins, so a test drives

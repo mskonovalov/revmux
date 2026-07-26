@@ -22,6 +22,7 @@ import (
 	"github.com/umputun/revmux/app/finding"
 	"github.com/umputun/revmux/app/pipeline"
 	pmocks "github.com/umputun/revmux/app/pipeline/mocks"
+	"github.com/umputun/revmux/app/prompt"
 )
 
 func TestPrintVersion(t *testing.T) {
@@ -163,7 +164,8 @@ func TestRun_review(t *testing.T) {
 		assert.Contains(t, out, "4210")
 
 		assert.Contains(t, r.stderr.String(), "stage find")
-		assert.Contains(t, r.stderr.String(), "lenses: done, 1 findings")
+		// the plain renderer prefixes the agent in its own resolved color, the same one the ui uses
+		assert.Contains(t, r.stderr.String(), prompt.AgentSpec{Color: "6"}.Paint("lenses")+": done, 1 findings")
 	})
 
 	t.Run("json to stdout", func(t *testing.T) {
@@ -240,6 +242,88 @@ func TestRun_review(t *testing.T) {
 		ro.stdout = failingWriter{}
 		assert.Equal(t, 2, run(ro))
 		assert.Contains(t, r.stderr.String(), "write markdown report")
+	})
+}
+
+func TestRunOpts_tty(t *testing.T) {
+	// a real terminal is never opened in a test, so the opener stands in for one: what matters is
+	// that the gate is the opener and nothing else
+	opened := func(t *testing.T) func() (*os.File, error) {
+		t.Helper()
+		return func() (*os.File, error) { return os.CreateTemp(t.TempDir(), "tty") }
+	}
+
+	t.Run("an openable tty is what enables the ui", func(t *testing.T) {
+		r := newRunOpts(t, options{})
+		ro := r.opts()
+		ro.stdout = failingWriter{} // stdout is not a terminal here, and must not be the gate
+		ro.openTTY = opened(t)
+
+		tty := ro.tty()
+		require.NotNil(t, tty)
+		assert.NoError(t, tty.Close())
+	})
+
+	t.Run("--no-tui never opens one", func(t *testing.T) {
+		r := newRunOpts(t, options{NoTUI: true})
+		ro := r.opts()
+		ro.openTTY = func() (*os.File, error) {
+			t.Fatal("the opener must not be reached with --no-tui")
+			return nil, errors.New("unreachable")
+		}
+		assert.Nil(t, ro.tty())
+	})
+
+	t.Run("a tty that will not open falls back to the plain renderer", func(t *testing.T) {
+		assert.Nil(t, newRunOpts(t, options{}).opts().tty(), "the harness opener always fails")
+	})
+
+	t.Run("no opener at all is the same as no tty", func(t *testing.T) {
+		ro := newRunOpts(t, options{}).opts()
+		ro.openTTY = nil
+		assert.Nil(t, ro.tty())
+	})
+}
+
+func TestRunOpts_render(t *testing.T) {
+	roster := []prompt.AgentSpec{{Name: "bugs", Color: "6"}}
+
+	t.Run("with no tty the plain renderer takes the events", func(t *testing.T) {
+		events := make(chan pipeline.Event, 1)
+		events <- pipeline.Event{Kind: pipeline.EventStage, Stage: "find", At: time.Now()}
+		close(events)
+
+		r := newRunOpts(t, options{})
+		r.opts().render(roster, events)
+		assert.Contains(t, r.stderr.String(), "stage find")
+		assert.Empty(t, r.stdout.String(), "stdout belongs to the report alone")
+	})
+
+	t.Run("with a tty the ui renders there and returns when the run ends", func(t *testing.T) {
+		events := make(chan pipeline.Event, 2)
+		events <- pipeline.Event{Kind: pipeline.EventStage, Stage: "find", At: time.Now()}
+		events <- pipeline.Event{Kind: pipeline.EventAgentStarted, Agent: "bugs", Text: "bugs", At: time.Now()}
+		close(events)
+
+		tty, err := os.CreateTemp(t.TempDir(), "tty")
+		require.NoError(t, err)
+		r := newRunOpts(t, options{})
+		ro := r.opts()
+		ro.openTTY = func() (*os.File, error) { return tty, nil }
+
+		done := make(chan struct{})
+		go func() { defer close(done); ro.render(roster, events) }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the ui must return once the pipeline closes its channel")
+		}
+
+		frame, err := os.ReadFile(tty.Name())
+		require.NoError(t, err)
+		assert.Contains(t, string(frame), "stage find", "the ui renders to the tty")
+		assert.Empty(t, r.stdout.String(), "and never to stdout")
+		assert.Empty(t, r.stderr.String(), "nor to the plain renderer's stream")
 	})
 }
 

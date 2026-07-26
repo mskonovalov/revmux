@@ -16,6 +16,10 @@ const (
 	// overrideAgent is the name the --lenses override's single agent carries. It reaches
 	// Finding.sources and becomes agents/<name>.jsonl, so it can never be empty.
 	overrideAgent = "lenses"
+
+	// ansiDefaultFg restores the default foreground and nothing else. A full reset would clear the
+	// enclosing pane's background too.
+	ansiDefaultFg = "\x1b[39m"
 )
 
 // the two accepted vocabularies, checked by validate and reported verbatim by `revmux config`.
@@ -196,6 +200,41 @@ func (a AgentSpec) checkName() error {
 		return fmt.Errorf("agent %q starts with a dot", a.Name)
 	}
 	return nil
+}
+
+// Paint wraps s in the agent's resolved color. Both renderers call it, so the TUI and the plain
+// --no-tui output show one agent in one color; an entry with no resolved color is left alone.
+//
+// It emits raw SGR rather than going through lipgloss: a nested lipgloss render ends in a full reset
+// that kills the enclosing pane's background, and its color profile is read from stdout, which is not
+// where either renderer writes.
+func (a AgentSpec) Paint(s string) string {
+	seq := a.sgr()
+	if seq == "" || s == "" {
+		return s
+	}
+	return seq + s + ansiDefaultFg
+}
+
+// sgr renders the resolved color as a foreground sequence. An index picks the color out of the
+// reader's own terminal theme; a hex value asks for that exact shade and ignores the theme.
+func (a AgentSpec) sgr() string {
+	if strings.HasPrefix(a.Color, "#") {
+		rgb, err := strconv.ParseUint(a.Color[1:], 16, 32)
+		if err != nil {
+			return ""
+		}
+		return "\x1b[38;2;" + strconv.FormatUint(rgb>>16&0xff, 10) + ";" +
+			strconv.FormatUint(rgb>>8&0xff, 10) + ";" + strconv.FormatUint(rgb&0xff, 10) + "m"
+	}
+	idx, err := strconv.Atoi(a.Color)
+	if err != nil || idx < 0 || idx > 15 {
+		return ""
+	}
+	if idx < 8 {
+		return "\x1b[3" + strconv.Itoa(idx) + "m"
+	}
+	return "\x1b[9" + strconv.Itoa(idx-8) + "m"
 }
 
 func (a AgentSpec) resolveColor() (string, error) {
