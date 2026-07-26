@@ -1226,17 +1226,37 @@ Standalone helpers planned (justification why NOT a method):
 Exports (justification per item: who outside the package calls this?):
 - none — internal to `app/pipeline`
 
-- [ ] create `app/pipeline/verify.go` grouping findings by directory, merging thin directories and capping group count from config
-- [ ] dispatch one verifier per group in parallel through **the same `stagger` instance the find stage used**, taken from `Pipeline` rather than constructed here, each group seeing only its own findings. The gate latched open during find — by `leaderStarted` or by `stagger_delay`, either one — so only the `max_parallel` semaphore applies; groups pass nonzero indices so none is treated as a leader. A fresh instance would re-arm the wait and charge verify another `stagger_delay` to re-prove auth find already proved
-- [ ] apply verdicts: `confirmed` keeps, `rejected` drops, `refined` rewrites, `pre_existing` and `immaterial` move to their own lists — the two list-routing verdicts are enum values the model returns through `VerifySchema`, not something Go infers
-- [ ] honor `--no-verify` by marking every finding unverified in the report
-- [ ] author `verify.md` carrying the verdict set and the materiality test
-- [ ] write tests for grouping: one directory, many directories, thin-directory merging, cap enforcement
-- [ ] write a test asserting `label()` on a nested directory and on a merged multi-directory group both yield a slug with no path separator, since task 11 turns it into a filename
-- [ ] write tests asserting each verifier prompt contains only its own group's findings
-- [ ] write tests for every verdict path and for `--no-verify`
-- [ ] write a test asserting verify does not wait out a second `stagger_delay`: advance the fake clock past find's release, then assert the verify groups dispatch without a further advance — the regression a per-stage `stagger` instance would cause
-- [ ] run tests - must pass before task 11
+- [x] create `app/pipeline/verify.go` grouping findings by directory, merging thin directories and capping group count from config
+- [x] dispatch one verifier per group in parallel through **the same `stagger` instance the find stage used**, taken from `Pipeline` rather than constructed here, each group seeing only its own findings. The gate latched open during find — by `leaderStarted` or by `stagger_delay`, either one — so only the `max_parallel` semaphore applies; groups pass nonzero indices so none is treated as a leader. A fresh instance would re-arm the wait and charge verify another `stagger_delay` to re-prove auth find already proved
+- [x] apply verdicts: `confirmed` keeps, `rejected` drops, `refined` rewrites, `pre_existing` and `immaterial` move to their own lists — the two list-routing verdicts are enum values the model returns through `VerifySchema`, not something Go infers
+- [x] honor `--no-verify` by marking every finding unverified in the report
+- [x] author `verify.md` carrying the verdict set and the materiality test
+- [x] write tests for grouping: one directory, many directories, thin-directory merging, cap enforcement
+- [x] write a test asserting `label()` on a nested directory and on a merged multi-directory group both yield a slug with no path separator, since task 11 turns it into a filename
+- [x] write tests asserting each verifier prompt contains only its own group's findings
+- [x] write tests for every verdict path and for `--no-verify`
+- [x] write a test asserting verify does not wait out a second `stagger_delay`: advance the fake clock past find's release, then assert the verify groups dispatch without a further advance — the regression a per-stage `stagger` instance would cause
+- [x] run tests - must pass before task 11
+- ➕ **a verifier that fails degrades its group rather than the run.** The design contract left this
+  open. Find already paid for the findings and synthesis already merged them, so a dead, unparseable
+  or empty verifier returns its group **unverified** — the same honest value `--no-verify` produces —
+  and emits `EventAgentDegraded` naming the group. Only a prompt tree that will not compose fails the
+  stage: that is a config error every group would hit identically, and `prompts.md` requires an
+  unresolved variable to be loud. A verdict outside the enum is treated as unverified too, since the
+  codex path has no `--json-schema` to enforce one
+- ➕ `verifyGroup` carries the composed prompt (`text`), so `run` composes every group before
+  dispatching any of them — one place for the config error above, and the bytes task 11 archives as
+  `prompts/stages/verify-<label>.md` are already on the value it names them from. `runOne` keeps its
+  contract signature and reads `g.text`
+- ➕ the pipeline test harness now defaults to `NoVerify: true` for the same reason it defaults to
+  `NoSynthesis: true`, and gained `newHarnessWith` for tests needing a broken or customized override
+  in the project layer
+- ➕ ⚠️ **`runFind` latches the stagger gate open when the stage completes**, and reusing the instance
+  does not work without it. The plan assumed find always opens the gate, but a single-agent roster
+  never waits on it — the leader is index 0 — so nothing calls `leaderStarted` and the gate stays shut
+  until `stagger_delay` elapses. Verify's groups then blocked on a leader that had already finished;
+  the `app` end-to-end test deadlocked on exactly that. Find running to completion is the stronger
+  proof anyway: at least one process finished, or the run had already failed with `errNoSources`
 
 ### Task 11: Run artifacts
 

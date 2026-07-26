@@ -29,6 +29,7 @@ const eventsFile = "events.jsonl"
 const (
 	stageFind      = "find"
 	stageSynthesis = "synthesis"
+	stageVerify    = "verify"
 )
 
 // Runner runs one supervised process. It is declared here, by the consumer, and exported only so
@@ -127,6 +128,9 @@ func (p *Pipeline) Run(ctx context.Context) (rep finding.Report, err error) {
 	if rep, err = p.runSynthesis(ctx, rep, sources); err != nil {
 		return finding.Report{}, err
 	}
+	if rep, err = p.runVerify(ctx, rep); err != nil {
+		return finding.Report{}, err
+	}
 
 	rep.Scope = finding.Scope{Task: p.cfg.Task, Run: p.cfg.Run, ScopePath: p.cfg.ScopePath}
 	rep.Stats.StartedAt = started
@@ -149,6 +153,10 @@ func (p *Pipeline) runFind(ctx context.Context) (finding.Report, []sourceResult,
 	if err != nil {
 		return finding.Report{}, nil, err
 	}
+
+	// find finishing is a stronger proof than the gate's own signal: at least one process ran to
+	// completion, so no later stage may wait on a leader that has already come and gone
+	p.stagger.leaderStarted()
 
 	rep := f.report(sources)
 	rep.Stats.Stages = append(rep.Stats.Stages,
@@ -177,6 +185,26 @@ func (p *Pipeline) runSynthesis(ctx context.Context, rep finding.Report, sources
 	rep.Stats.Stages = append(rep.Stats.Stages,
 		finding.StageTiming{Name: stageSynthesis, DurationMS: p.cfg.Clock.Now().Sub(at).Milliseconds()})
 	return rep, nil
+}
+
+// runVerify checks each finding against the code and routes it by the verdict that came back.
+// --no-verify marks every finding unverified rather than letting an empty verdict read as checked.
+func (p *Pipeline) runVerify(ctx context.Context, rep finding.Report) (finding.Report, error) {
+	v := &verifier{cfg: p.cfg, emit: p.emit, stagger: p.stagger}
+	if p.cfg.NoVerify {
+		return v.unverified(rep), nil
+	}
+
+	p.emit(Event{Kind: EventStage, Stage: stageVerify})
+	at := p.cfg.Clock.Now()
+
+	out, err := v.run(ctx, rep)
+	if err != nil {
+		return finding.Report{}, err
+	}
+	out.Stats.Stages = append(out.Stats.Stages,
+		finding.StageTiming{Name: stageVerify, DurationMS: p.cfg.Clock.Now().Sub(at).Milliseconds()})
+	return out, nil
 }
 
 // emit records the event in the archive first and synchronously, then offers it to the channel. That

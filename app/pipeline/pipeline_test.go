@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -308,9 +309,13 @@ type harness struct {
 	mu       sync.Mutex
 }
 
-func newHarness(t *testing.T) *harness {
+func newHarness(t *testing.T) *harness { return newHarnessWith(t, nil) }
+
+// newHarnessWith overlays extra prompt-tree files on the default one, for the cases that need a
+// broken or customized override in the project layer.
+func newHarnessWith(t *testing.T, extra map[string]string) *harness {
 	t.Helper()
-	set, profile := testTree(t)
+	set, profile := testTree(t, extra)
 	roster, err := profile.Roster(nil, set.LensNames())
 	require.NoError(t, err)
 
@@ -321,11 +326,12 @@ func newHarness(t *testing.T) *harness {
 		Archive: &mocks.ArchiverMock{WriterFunc: h.writer},
 		Clock:   tickingClock(),
 		Set:     set, Profile: profile, Roster: roster,
-		NoSynthesis: true, // most tests here are about the find stage; the synthesis ones turn it back on
-		Vars:        prompt.Vars{"SCOPE": "/abs/scope.md", "GOAL": "none provided", "PROFILE": "none provided", "CONTEXT": "none provided", "WORKDIR": "/repo"},
-		Task:        "pr-1",
-		Run:         "round-1",
-		ScopePath:   "/abs/scope.md",
+		// most tests here are about the find stage; the synthesis and verify ones turn their stage back on
+		NoSynthesis: true, NoVerify: true,
+		Vars:      prompt.Vars{"SCOPE": "/abs/scope.md", "GOAL": "none provided", "PROFILE": "none provided", "CONTEXT": "none provided", "WORKDIR": "/repo"},
+		Task:      "pr-1",
+		Run:       "round-1",
+		ScopePath: "/abs/scope.md",
 	}
 	return h
 }
@@ -347,6 +353,12 @@ func (h *harness) finder(emit func(Event)) *finder {
 	return &finder{cfg: h.cfg, emit: emit, stagger: newStagger(0, h.cfg.MaxParallel, h.cfg.Clock)}
 }
 
+// verifier builds a verify stage over the harness config with an already-open stagger, for the same
+// reason finder does: a test that is not about release ordering never has to drive one.
+func (h *harness) verifier(emit func(Event)) *verifier {
+	return &verifier{cfg: h.cfg, emit: emit, stagger: newStagger(0, h.cfg.MaxParallel, h.cfg.Clock)}
+}
+
 func (h *harness) get(name string) *syncBuffer {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -361,6 +373,9 @@ func (h *harness) runner(byAgent map[string]executor.Result) func(RunnerSpec) Ru
 		return &mocks.RunnerMock{
 			RunFunc: func(_ context.Context, req executor.Request, _ executor.EventSink) (executor.Result, error) {
 				if res, ok := byAgent[stageSynthesis]; ok && strings.Contains(req.Prompt, synthesisMarker) {
+					return res, nil
+				}
+				if res, ok := byAgent[stageVerify]; ok && strings.Contains(req.Prompt, verifyMarker) {
 					return res, nil
 				}
 				for name, res := range byAgent {
@@ -390,7 +405,7 @@ func drain(p *Pipeline) <-chan []Event {
 
 // testTree writes a minimal prompt tree and loads it as the project layer, so no test depends on
 // the shipped defaults staying the shape it asserts.
-func testTree(t *testing.T) (*prompt.Set, *prompt.Profile) {
+func testTree(t *testing.T, extra map[string]string) (*prompt.Set, *prompt.Profile) {
 	t.Helper()
 	dir := t.TempDir()
 	files := map[string]string{
@@ -399,6 +414,7 @@ func testTree(t *testing.T) (*prompt.Set, *prompt.Profile) {
 		"prompts/profiles/testprof.md": testProfile,
 		"prompts/profiles/oneagent.md": oneAgentProfile,
 	}
+	maps.Copy(files, extra)
 	for rel, body := range files {
 		p := filepath.Join(dir, filepath.FromSlash(rel))
 		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o750))
