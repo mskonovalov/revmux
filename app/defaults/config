@@ -10,7 +10,7 @@
 # how long an agent may go without output before it is killed and retried
 # idle-timeout = 2m
 
-# how long one agent may run in total
+# how long one attempt may run; a retried agent gets this budget again
 # hard-timeout = 20m
 
 # how long to wait for the first agent to start before releasing the rest

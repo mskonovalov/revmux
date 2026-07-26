@@ -69,6 +69,89 @@ func TestSynthesizer_run(t *testing.T) {
 		assert.Len(t, seen[0].Findings, 1)
 	})
 
+	t.Run("a first attempt that did not deliver is retried rather than discarding the find stage", func(t *testing.T) {
+		// every failure fault reads as a retry, and each spent its tokens before it failed: accounting
+		// that only survives the error path loses whatever a stalled or empty attempt was billed
+		tests := []struct {
+			name     string
+			res      executor.Result
+			err      error
+			wantText string
+		}{
+			{name: "the attempt errored", res: executor.Result{Tokens: 100}, err: errors.New("API Error: 529"), wantText: "API Error: 529"},
+			{name: "the attempt exited non-zero", res: executor.Result{Tokens: 100, ExitCode: 1}, wantText: "synthesis exited 1"},
+			{name: "the attempt returned nothing", res: executor.Result{Tokens: 100}, wantText: "returned no structured output"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				h := newHarness(t)
+				calls := 0
+				h.cfg.NewRunner = func(RunnerSpec) Runner {
+					return &mocks.RunnerMock{
+						RunFunc: func(context.Context, executor.Request, executor.EventSink) (executor.Result, error) {
+							calls++
+							if calls == 1 {
+								return tt.res, tt.err
+							}
+							return executor.Result{Tokens: 150, StructuredOutput: synthJSON(
+								`{"merged_ids":["codex-1"],"file":"a.go","line":10,"severity":"major","confidence":70,"title":"leak","body":"b"}`,
+							)}, nil
+						}}
+				}
+
+				var seen []Event
+				s := &synthesizer{cfg: h.cfg, save: h.save, emit: func(ev Event) { seen = append(seen, ev) }}
+				rep, err := s.run(context.Background(), synthSources())
+				require.NoError(t, err)
+				assert.Equal(t, 2, calls, "one launch plus one retry")
+				require.Len(t, rep.Findings, 1)
+				assert.Equal(t, 250, rep.Stats.Tokens, "the failed attempt spent what it spent")
+
+				require.Len(t, seen, 2)
+				assert.Equal(t, EventAgentRetried, seen[0].Kind)
+				assert.Equal(t, stageSynthesis, seen[0].Agent)
+				assert.Contains(t, seen[0].Text, tt.wantText)
+			})
+		}
+	})
+
+	t.Run("a non-zero exit is retried too", func(t *testing.T) {
+		h := newHarness(t)
+		calls := 0
+		h.cfg.NewRunner = func(RunnerSpec) Runner {
+			return &mocks.RunnerMock{RunFunc: func(context.Context, executor.Request, executor.EventSink) (executor.Result, error) {
+				calls++
+				return executor.Result{ExitCode: 1}, nil
+			}}
+		}
+
+		s := &synthesizer{cfg: h.cfg, save: h.save, emit: func(Event) {}}
+		_, err := s.run(context.Background(), synthSources())
+		require.Error(t, err)
+		assert.Equal(t, 2, calls, "a second failure fails the run rather than retrying forever")
+		assert.Contains(t, err.Error(), "synthesis exited 1")
+	})
+
+	t.Run("a merge reaped by signal is not retried on its exit code", func(t *testing.T) {
+		h := newHarness(t)
+		calls := 0
+		h.cfg.NewRunner = func(RunnerSpec) Runner {
+			return &mocks.RunnerMock{RunFunc: func(context.Context, executor.Request, executor.EventSink) (executor.Result, error) {
+				calls++
+				return executor.Result{IdleTimedOut: true, ExitCode: -1, StructuredOutput: synthJSON(
+					`{"merged_ids":["codex-1"],"file":"a.go","line":10,"severity":"major","confidence":70,"title":"leak","body":"b"}`,
+				)}, nil
+			}}
+		}
+
+		s := &synthesizer{cfg: h.cfg, save: h.save, emit: func(Event) {}}
+		rep, err := s.run(context.Background(), synthSources())
+		require.NoError(t, err, "the watchdog killed the teardown, not the merge")
+		require.Len(t, rep.Findings, 1)
+		assert.Equal(t, 1, calls, "retrying would pay for the same merge twice and fail the run on a second stall")
+	})
+
 	t.Run("a stage failure is not a silently unsynthesized report", func(t *testing.T) {
 		h := newHarness(t)
 		h.cfg.NewRunner = stageRunner(&executor.Request{}, executor.Result{}, errors.New("stalled twice"))
@@ -97,6 +180,18 @@ func TestSynthesizer_run(t *testing.T) {
 		_, err := s.run(context.Background(), synthSources())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "decode synthesis output")
+	})
+
+	t.Run("an answer of another shape fails the run rather than emptying the report", func(t *testing.T) {
+		// a codex synthesis answering something else decodes into three nil lists without error, which
+		// would exit 0 with "no findings" having discarded every finder's completed work
+		h := newHarness(t)
+		h.cfg.NewRunner = stageRunner(&executor.Request{}, executor.Result{StructuredOutput: json.RawMessage(`{"summary":"all clear"}`)}, nil)
+
+		s := &synthesizer{cfg: h.cfg, save: h.save, emit: func(Event) {}}
+		_, err := s.run(context.Background(), synthSources())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no findings object")
 	})
 }
 
@@ -193,6 +288,106 @@ func TestSynthesizer_attribution(t *testing.T) {
 		require.Len(t, rep.PreExisting, 1)
 		assert.Equal(t, []string{"bugs+impl"}, rep.OpenQuestions[0].Sources)
 		assert.Equal(t, []string{"codex"}, rep.PreExisting[0].Sources)
+	})
+
+	t.Run("one input claimed twice fails rather than becoming two findings", func(t *testing.T) {
+		_, err := s.parse(synthJSON(
+			`{"merged_ids":["bugs+impl-1"],"file":"a.go","line":10,"severity":"major","confidence":80,"title":"leak","body":"b"}`,
+			`{"merged_ids":["bugs+impl-1","codex-1"],"file":"a.go","line":12,"severity":"minor","confidence":60,"title":"other","body":"b"}`,
+		), inputs)
+		require.Error(t, err, "the schema binds each input to at most one output")
+		assert.Contains(t, err.Error(), `id "bugs+impl-1" into more than one output`)
+	})
+
+	t.Run("one output listing an id twice merges it once instead of failing the run", func(t *testing.T) {
+		rep, err := s.parse(synthJSON(
+			`{"merged_ids":["bugs+impl-1","codex-1","bugs+impl-1"],"file":"a.go","line":10,"severity":"major","confidence":90,"title":"leak","body":"b"}`,
+		), inputs)
+		require.NoError(t, err, "the input still became exactly one output, so there is nothing to reject")
+		require.Len(t, rep.Findings, 1)
+		assert.Equal(t, []string{"bugs+impl", "codex"}, rep.Findings[0].Sources, "the repeat cannot corroborate itself")
+		assert.Equal(t, []string{"bugs", "adversarial"}, rep.Findings[0].Lenses)
+		assert.Equal(t, "bugs+impl-1", rep.Findings[0].ID)
+	})
+
+	t.Run("an id repeated within one output is still claimed against the next", func(t *testing.T) {
+		_, err := s.parse(synthJSON(
+			`{"merged_ids":["codex-1","codex-1"],"file":"a.go","line":10,"severity":"major","confidence":80,"title":"leak","body":"b"}`,
+			`{"merged_ids":["bugs+impl-1","codex-1"],"file":"a.go","line":12,"severity":"minor","confidence":60,"title":"other","body":"b"}`,
+		), inputs)
+		require.Error(t, err, "tolerating the repeat must not release the id for a second output")
+		assert.Contains(t, err.Error(), `id "codex-1" into more than one output`)
+	})
+
+	t.Run("a reused id is caught where it sits, not only when it leads", func(t *testing.T) {
+		_, err := s.parse(synthJSON(
+			`{"merged_ids":["bugs+impl-1","codex-1"],"file":"a.go","line":10,"severity":"major","confidence":80,"title":"leak","body":"b"}`,
+			`{"merged_ids":["bugs+impl-2","codex-1"],"file":"a.go","line":12,"severity":"minor","confidence":60,"title":"other","body":"b"}`,
+		), inputs)
+		require.Error(t, err, "every merged id is claimed, not just the one the output is named after")
+		assert.Contains(t, err.Error(), `id "codex-1" into more than one output`)
+	})
+
+	t.Run("a reuse behind a leading id spanning two lists is caught", func(t *testing.T) {
+		raw := json.RawMessage(`{"findings":[` +
+			`{"merged_ids":["codex-1","bugs+impl-2"],"file":"a.go","line":10,"severity":"major","confidence":80,"title":"leak","body":"b"}` +
+			`],"open_questions":[],"pre_existing":[` +
+			`{"merged_ids":["bugs+impl-1","bugs+impl-2"],"file":"a.go","line":11,"severity":"minor","confidence":60,"title":"old","body":"b"}` +
+			`]}`)
+		_, err := s.parse(raw, inputs)
+		require.Error(t, err, "the claimed set spans lists and every position within one")
+		assert.Contains(t, err.Error(), `id "bugs+impl-2" into more than one output`)
+	})
+
+	t.Run("an id claimed by a finding cannot be an open question too", func(t *testing.T) {
+		raw := json.RawMessage(`{"findings":[` +
+			`{"merged_ids":["bugs+impl-1"],"file":"a.go","line":10,"severity":"major","confidence":80,"title":"leak","body":"b"}` +
+			`],"open_questions":[` +
+			`{"merged_ids":["bugs+impl-1"],"file":"a.go","line":10,"severity":"minor","confidence":60,"title":"q","body":"b"}` +
+			`],"pre_existing":[]}`)
+		_, err := s.parse(raw, inputs)
+		require.Error(t, err, "open questions claim from the same set, not one of their own")
+		assert.Contains(t, err.Error(), `id "bugs+impl-1" into more than one output`)
+	})
+
+	t.Run("an id claimed by an open question cannot be a pre-existing issue too", func(t *testing.T) {
+		raw := json.RawMessage(`{"findings":[],"open_questions":[` +
+			`{"merged_ids":["codex-1"],"file":"a.go","line":10,"severity":"minor","confidence":60,"title":"q","body":"b"}` +
+			`],"pre_existing":[` +
+			`{"merged_ids":["codex-1"],"file":"a.go","line":10,"severity":"minor","confidence":60,"title":"old","body":"b"}` +
+			`]}`)
+		_, err := s.parse(raw, inputs)
+		require.Error(t, err, "what an open question claimed stays claimed for the list after it")
+		assert.Contains(t, err.Error(), `id "codex-1" into more than one output`)
+	})
+
+	t.Run("a claim spans all three lists, so one input cannot be a finding and a pre-existing issue", func(t *testing.T) {
+		raw := json.RawMessage(`{"findings":[` +
+			`{"merged_ids":["codex-1"],"file":"a.go","line":10,"severity":"major","confidence":80,"title":"leak","body":"b"}` +
+			`],"open_questions":[],"pre_existing":[` +
+			`{"merged_ids":["codex-1"],"file":"a.go","line":10,"severity":"minor","confidence":60,"title":"old","body":"b"}` +
+			`]}`)
+		_, err := s.parse(raw, inputs)
+		require.Error(t, err, "the two entries contradict each other about the same finder's work")
+		assert.Contains(t, err.Error(), `id "codex-1" into more than one output`)
+	})
+
+	t.Run("distinct claims give every list its own id", func(t *testing.T) {
+		raw := json.RawMessage(`{"findings":[` +
+			`{"merged_ids":["codex-1"],"file":"a.go","line":10,"severity":"major","confidence":80,"title":"leak","body":"b"}` +
+			`],"open_questions":[` +
+			`{"merged_ids":["bugs+impl-1"],"file":"a.go","line":10,"severity":"minor","confidence":60,"title":"q","body":"b"}` +
+			`],"pre_existing":[` +
+			`{"merged_ids":["bugs+impl-2"],"file":"a.go","line":11,"severity":"minor","confidence":60,"title":"old","body":"b"}` +
+			`]}`)
+		rep, err := s.parse(raw, inputs)
+		require.NoError(t, err)
+		require.Len(t, rep.Findings, 1)
+		require.Len(t, rep.OpenQuestions, 1)
+		require.Len(t, rep.PreExisting, 1)
+		assert.Equal(t, "codex-1", rep.Findings[0].ID)
+		assert.Equal(t, "bugs+impl-1", rep.OpenQuestions[0].ID)
+		assert.Equal(t, "bugs+impl-2", rep.PreExisting[0].ID, "a report keys on the id across every list it carries")
 	})
 
 	t.Run("an invented id fails rather than being skipped", func(t *testing.T) {

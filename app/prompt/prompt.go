@@ -260,13 +260,24 @@ func (l layer) collect(files map[string]fileRef) error {
 
 // splitFrontMatter separates a leading `---` delimited YAML block from the body. A file with no
 // front matter is all body, which is what makes description optional on an override.
-func splitFrontMatter(b []byte) (meta, body []byte, err error) {
+//
+// CR is stripped first so a file saved with CRLF line endings parses. Without that the opening
+// delimiter reads as `---\r` and the whole file becomes body, which surfaces much later as
+// "roster is empty" — an error pointing nowhere near a Windows editor.
+func splitFrontMatter(in []byte) (meta, body []byte, err error) {
 	const marker = "---"
+	b := bytes.ReplaceAll(in, []byte("\r\n"), []byte("\n"))
 	if !bytes.HasPrefix(b, []byte(marker+"\n")) {
 		return nil, b, nil
 	}
 
 	rest := b[len(marker)+1:]
+	// an empty block closes on the very first line, where the scan below has nothing to find: it looks for
+	// the newline preceding a closing delimiter, and the opening one already consumed it. Without this an
+	// override carrying `---\n---\n` fails as unterminated and loses its whole body.
+	if bytes.HasPrefix(rest, []byte(marker)) && (len(rest) == len(marker) || rest[len(marker)] == '\n') {
+		return nil, bytes.TrimPrefix(rest[len(marker):], []byte("\n")), nil
+	}
 	for off := 0; off < len(rest); {
 		i := bytes.Index(rest[off:], []byte("\n"+marker))
 		if i < 0 {
@@ -282,19 +293,21 @@ func splitFrontMatter(b []byte) (meta, body []byte, err error) {
 	return nil, nil, errors.New("front matter is opened but never closed")
 }
 
-func parseFile(meta, body []byte) (frontMatter, doc, error) {
-	var fm frontMatter
+// parseFile decodes the YAML block into shape, a pointer to the calling file kind's own front-matter
+// struct, and returns the body. Unknown keys are rejected, so a key that belongs to a different kind
+// of prompt file fails at load exactly like a misspelled one.
+func parseFile(meta, body []byte, shape any) (string, error) {
 	if len(bytes.TrimSpace(meta)) > 0 {
 		dec := yaml.NewDecoder(bytes.NewReader(meta))
 		dec.KnownFields(true)
-		if err := dec.Decode(&fm); err != nil && !errors.Is(err, io.EOF) {
-			return fm, doc{}, fmt.Errorf("parse front matter: %w", err)
+		if err := dec.Decode(shape); err != nil && !errors.Is(err, io.EOF) {
+			return "", fmt.Errorf("parse front matter: %w", err)
 		}
 	}
 	if err := checkVariables(body); err != nil {
-		return fm, doc{}, err
+		return "", err
 	}
-	return fm, doc{Description: fm.Description, Body: strings.TrimSpace(string(body))}, nil
+	return strings.TrimSpace(string(body)), nil
 }
 
 func checkVariables(body []byte) error {

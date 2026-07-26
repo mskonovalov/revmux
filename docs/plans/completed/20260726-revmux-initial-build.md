@@ -1149,6 +1149,21 @@ Exports (justification per item: who outside the package calls this?):
   exit status, not that a long findings body naming a limit early on is out of range
 - [x] ➕ write a proc-level test asserting stderr is drained when an executor supplies no filter, since
   claude passes none and an unread pipe fills and blocks the child
+- [x] ➕ ⚠️ **every stderr line touches the idle watchdog, not only stdout.** The plan had the watchdog
+  tick on raw stdout writes, which is right for claude and wrong for codex: codex reports its reasoning
+  and every tool call on stderr and writes stdout only when it answers, so a stdout-only watchdog kills
+  a healthy codex run at the idle timeout, retries it into the same wall and degrades the source that
+  was working. `proc.run` now builds one `touch` closure and hands it to both `drainStderr` and the tee,
+  serialized by a mutex since the two streams touch it from different goroutines. The hard timeout is
+  what still bounds a process that chatters forever without answering
+- [x] ➕ **the `tokens used` footer on stderr is codex's token count**, and nothing else reports one —
+  there is no `result` event carrying a usage object, so leaving it unread reports every codex source as
+  having spent nothing. The marker and the number are separate lines, so the marker arms the read and a
+  non-numeric line disarms it: codex echoes the whole prompt to stderr and a lens body carrying those two
+  words must not become a total. Disarming alone is not enough, because an echoed prompt can carry the
+  marker and a number on consecutive lines and a run that then fails never prints the real footer over
+  it — so the count is reported only when nothing followed it once stderr has drained, and the last
+  footer still wins
 - [x] run tests - must pass before task 9
 
 ### Task 9: Synthesis stage
@@ -1198,6 +1213,21 @@ collide across agents and the union would be wrong rather than absent, which is 
 - [x] write a test asserting `{{SOURCES}}` names the degraded agents, the third of the three places the rules require a degraded source to be loud
 - [x] write tests for `--no-synthesis` passthrough and for malformed synthesis output
 - [x] run tests - must pass before task 10
+- ➕ **an input id claimed by two outputs is a hard error too, the mirror image of an unknown one.**
+  The plan covered only the invented id. A reuse means one finder's work became two report entries,
+  possibly a finding and a pre-existing issue at once contradicting each other about the same code, and
+  it also collides the output ids — each output leads with its first merged id, and verify keys its
+  verdicts by id, so one verdict would reject or rewrite two findings. `parse` therefore threads one
+  `claimed` set through `findings`, `open_questions` and `pre_existing` rather than one per list, and
+  the schema says **at most** one output across all three: the drop rule legitimately leaves a weak
+  singleton in none, so an unclaimed input is never an error and only a twice-claimed one is
+- ➕ **synthesis retries once before failing the run, and the failed attempt's tokens ride on the one
+  that delivers.** It is a single call standing between every finder's completed work and the report, so
+  a transient `529` must not discard a find stage that already ran for minutes — `dispatch` gives it the
+  same one-launch-plus-one-retry find gives an agent, judged by the same reading `finder.fault` uses:
+  output present settles it before the exit code is consulted, so a stalled-but-complete merge is kept
+  rather than retried. A second failure still exits `2` rather than passing unmerged findings through.
+  The tokens accumulate across attempts because the run was billed for both
 
 ### Task 10: Verification stage
 
@@ -1251,6 +1281,10 @@ Exports (justification per item: who outside the package calls this?):
 - ➕ the pipeline test harness now defaults to `NoVerify: true` for the same reason it defaults to
   `NoSynthesis: true`, and gained `newHarnessWith` for tests needing a broken or customized override
   in the project layer
+- ➕ **a verifier's tokens are counted before its error is judged.** A group that stalled or died still
+  spent what it spent, and the run total is what was billed rather than what turned out to be useful —
+  the same accounting find and synthesis do across a failed attempt. Counting after the error check
+  silently under-reports every degraded group
 - ➕ ⚠️ **`runFind` latches the stagger gate open when the stage completes**, and reusing the instance
   does not work without it. The plan assumed find always opens the gate, but a single-agent roster
   never waits on it — the leader is index 0 — so nothing calls `leaderStarted` and the gate stays shut
@@ -1382,6 +1416,47 @@ changed. Everything below exists for one of those two.
 - ➕ `TestRun_review`'s subtests each take their own tasks root now. They shared one, and a run name
   that already exists is a load-time error, so the second subtest to write `round-1` would fail on
   the collision rather than on what it asserts
+- ➕ ⚠️ **the archive is anchored on open directory handles rather than on path strings, and the chain
+  starts at the tasks root.** The design contract had `Opts` carry a joined `TaskDir` and `Writer`
+  reject an escape "after symlink evaluation", which is a check-then-open window: the path is
+  validated once and reopened by name on every write, so another process can rename a directory and
+  leave a symlink in its place in between — and what would follow that symlink is `Prune`, the one
+  destructive primitive in the tool. `Opts` therefore carries `TasksDir` and `Task` separately, and
+  `New` walks down as nested `os.Root`s — tasks root, task directory, `runs/`, the run directory —
+  each contained by the one above it however a symlink got there. `Writer` does no symlink resolution
+  of its own: it rejects only what was never an artifact path (empty, absolute, climbing out
+  lexically), and the run's own handle refuses an escape when it is traversed
+- ➕ **the two roots above `runs/` are opened, never created.** They are the caller's, and a missing
+  task directory is his error — `options.resolveContext` already refuses one with no `scope.md`.
+  `New` creating it behind that check would make the first directory revmux writes sit above `runs/`
+- ➕ **containment is necessary but not sufficient for `runs/`, so it must additionally not be a
+  symlink at all.** `os.Root` follows a link that lands back inside the root, so `runs -> context`
+  passes every containment check and still hands `Prune` the caller's own directories. `New` `Lstat`s
+  it through the task handle and refuses a symlink outright. Reading an entry and opening it are two
+  operations, so one `checkHandle` re-reads each entry after `OpenRoot` and matches it against the
+  directory actually opened with `os.SameFile`, at both hops below the task directory
+- ➕ **`Prune` excludes the run being written by the directory its handle is on, not by the name it was
+  created under.** The two differ the moment something renames the run directory mid-run, and then a
+  name match excludes nothing: this run's own archive becomes an ordinary candidate and at `keep_runs`
+  0 or 1 `Prune` deletes the artifacts it was called to make room for. `os.SameFile` against
+  `root.Stat(".")` is the same authority every other check here leans on, so the `run` name field is
+  gone
+- ➕ **enumerating candidates by identity settles only half of that, because what deletes one is its
+  name.** A deletion takes a name and there is no unlink-by-handle to take instead, so a rename landing
+  between the enumeration and the deletion carries the deletion to whatever now answers to that name —
+  the run being written among them. `runEntry` therefore carries the `fs.FileInfo` it was enumerated as
+  rather than a bare mtime, and `Archive.remove` re-reads the entry and matches it immediately before
+  deleting: a name that changed hands is skipped, and one already gone is the outcome the pass wanted
+- ➕ **that match narrows the window rather than closing it, so the recursive part of the deletion runs
+  through a handle instead.** `Lstat` and the delete are two syscalls whatever sits between them, and
+  `RemoveAll` on the name would take a whole tree with it. `Archive.clear` opens the candidate as an
+  `os.Root`, matches `Stat(".")` against the enumerated identity so a redirect during the open is caught
+  too, and empties it depth first through that handle — `ReadDir` reports entries as they are on disk, so
+  a symlink is unlinked rather than followed. What the name is left to do is one non-recursive `Remove`
+  of an empty directory, which cannot carry a populated run off however the entry changed underneath
+- ➕ `Archive.Close` joins the design contract's two methods, releasing the run and `runs/` handles
+  once every artifact is on disk; `run` defers it. The tasks-root and task handles close inside `New`,
+  since nothing is written through them
 
 ### Task 12: TUI — status table, combined view and per-agent panes
 

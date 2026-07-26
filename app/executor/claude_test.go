@@ -202,6 +202,27 @@ func TestClaude_Run_rateLimitAllowed(t *testing.T) {
 	assert.Equal(t, "allowed", res.RateLimit.Status)
 }
 
+func TestClaude_Run_rateLimitAllowedWarning(t *testing.T) {
+	data := patchEvent(t, "rate_limit_event", func(ev map[string]any) {
+		info, ok := ev["rate_limit_info"].(map[string]any)
+		require.True(t, ok)
+		info["status"] = "allowed_warning"
+	})
+	path := writeFixture(t, data)
+	sink := discardSink()
+	c := executor.NewClaude(fakeRunner("emit", path), executor.Opts{})
+
+	res, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, sink)
+	require.NoError(t, err)
+	assert.False(t, res.RateLimited, "allowed_warning rides a successful response, discarding it would throw the run away")
+	assert.Equal(t, "allowed_warning", res.RateLimit.Status)
+	assert.NotEmpty(t, res.StructuredOutput, "the run completed and its findings must survive")
+
+	for _, call := range sink.EmitCalls() {
+		assert.NotEqual(t, executor.EventRateLimit, call.Event.Kind, "a warning is not a limit")
+	}
+}
+
 func TestClaude_Run_idleTimeout(t *testing.T) {
 	path := writeFixture(t, stallCapture(t))
 

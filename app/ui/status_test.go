@@ -68,6 +68,14 @@ func TestModel_statusTable_header(t *testing.T) {
 			},
 			"revmux · 2 agents · 3 findings",
 		},
+		{
+			"a synthesis row does not inflate the agent count's own findings total",
+			[]tea.Msg{
+				pipeline.Event{Kind: pipeline.EventFindings, Agent: "bugs+impl", At: at, Findings: []finding.Finding{{}, {}}},
+				pipeline.Event{Kind: pipeline.EventFindings, Agent: "synthesis", At: at, Findings: []finding.Finding{{}}},
+			},
+			"revmux · 3 agents · 1 findings",
+		},
 	}
 
 	for _, tt := range tests {

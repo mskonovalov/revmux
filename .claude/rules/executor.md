@@ -74,10 +74,24 @@ Two independent timers catching two different failures.
   and reset it on **every output line** through a touch closure passed into the stream parser.
   When the derived context is canceled but the parent context is alive, that is an idle timeout, not an error —
   set `Result.IdleTimedOut` so the caller can retry rather than fail the run.
+- **Both streams touch it — stderr is liveness, not noise.**
+  Codex reports its reasoning and every tool call on stderr and writes stdout only when it answers,
+  so a watchdog ticking on stdout alone kills a healthy codex run at the idle timeout, retries it into the
+  same wall, and degrades the source that was working.
+  The two touches are serialized: stdout is read on the calling goroutine and stderr in its own,
+  and a `Timer` implementation is not required to tolerate two callers.
+  The hard timeout is what bounds a process that chatters forever without answering.
 - **Hard timeout** is a plain `context.WithTimeout` over the whole call,
   catching the slow-but-alive case where the agent keeps emitting output forever.
 - Both default to disabled at the executor level; the composition root sets them from config when it builds
   each executor. Not the pipeline — it never constructs one, it receives an injected factory.
+- **Draining stderr outlives the line reader that consumes it.**
+  A read fault or a line past `maxLineBytes` ends `bufio.Scanner` for good, and returning from the drain
+  goroutine there leaves the pipe unread — which fills, blocks the child mid-write, and hangs the stdout
+  parse until a timeout kills a run that was working.
+  The remainder is copied to `io.Discard` instead: liveness is gone with the scanner, so the run rides on
+  the stdout tick and the two timeouts, but the child keeps moving.
+  A canceled run skips it — the process group is already being torn down and the pipe closes with it.
 - **Both timers come from an injected clock, never from `time.AfterFunc` directly.**
   `.claude/rules/testing.md` forbids wall-clock waits in tests, and an idle-timeout test that actually sleeps
   is either slow or flaky. A recorded fixture that simply ends is EOF, not a stall — proving the watchdog
@@ -130,10 +144,13 @@ Codex is a peer executor, not a special case in the pipeline — but the executo
   stage's schema, so a codex entry running synthesis or verify asks for that stage's shape.
   Hardcoding a finder-shaped contract here breaks the moment a stage prompt declares `executor: codex`.
   The wrapper text lives in the executor, never in a lens file, which must stay executor-agnostic.
-- The idle watchdog ticks on raw stdout writes rather than parsed events.
+- The idle watchdog ticks on raw stdout writes rather than parsed events — **and on stderr lines**,
+  which for codex is the only tick a long run gets before it answers. See the idle-timeout section above.
 - Extraction must tolerate JSON wrapped in surrounding prose; finding no JSON is a degraded source, not a crash.
 - Codex stderr is noisy — startup banner, exec echo, hook lifecycle lines, reasoning stream.
   Forward at most the resolved `model:` / `sandbox:` / `reasoning effort:` header lines, once per process, and suppress the rest.
+  **Those go out as `EventInfo`, never `EventActivity`**: the banner prints before codex has contacted a
+  model, and `EventActivity` is what releases the pipeline's stagger gate. See `.claude/rules/pipeline.md`.
   Once per process is a `seen` map keyed on the header name, not a position check:
   codex reprints the banner in some runs, and the guard is what makes "once" true.
   **stderr drains in its own goroutine alongside the stdout parse**, so where a forwarded header lands
@@ -141,9 +158,22 @@ Codex is a peer executor, not a special case in the pipeline — but the executo
   it arrives at a particular index. A test doing the latter is flaky by construction and was.
 - The resolved `model:` header is also where codex's actual model comes from, since there is no `result`
   event to read it off.
+- **The `tokens used` footer on stderr is the run's token count, for the same reason** — there is no usage
+  object anywhere else, and leaving it unread reports every codex source as having spent nothing.
+  The marker and the number are separate lines, so the marker arms the read and a non-numeric line disarms it:
+  codex echoes the whole prompt to stderr, and a lens body carrying those two words must not become a total.
+  **Disarming alone is not enough, because an echoed prompt can carry the marker and a number on consecutive lines**,
+  and a run that then fails never prints the real footer to overwrite it — so the failed attempt would be charged
+  for whatever number the prompt happened to contain.
+  The footer is the last thing codex prints, so the count is only reported when nothing followed it once stderr
+  has drained. The last footer still wins; a count with content after it is treated as echo and dropped.
 - Plan-quota errors arrive on **stderr with an empty stdout**, so a stdout-only error check misses them entirely.
   Only lines prefixed `error:` are read as diagnostics — that prefix gate is what keeps a reasoning stream
   discussing a rate limit from being mistaken for one.
+  **The last such line wins, not the first**, for the same reason the token footer does:
+  the echoed prompt precedes everything codex reports itself, so a first-match diagnostic names a line the
+  prompt quoted — a lens body, a finding describing an error — as the failure,
+  and hands `classify` a line that can carry a limit pattern the run never hit.
 - `--sandbox read-only` always. revmux never lets an agent write.
 
 ### Error and limit patterns

@@ -147,6 +147,29 @@ func TestProc_Run_drainsStderrWithoutAFilter(t *testing.T) {
 	assert.NotContains(t, res.Raw, "chatter on stderr", "stderr never reaches the parsed stream")
 }
 
+func TestProc_Run_keepsDrainingStderrPastAnOverlongLine(t *testing.T) {
+	// a line past the scanner cap ends the line reader but not the stream, and stopping there leaves the
+	// pipe to fill and block the child mid-write — the run then dies at a timeout with stdout unread
+	const lineCap = 8 << 20 // mirrors maxLineBytes
+
+	var noise bytes.Buffer
+	noise.Write(bytes.Repeat([]byte("x"), lineCap+1))
+	noise.WriteString("\n")
+	noise.Write(bytes.Repeat([]byte("chatter on stderr\n"), 20000)) // more than any pipe buffer holds
+
+	errPath := writeFixture(t, noise.Bytes())
+	path := writeFixture(t, cleanCapture(t))
+
+	// a real bound rather than an injected clock: nothing waits on it when the drain works, and it is what
+	// turns the regression from a hung test into a failed one
+	c := executor.NewClaude(fakeRunner("emit", path, errPath), executor.Opts{HardTimeout: 20 * time.Second})
+	res, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, discardSink())
+
+	require.NoError(t, err, "the child wrote all of stderr rather than blocking on a full pipe")
+	assert.Equal(t, 0, res.ExitCode)
+	assert.NotEmpty(t, res.StructuredOutput, "stdout is still parsed in full")
+}
+
 func TestClaude_Run_reportsExitCode(t *testing.T) {
 	path := writeFixture(t, cleanCapture(t))
 	c := executor.NewClaude(fakeRunner("fail", path), executor.Opts{})

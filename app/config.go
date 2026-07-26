@@ -61,7 +61,7 @@ type options struct {
 	PreserveAPIKey bool     `long:"preserve-anthropic-api-key" no-ini:"true" description:"pass ANTHROPIC_API_KEY to the model CLIs"`
 
 	IdleTimeout  time.Duration `long:"idle-timeout" ini-name:"idle-timeout" default:"2m" description:"kill and retry an agent after this long with no output"`
-	HardTimeout  time.Duration `long:"hard-timeout" ini-name:"hard-timeout" default:"20m" description:"kill an agent after this long in total"`
+	HardTimeout  time.Duration `long:"hard-timeout" ini-name:"hard-timeout" default:"20m" description:"kill an agent after this long, per attempt"`
 	StaggerDelay time.Duration `long:"stagger-delay" ini-name:"stagger-delay" default:"30s" description:"how long to wait for the first agent before releasing the rest"`
 	MaxParallel  int           `long:"max-parallel" ini-name:"max-parallel" default:"4" description:"how many agents run at once"`
 	VerifyGroups int           `long:"verify-groups" ini-name:"verify-groups" default:"6" description:"cap on the number of verifier groups"`

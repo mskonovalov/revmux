@@ -128,3 +128,34 @@ func TestStage_Compose(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "stage synthesis: unresolved variable {{FINDINGS}}")
 }
+
+func TestCompose_SubstitutedValueIsNotRescanned(t *testing.T) {
+	// findings text is model-authored and routinely quotes template syntax, so a value carrying
+	// {{token}} must not read as an unresolved variable of the prompt that received it
+	findings := `[{"title": "unescaped {{message}} in template", "file": "web/tpl.html"}]`
+
+	t.Run("stage", func(t *testing.T) {
+		set := composeTree(t, map[string]string{"prompts/synthesis.md": "sources {{SOURCES}} findings {{FINDINGS}}"})
+		st, err := set.Stage("synthesis")
+		require.NoError(t, err)
+
+		out, err := st.Compose(ComposeOpts{Vars: Vars{"SOURCES": "3 of 4", "FINDINGS": findings}})
+		require.NoError(t, err)
+		assert.Contains(t, out, "{{message}}", "the injected value survives verbatim")
+	})
+
+	t.Run("agent", func(t *testing.T) {
+		set := composeTree(t, map[string]string{
+			"prompts/profiles/custom.md": "---\nagents:\n  - {name: a, lenses: [bugs]}\n---\nread {{SCOPE}}",
+			"lenses/bugs.md":             "lens",
+		})
+		p, err := set.Profile("custom")
+		require.NoError(t, err)
+		specs, err := p.Roster(nil, set.LensNames())
+		require.NoError(t, err)
+
+		out, err := p.Compose(set, specs[0], ComposeOpts{Vars: Vars{"SCOPE": "/abs/{{weird}}/scope.md"}})
+		require.NoError(t, err)
+		assert.Contains(t, out, "/abs/{{weird}}/scope.md")
+	})
+}

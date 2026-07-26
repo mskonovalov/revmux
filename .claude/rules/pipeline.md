@@ -71,6 +71,23 @@ Each synthesized finding instead returns the input ids it merged, and `synthesiz
 A merged id that is not an input is a **hard error**, never a skip: it means the model invented one, and
 dropping it quietly yields a finding credited with fewer sources than it earned.
 
+**An input id claimed by two outputs is a hard error too, for the mirror-image reason.**
+The schema binds each input finding to **at most** one output, across all three lists taken together —
+at most rather than exactly, because the drop rule below legitimately leaves a weak singleton in none —
+so `synthesizer.parse` threads one claimed set through `findings`, `open_questions` and `pre_existing`,
+not one per list.
+An unclaimed input is therefore never an error; only a twice-claimed one is.
+A reuse means one finder's work became two report entries, possibly a finding and a pre-existing issue
+at once, contradicting each other about the same code.
+Renaming the duplicate would keep both and invent an id for the second that no finder ever emitted,
+leaving the archive unable to say which input it came from.
+
+Rejecting a reuse is also what makes the **output** ids unique.
+Each merged finding leads with the first id it merged, so distinct claims cannot collide, and verify —
+which keys its verdicts by id — can never have one verdict reject or rewrite two findings.
+Do not reintroduce a suffixing fallback: it would silently accept exactly the malformed attribution this
+check exists to catch.
+
 Pass the real roster into the synthesis prompt as data rather than letting the model infer it
 from the findings themselves.
 `{{SOURCES}}` must state which agents ran, which degraded, and which emitted each finding.
@@ -89,7 +106,9 @@ and matching on file and line in Go would both merge unrelated findings and spli
 
 **Degraded runs do not drop.**
 With a source dead, corroboration is rarer, so the drop rule starts eating findings the missing source would have confirmed.
-When `SourceStatus.Degraded()` is true, route would-be-drops to the verifier instead.
+The gate is prompt text like every other rule in this section: `{{SOURCES}}` states which agents degraded,
+and `prompts/synthesis.md` instructs the model to keep every would-be-drop and route it to the verifier
+when that list is non-empty. It is not a Go branch, and `SourceStatus.Degraded()` is not what enforces it.
 The verifier is the authority anyway; dropping is only a cost optimization.
 
 ### Degrade policy
@@ -100,6 +119,17 @@ Never abort the whole run because one agent died — one flaky agent would waste
 **Every source degrading is the one exception.** A run with zero reporting sources has no review to report,
 so it is a tool error and exits `2`, not a clean report with an empty findings list.
 See `.claude/rules/config.md` on exit codes.
+
+**Synthesis retries once and then fails the run — it is the one stage with no degrade path, deliberately.**
+It is a single call standing between every finder's completed work and the report, so `synthesizer.dispatch`
+gives it the same one-launch-plus-one-retry the find stage gives an agent: a transient `529` must not
+discard a find stage that already ran for minutes.
+An attempt that returns an error, a non-zero exit or no structured output did not deliver and is retried;
+one carrying output despite a stall or a rate limit did, exactly as `finder.fault` reads it.
+A second failure exits `2` rather than passing the unmerged findings through.
+Degrading to passthrough here would emit a `--no-synthesis`-shaped report to a caller who did not ask for one —
+no dedupe, no confidence boost, no open-question split — and a quietly unsynthesized run that reads like a
+merged one is the failure mode this whole section exists to prevent.
 
 **A failing verifier degrades its own group, never the stage.**
 Find already paid for the findings and synthesis already merged them, so a dead, unparseable or empty
@@ -125,11 +155,26 @@ Agent 1 launches immediately; the rest are released once it produces its first o
 or after `stagger-delay` if it never does.
 
 The release signal needs an explicit path, or `stagger-delay` silently becomes the only one.
-The leader's `sink` carries a first-activity callback guarded by `sync.Once`, invoked on the first event it
-receives and **before** that event is offered to the lossy channel — watching `Events()` instead would be
-wrong twice over, since it drops events and has a single reader already.
-First activity means any executor event for claude and the first raw stdout write for codex,
+The leader's `sink` carries a first-activity callback guarded by `sync.Once`, invoked on the first
+`EventActivity` it receives and **before** that event is offered to the lossy channel — watching `Events()`
+instead would be wrong twice over, since it drops events and has a single reader already.
+First activity means an assistant turn for claude and the first raw stdout write for codex,
 so a codex leader still releases the rest without waiting out the full delay.
+
+**It must be `EventActivity` alone, never any event the sink happens to receive.**
+`proc` emits `EventStarted` the instant the fork succeeds, before a byte of output has been read, so a sink
+releasing on every kind opens the gate on every launch: nothing is staggered, the delay is dead, and the
+codex first-chunk signal that exists solely to release the roster never matters.
+The gate is there to prove the leader can actually reach a model before three more processes try —
+a started process proves only that the binary exists.
+`EventRateLimit` and `EventFinished` are excluded for the same reason: a throttled leader releasing the
+roster hands the limit to every follower, and by the time one exits the delay is the honest signal.
+
+**A resolved-configuration line is not activity either, which is why `EventInfo` exists.**
+Codex prints its `model:` / `sandbox:` / `reasoning effort:` banner on stderr before it has contacted a
+model, and stderr drains concurrently with the stdout parse, so forwarding those as `EventActivity` opens
+the gate milliseconds after a codex leader forks — the same dead stagger `EventStarted` would cause.
+Both kinds render identically downstream; only the release path distinguishes them.
 
 **The gate latches open and never re-arms, and `runFind` latches it on completion.**
 One `stagger` instance serves both find and verify, taken from `Pipeline` rather than constructed per stage:

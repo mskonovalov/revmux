@@ -76,15 +76,25 @@ func (o ComposeOpts) render(body string) (string, error) {
 
 // substitute replaces every known variable and fails on anything left over. A leftover can only be a
 // bug by this point: an unknown name failed at load, and an absent file arrives as a placeholder.
+//
+// The miss is recorded during the pass rather than found by re-scanning the result, because a
+// substituted value is not part of the prompt's own vocabulary. {{FINDINGS}} carries model-authored
+// review text that routinely quotes template syntax, and re-scanning would read a finding about an
+// unescaped {{message}} as this prompt's own unresolved variable and fail the whole run.
 func (o ComposeOpts) substitute(body string) (string, error) {
+	missing := ""
 	out := varPattern.ReplaceAllStringFunc(body, func(m string) string {
-		if v, ok := o.Vars[m[2:len(m)-2]]; ok {
-			return v
+		v, ok := o.Vars[m[2:len(m)-2]]
+		if !ok {
+			if missing == "" {
+				missing = m
+			}
+			return m
 		}
-		return m
+		return v
 	})
-	if left := varPattern.FindString(out); left != "" {
-		return "", fmt.Errorf("unresolved variable %s", left)
+	if missing != "" {
+		return "", fmt.Errorf("unresolved variable %s", missing)
 	}
 	return out, nil
 }

@@ -46,14 +46,12 @@ func (s *synthesizer) run(ctx context.Context, sources []sourceResult) (finding.
 	if err != nil {
 		return finding.Report{}, fmt.Errorf("compose synthesis prompt: %w", err)
 	}
-	s.save(path.Join(stagePromptDir, stageSynthesis+".md"), []byte(text))
+	s.save(path.Join(stagePromptDir, stageSynthesis+".md"),
+		[]byte(archivedPrompt(stage.Executor, text, finding.SynthesisSchema())))
 
-	spec := RunnerSpec{Executor: stage.Executor, Model: stage.Model, Effort: stage.Effort}
-	res, err := s.cfg.NewRunner(spec).Run(ctx, executor.Request{
-		Prompt: text, Model: stage.Model, Effort: stage.Effort, Schema: finding.SynthesisSchema(),
-	}, newSink(stageSynthesis, s.emit, nil))
+	res, err := s.dispatch(ctx, stage, text)
 	if err != nil {
-		return finding.Report{}, fmt.Errorf("synthesis stage: %w", err)
+		return finding.Report{}, err
 	}
 
 	rep, err := s.parse(res.StructuredOutput, s.inputs(sources))
@@ -63,6 +61,58 @@ func (s *synthesizer) run(ctx context.Context, sources []sourceResult) (finding.
 	rep.Stats.Tokens = res.Tokens
 	s.emit(Event{Kind: EventFindings, Agent: stageSynthesis, Findings: rep.Findings})
 	return rep, nil
+}
+
+// dispatch runs the stage, retrying once when the first attempt did not deliver. This is a single
+// call standing between every finder's completed work and the report, so a transient failure must not
+// discard it — the same reason find retries an agent before degrading it. A second failure still
+// fails the run, because an unmerged report nobody asked for is worse than a loud error.
+func (s *synthesizer) dispatch(ctx context.Context, stage *prompt.Stage, text string) (executor.Result, error) {
+	spec := RunnerSpec{Executor: stage.Executor, Model: stage.Model, Effort: stage.Effort}
+	req := executor.Request{
+		Prompt: text, Model: stage.Model, Effort: stage.Effort, Schema: finding.SynthesisSchema(),
+	}
+
+	// a failed attempt still spent what it spent, so its tokens ride on the attempt that delivers —
+	// the same accounting the find stage does across its own retry
+	var fault error
+	var tokens int
+	for n := range maxAttempts {
+		res, err := s.cfg.NewRunner(spec).Run(ctx, req, newSink(stageSynthesis, s.emit, nil))
+		tokens += res.Tokens
+		if fault = s.fault(res, err); fault == nil {
+			res.Tokens = tokens
+			return res, nil
+		}
+		if ctx.Err() != nil || n == maxAttempts-1 {
+			break
+		}
+		s.emit(Event{Kind: EventAgentRetried, Agent: stageSynthesis, Text: fault.Error()})
+	}
+	return executor.Result{}, fmt.Errorf("synthesis stage: %w", fault)
+}
+
+// fault judges one attempt. Anything that left the stage without structured output is what a retry
+// would be attempting to survive. A stall or a rate limit that nonetheless carried output is not one:
+// that payload only exists once the terminal result event has been read, so the merge is whole.
+//
+// Output that arrived but is not a merge — malformed, or an object of some other shape — is not one
+// either. The stage delivered, so parse rejects it and the run fails rather than paying for a second
+// call that returns the same reply.
+//
+// Output present therefore settles it before the exit code is consulted at all. A watchdog kill reaps
+// the process by signal, so a stalled-but-complete attempt exits -1 and checking the code first would
+// retry the very merge this carve-out exists to keep — and fail the run on a second stall.
+func (s *synthesizer) fault(res executor.Result, err error) error {
+	switch {
+	case err != nil:
+		return err
+	case len(res.StructuredOutput) > 0:
+		return nil
+	case res.ExitCode != 0:
+		return fmt.Errorf("synthesis exited %d", res.ExitCode)
+	}
+	return errors.New("synthesis returned no structured output")
 }
 
 // vars adds the two stage variables to the run's own. FINDINGS is what the model merges and SOURCES
@@ -152,17 +202,26 @@ func (s *synthesizer) parse(raw json.RawMessage, inputs map[string]finding.Findi
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return finding.Report{}, fmt.Errorf("decode synthesis output: %w", err)
 	}
+	// the merged list is what the whole find stage funnels into, so its key must be present rather than
+	// merely decodable: an object of another shape leaves all three lists nil without error, and the run
+	// would report no findings and exit 0 having discarded every source's work
+	if !answered(raw, keyFindings) {
+		return finding.Report{}, errors.New("synthesis returned no findings object")
+	}
 
-	rep := finding.Report{}
-	findings, err := s.attribute(out.Findings, inputs)
+	// one claimed set across all three lists: the schema binds each input to at most one output, and the
+	// lists are three halves of one merge — an input reported as both a finding and a pre-existing issue
+	// is the same contract violation as one reported twice in either
+	rep, claimed := finding.Report{}, map[string]bool{}
+	findings, err := s.attribute(out.Findings, inputs, claimed)
 	if err != nil {
 		return finding.Report{}, err
 	}
 	rep.Findings = findings
-	if rep.OpenQuestions, err = s.attribute(out.OpenQuestions, inputs); err != nil {
+	if rep.OpenQuestions, err = s.attribute(out.OpenQuestions, inputs, claimed); err != nil {
 		return finding.Report{}, err
 	}
-	if rep.PreExisting, err = s.attribute(out.PreExisting, inputs); err != nil {
+	if rep.PreExisting, err = s.attribute(out.PreExisting, inputs, claimed); err != nil {
 		return finding.Report{}, err
 	}
 	return rep, nil
@@ -171,7 +230,24 @@ func (s *synthesizer) parse(raw json.RawMessage, inputs map[string]finding.Findi
 // attribute derives sources and lenses from the merged input ids, discarding whatever the model put
 // in either field. A merged id that is not an input is a hard error rather than a skip: it means the
 // model invented one, and dropping it quietly produces a finding with fewer sources than it earned.
-func (s *synthesizer) attribute(list []synthesized, inputs map[string]finding.Finding) ([]finding.Finding, error) {
+//
+// claimed carries the input ids already spoken for, and a second claim on one is the same hard error
+// for the mirror-image reason. The schema binds each input to at most one output — at most, since the
+// drop rule leaves a weak singleton in none — so a reuse means one finder's work became two report
+// entries, possibly a finding and a pre-existing issue at once, contradicting each other. Renaming the
+// duplicate instead would keep both and invent an id for the second that no finder ever emitted,
+// leaving the archive unable to say which input it came from.
+//
+// It is one output holding an id twice that is not a reuse: the input still became exactly one report
+// entry, union already collapses it, and failing there would discard a whole find stage over a merge
+// that was correct. So each output tracks its own ids and skips its repeats, leaving claimed to catch
+// only what a second output takes.
+//
+// Rejecting a reuse is also what makes the output ids unique: each leads with its first merged id, and
+// distinct claims cannot collide. Verify keys its verdicts by id, and one verdict rejecting or
+// rewriting two findings silently corrupts a report the merge itself got right.
+func (s *synthesizer) attribute(list []synthesized, inputs map[string]finding.Finding,
+	claimed map[string]bool) ([]finding.Finding, error) {
 	out := make([]finding.Finding, 0, len(list))
 	for _, item := range list {
 		if len(item.MergedIDs) == 0 {
@@ -180,11 +256,19 @@ func (s *synthesizer) attribute(list []synthesized, inputs map[string]finding.Fi
 
 		f := item.Finding
 		f.ID, f.Sources, f.Lenses = item.MergedIDs[0], nil, nil
+		mine := map[string]bool{}
 		for _, id := range item.MergedIDs {
 			in, ok := inputs[id]
 			if !ok {
 				return nil, fmt.Errorf("synthesis merged unknown finding id %q", id)
 			}
+			if mine[id] {
+				continue // the same output listing one input twice merges it once, exactly as union already would
+			}
+			if claimed[id] {
+				return nil, fmt.Errorf("synthesis merged finding id %q into more than one output", id)
+			}
+			claimed[id], mine[id] = true, true
 			f.Sources = s.union(f.Sources, in.Sources)
 			f.Lenses = s.union(f.Lenses, in.Lenses)
 		}

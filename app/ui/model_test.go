@@ -92,9 +92,21 @@ func TestModel_apply(t *testing.T) {
 			Findings: []finding.Finding{{Title: "one"}, {Title: "two"}}}
 		m := feed(t, New(ModelConfig{Roster: roster()}), event(pipeline.EventAgentStarted, "codex", ""), ev)
 
-		assert.Equal(t, 2, m.agents[1].findings)
+		assert.Equal(t, 2, m.found)
 		assert.Equal(t, stateRunning, m.agents[1].state, "emitting findings is not finishing")
 		assert.Equal(t, "2 findings emitted", m.agents[1].last)
+	})
+
+	t.Run("a stage process replaces the count rather than adding to it", func(t *testing.T) {
+		found := func(agent string, n int) pipeline.Event {
+			list := make([]finding.Finding, n)
+			return pipeline.Event{Kind: pipeline.EventFindings, Agent: agent, At: at, Findings: list}
+		}
+		m := feed(t, New(ModelConfig{Roster: roster()}),
+			found("bugs+impl", 5), found("codex", 4), found("synthesis", 3))
+
+		assert.Equal(t, 3, m.found, "synthesis merged what the finders reported, so its count supersedes theirs")
+		assert.Contains(t, m.header(), "3 findings")
 	})
 
 	t.Run("a stage event names the stage and carries no agent", func(t *testing.T) {

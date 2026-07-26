@@ -5,6 +5,7 @@ package finding
 import (
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Severity is how bad a finding is.
@@ -17,8 +18,10 @@ const (
 	Minor    Severity = "minor"
 )
 
-// Verdict is what the verification stage decided about a finding. Unverified is set by
-// revmux when the stage is skipped, the rest come from the model.
+// Verdict is what the verification stage decided about a finding. Every value but Unverified comes
+// from the model. Unverified is set by revmux, on three paths: the stage was skipped, the group's
+// verifier failed, or the model returned no verdict for that finding or one outside the enum. It
+// says the finding was not checked, never that checking cleared it.
 type Verdict string
 
 // Verdict values.
@@ -103,9 +106,13 @@ func (s Severity) rank() int {
 	return 3
 }
 
+// heading titlecases a severity for a report section. It decodes the first rune rather than the first
+// byte: only the claude path has a schema constraining the vocabulary, so a codex source can return
+// any string here and a byte-indexed cut would mangle a non-ASCII one.
 func (s Severity) heading() string {
 	if s == "" {
 		return "Unspecified"
 	}
-	return strings.ToUpper(string(s[:1])) + string(s[1:])
+	r, size := utf8.DecodeRuneInString(string(s))
+	return strings.ToUpper(string(r)) + string(s[size:])
 }

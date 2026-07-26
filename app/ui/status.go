@@ -32,16 +32,8 @@ func (m Model) header() string {
 	if m.stage != "" {
 		head += " · stage " + m.stage
 	}
-	if n := m.findingCount(); n > 0 {
-		head += " · " + strconv.Itoa(n) + " findings"
+	if m.found > 0 {
+		head += " · " + strconv.Itoa(m.found) + " findings"
 	}
 	return head
-}
-
-func (m Model) findingCount() int {
-	total := 0
-	for _, a := range m.agents {
-		total += a.findings
-	}
-	return total
 }

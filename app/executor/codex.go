@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -32,6 +33,10 @@ var (
 // codexHeaderKeys are the resolved-configuration lines worth forwarding out of codex's noisy stderr.
 var codexHeaderKeys = []string{"model", "sandbox", "reasoning effort"}
 
+// codexTokensMarker is the footer codex prints when a run ends. The count lands on the line after it,
+// so the marker only arms the read.
+const codexTokensMarker = "tokens used"
+
 // Codex runs the codex CLI. Its stdout is prose rather than stream-json, so the output contract rides on
 // the prompt and the answer is extracted from whatever the process printed.
 type Codex struct {
@@ -47,7 +52,7 @@ func NewCodex(runner CommandRunner, opts Opts) *Codex {
 // Run executes one request. A non-zero exit or an idle timeout comes back on the Result rather than as
 // an error, and output holding no JSON degrades the source instead of failing the run.
 func (c *Codex) Run(ctx context.Context, req Request, sink EventSink) (Result, error) {
-	req.Prompt += c.outputContract(req.Schema)
+	req.Prompt += CodexOutputContract(req.Schema)
 	errs := newCodexStderr(func(ev Event) { c.emit(sink, ev) })
 
 	spec := runSpec{
@@ -60,6 +65,7 @@ func (c *Codex) Run(ctx context.Context, req Request, sink EventSink) (Result, e
 	res, err := c.run(ctx, req, spec)
 	res.RequestedModel = req.Model
 	res.ActualModel = errs.model
+	res.Tokens = errs.total()
 	if err != nil {
 		return res, err
 	}
@@ -80,9 +86,14 @@ func (c *Codex) args(req Request) []string {
 	return argv
 }
 
-// outputContract is codex's substitute for claude's --json-schema. The schema comes off the request so a
-// codex entry running synthesis or verify asks for that stage's shape rather than the finder's.
-func (c *Codex) outputContract(schema json.RawMessage) string {
+// CodexOutputContract is codex's substitute for claude's --json-schema, appended to every prompt Run
+// dispatches. The schema comes off the request so a codex entry running synthesis or verify asks for that
+// stage's shape rather than the finder's.
+//
+// It is exported because Run appends it after the caller has already archived the composed prompt, and an
+// archived prompt missing the one instruction that asks for JSON at all describes a run that did not
+// happen. The caller appends this to what it stores; the text itself stays here, never in a lens file.
+func CodexOutputContract(schema json.RawMessage) string {
 	if len(schema) == 0 {
 		return ""
 	}
@@ -92,7 +103,7 @@ func (c *Codex) outputContract(schema json.RawMessage) string {
 
 // drain consumes stdout, emitting one activity event on the first bytes to arrive. Codex has no
 // stream-json, so that raw write is the only signal a codex leader has to release the rest of the
-// roster with, and without it stagger_delay becomes the only release path.
+// roster with, and without it stagger-delay becomes the only release path.
 func (c *Codex) drain(ctx context.Context, r io.Reader, sink EventSink) Result {
 	buf := make([]byte, readChunk)
 	var once sync.Once
@@ -172,10 +183,13 @@ func (c *Codex) match(text string, patterns []string) string {
 // codexStderr filters one run's stderr down to what is worth keeping. It is per-run state and therefore
 // never a field on Codex, which serves the whole roster concurrently from one instance.
 type codexStderr struct {
-	emit  func(Event)
-	seen  map[string]bool
-	model string
-	diag  string
+	emit       func(Event)
+	seen       map[string]bool
+	model      string
+	diag       string
+	tokens     int
+	wantTokens bool
+	atEnd      bool // the accepted count is still the last thing stderr printed
 }
 
 func newCodexStderr(emit func(Event)) *codexStderr {
@@ -183,10 +197,22 @@ func newCodexStderr(emit func(Event)) *codexStderr {
 }
 
 // line handles one stderr line: it forwards the resolved model, sandbox and effort once each, keeps the
-// model so the report states what actually ran, and records the first CLI diagnostic. Diagnostics are
-// kept separately from stdout because a plan-quota failure arrives here with an empty stdout.
+// model so the report states what actually ran, counts the tokens the run reported, and records the last
+// CLI diagnostic. Diagnostics are kept separately from stdout because a plan-quota failure arrives here
+// with an empty stdout.
+//
+// The last one wins rather than the first, for the reason count keeps only the final token footer: codex
+// echoes the whole prompt to stderr ahead of anything it reports itself, so the first "error:" line is
+// routinely one the prompt quoted — a lens body, a finding describing an error, a scope excerpt — while
+// the diagnostic codex actually raised is the last thing it prints. Keeping the first reports a failure
+// as the prompt text that echoed, and hands classify a line that can carry a limit pattern the run never
+// hit, which is the contamination the tail bound on Raw exists to prevent on the other stream.
+//
+// The headers go out as EventInfo, never EventActivity: codex prints its banner before it contacts a
+// model, so forwarding them as activity would release a stagger gate the process has proved nothing to.
 func (s *codexStderr) line(l string) {
-	if s.diag == "" && s.diagnostic(l) {
+	s.count(l)
+	if s.diagnostic(l) {
 		s.diag = strings.TrimSpace(l)
 	}
 
@@ -199,7 +225,45 @@ func (s *codexStderr) line(l string) {
 	if key == "model" {
 		s.model = val
 	}
-	s.emit(Event{Kind: EventActivity, Text: key + ": " + val})
+	s.emit(Event{Kind: EventInfo, Text: key + ": " + val})
+}
+
+// count reads the token footer, codex's only report of what a run spent — it has no result event to
+// carry a usage object. The marker and the count are separate lines, so the marker arms the next one and
+// anything that is not a number disarms it again: codex echoes the whole prompt to stderr, and a lens
+// body carrying those two words must not be read as a total.
+//
+// Disarming is not enough on its own, because an echoed prompt can carry the marker and a number on
+// consecutive lines, and a run that then fails never prints the real footer to overwrite it. The footer
+// is the last thing codex prints, so a count with any content after it was echoed rather than reported —
+// which is what total checks once the stream has ended.
+func (s *codexStderr) count(l string) {
+	t := strings.TrimSpace(l)
+	if t == "" {
+		return
+	}
+	if strings.EqualFold(t, codexTokensMarker) {
+		s.wantTokens, s.atEnd = true, false
+		return
+	}
+	armed := s.wantTokens
+	s.wantTokens, s.atEnd = false, false
+	if !armed {
+		return
+	}
+	if n, err := strconv.Atoi(strings.ReplaceAll(t, ",", "")); err == nil && n >= 0 {
+		s.tokens, s.atEnd = n, true
+	}
+}
+
+// total is the run's token count, read once stderr has drained. A count something else followed came out
+// of the echoed prompt rather than the footer, so it is dropped instead of reported as a total: a failed
+// run charging itself for whatever number the prompt happened to contain is worse than reporting none.
+func (s *codexStderr) total() int {
+	if !s.atEnd {
+		return 0
+	}
+	return s.tokens
 }
 
 // diagnostic reports whether a line is a codex CLI error rather than progress chatter. Gating on the

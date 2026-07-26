@@ -101,11 +101,60 @@ func TestVerifier_promptName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := v.promptName(verifyGroup{dirs: tt.dirs})
+			groups := []verifyGroup{{dirs: tt.dirs}}
+			v.name(groups) // compose resolves the name before any filename is built from it
+			got := v.promptName(groups[0])
 			assert.Equal(t, tt.want, got)
 			assert.Equal(t, 2, strings.Count(got, "/"), "the label is a filename, never another directory level")
 		})
 	}
+}
+
+func TestVerifier_name(t *testing.T) {
+	v := &verifier{}
+
+	t.Run("distinct labels are left alone", func(t *testing.T) {
+		groups := []verifyGroup{{dirs: []string{"app/ui"}}, {dirs: []string{"app/pipeline"}}}
+		v.name(groups)
+		assert.Equal(t, "app-ui", groups[0].name)
+		assert.Equal(t, "app-pipeline", groups[1].name)
+	})
+
+	// grouping buckets on the exact path, so these are two groups that slug to one label. Sharing it
+	// would make one archived prompt overwrite the other and give both the same event agent name
+	t.Run("colliding labels are suffixed rather than shared", func(t *testing.T) {
+		groups := []verifyGroup{{dirs: []string{"app/executor"}}, {dirs: []string{"app-executor"}}, {dirs: []string{"app executor"}}}
+		v.name(groups)
+
+		assert.Equal(t, "app-executor", groups[0].name)
+		assert.Equal(t, "app-executor-2", groups[1].name)
+		assert.Equal(t, "app-executor-3", groups[2].name)
+
+		seen := map[string]bool{}
+		for _, g := range groups {
+			p := v.promptName(g)
+			assert.False(t, seen[p], "every group needs its own archive filename, got %s twice", p)
+			seen[p] = true
+		}
+		assert.Len(t, seen, len(groups))
+	})
+
+	// a real directory can already be named what the suffix generator would produce, so the generated
+	// candidate has to be checked against what is taken, not just the base label
+	t.Run("a directory named like the generated suffix does not collide with it", func(t *testing.T) {
+		groups := []verifyGroup{
+			{dirs: []string{"app/foo"}}, {dirs: []string{"app-foo"}}, {dirs: []string{"app/foo-2"}},
+		}
+		v.name(groups)
+
+		seen := map[string]bool{}
+		for _, g := range groups {
+			p := v.promptName(g)
+			assert.False(t, seen[p], "every group needs its own archive filename, got %s twice", p)
+			seen[p] = true
+		}
+		assert.Len(t, seen, len(groups))
+	})
 }
 
 func TestVerifyGroup_label(t *testing.T) {
@@ -128,7 +177,7 @@ func TestVerifyGroup_label(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := verifyGroup{dirs: tt.dirs}.label()
 			assert.Equal(t, tt.want, got)
-			assert.NotContains(t, got, "/", "task 11 builds a filename from this")
+			assert.NotContains(t, got, "/", "promptName builds a filename from this")
 			assert.NotContains(t, got, "\\")
 			assert.False(t, strings.HasPrefix(got, "."), "a leading dot is rejected wherever a name becomes a path")
 		})
@@ -207,6 +256,25 @@ func TestVerifier_run_verdicts(t *testing.T) {
 		assert.Equal(t, "close it", got.Fix)
 		assert.Equal(t, "app/executor/proc.go", got.File, "an omitted field keeps its original value")
 		assert.Equal(t, []string{"bugs"}, got.Sources, "verification does not touch attribution")
+	})
+
+	// the codex path has no --json-schema, so a refined verdict can name a severity outside the enum.
+	// letting it through replaces a schema-checked value with one nothing validated
+	t.Run("a refined verdict with an unknown severity keeps the original", func(t *testing.T) {
+		h := newHarness(t)
+		h.cfg.NewRunner = verdictRunner(map[string]string{
+			"bugs-1": `{"id":"bugs-1","verdict":"refined","severity":"blocker","title":"still refined"}`,
+		})
+
+		v := h.verifier(func(Event) {})
+		rep, err := v.run(context.Background(), judgedReport())
+		require.NoError(t, err)
+
+		got, ok := byID(rep.Findings, "bugs-1")
+		require.True(t, ok)
+		assert.Equal(t, finding.Major, got.Severity, "an unrecognized severity is not a judgment")
+		assert.Equal(t, finding.Refined, got.Verdict, "the verdict itself is still from the enum")
+		assert.Equal(t, "still refined", got.Title, "the rest of the correction still applies")
 	})
 
 	t.Run("a corrected value outside a refined verdict is ignored", func(t *testing.T) {
@@ -328,9 +396,12 @@ func TestVerifier_run_failures(t *testing.T) {
 		res  executor.Result
 		err  error
 	}{
-		{"the verifier died", executor.Result{}, errors.New("stalled twice")},
-		{"no structured output came back", executor.Result{}, nil},
-		{"the verdicts are malformed", executor.Result{StructuredOutput: json.RawMessage(`{"verdicts":`)}, nil},
+		{"the verifier died", executor.Result{Tokens: 7}, errors.New("stalled twice")},
+		{"no structured output came back", executor.Result{Tokens: 7}, nil},
+		{"the verdicts are malformed", executor.Result{StructuredOutput: json.RawMessage(`{"verdicts":`), Tokens: 7}, nil},
+		// an object of another shape decodes to zero verdicts, which would look like a group that judged
+		// nothing rather than one that answered something else entirely
+		{"the verdicts key is absent", executor.Result{StructuredOutput: json.RawMessage(`{"ok":true}`), Tokens: 7}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -356,6 +427,7 @@ func TestVerifier_run_failures(t *testing.T) {
 				}
 			}
 			assert.Equal(t, 2, degraded, "a failed verifier is loud rather than looking like a group that confirmed everything")
+			assert.Equal(t, 14, rep.Stats.Tokens, "a group that failed still spent what it spent, and the run total is what was billed")
 		})
 	}
 }

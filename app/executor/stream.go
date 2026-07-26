@@ -3,9 +3,11 @@ package executor
 import (
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 )
 
-// activityTextLimit keeps one activity line short enough for a TUI row.
+// activityTextLimit keeps one activity line short enough for a TUI row. It counts runes, not bytes,
+// so the limit is what a reader sees rather than what the encoding happens to cost.
 const activityTextLimit = 120
 
 // streamEvent is one line of claude's stream-json output. Only the fields revmux acts on are decoded.
@@ -84,8 +86,10 @@ func (e streamEvent) activity() string {
 			if text == "" {
 				continue
 			}
-			if len(text) > activityTextLimit {
-				return text[:activityTextLimit] + "..."
+			// cut on a rune boundary: assistant prose is arbitrary text, and a byte-indexed cut lands
+			// mid-rune and puts invalid UTF-8 into the TUI, the stderr lines and events.jsonl
+			if utf8.RuneCountInString(text) > activityTextLimit {
+				return string([]rune(text)[:activityTextLimit]) + "..."
 			}
 			return text
 		}

@@ -96,9 +96,10 @@ func (f *finder) runAgent(ctx context.Context, spec prompt.AgentSpec, index int)
 	if err != nil {
 		return f.degrade(res, err)
 	}
-	// archived post-substitution, exactly the bytes the process receives: a reflection agent cannot
-	// judge a lens it cannot read, and a paraphrase is worse than no data
-	f.save(f.promptName(spec), []byte(text))
+	// archived post-substitution, exactly the bytes the process receives — the codex output contract
+	// included: a reflection agent cannot judge a lens it cannot read, and a paraphrase is worse than
+	// no data
+	f.save(f.promptName(spec), []byte(archivedPrompt(spec.Executor, text, finding.FinderSchema())))
 
 	if slotErr := f.stagger.acquire(ctx, index); slotErr != nil {
 		return f.degrade(res, slotErr)
@@ -163,17 +164,36 @@ func (f *finder) attempt(ctx context.Context, opts attemptOpts) (executor.Result
 }
 
 // fault judges one attempt. A nil return means the process delivered; anything else is what a retry
-// would be attempting to survive — a stall, a rate limit, a dead process or a transport error.
+// would be attempting to survive — a stall, a rate limit, a dead process, a transport error, or a clean
+// exit carrying nothing. That last one is the codex path's own failure mode: it has no --json-schema, so
+// its output contract is prompt-driven and an agent can exit 0 having written prose no JSON came out of.
+// Degrading it on the first attempt writes off a whole source the retry-once policy owes another try.
+//
+// A payload that arrived but is not the answer — malformed, or an object of some other shape — is not
+// one of them. The process delivered; a second launch buys the same reply. parse rejects it instead,
+// which degrades this source alone.
+//
+// A stall or a rate limit that nonetheless carries structured output is not one of them. That payload
+// only exists once the terminal result event has been read, so the agent's answer is whole: the watchdog
+// fired on the teardown behind it — a descendant holding the stdout pipe open past the child's own exit —
+// and a rate limit reported mid-stream was one the CLI went on to survive. Retrying either pays for the
+// same findings twice and degrades the source when the second attempt hits the same wall.
+//
+// The exit code carries the same carve-out, and needs it for the stall case to work at all: a watchdog
+// kill reaps the process by signal, so its code is -1 rather than 0 and an unguarded check would retry
+// every stalled-but-complete attempt the case above just kept.
 func (f *finder) fault(spec prompt.AgentSpec, res executor.Result, err error) error {
 	switch {
-	case res.IdleTimedOut:
+	case res.IdleTimedOut && len(res.StructuredOutput) == 0:
 		return fmt.Errorf("agent %s stalled", spec.Name)
-	case res.RateLimited:
+	case res.RateLimited && len(res.StructuredOutput) == 0:
 		return fmt.Errorf("agent %s rate limited: %s", spec.Name, res.RateLimit.Status)
 	case err != nil:
 		return err
-	case res.ExitCode != 0:
+	case res.ExitCode != 0 && len(res.StructuredOutput) == 0:
 		return fmt.Errorf("agent %s exited %d", spec.Name, res.ExitCode)
+	case len(res.StructuredOutput) == 0:
+		return fmt.Errorf("agent %s returned no structured output", spec.Name)
 	}
 	return nil
 }
@@ -194,6 +214,9 @@ func (f *finder) parse(spec prompt.AgentSpec, raw json.RawMessage) ([]finding.Fi
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("decode findings from %s: %w", spec.Name, err)
+	}
+	if !answered(raw, keyFindings) {
+		return nil, fmt.Errorf("agent %s returned no findings object", spec.Name)
 	}
 
 	for i := range out.Findings {

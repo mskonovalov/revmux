@@ -256,6 +256,65 @@ func TestFinder_retry(t *testing.T) {
 		})
 	}
 
+	t.Run("a stall carrying structured output is not retried", func(t *testing.T) {
+		h := newHarness(t)
+		var attempts atomic.Int64
+		h.cfg.NewRunner = func(RunnerSpec) Runner {
+			return &mocks.RunnerMock{RunFunc: func(context.Context, executor.Request, executor.EventSink) (executor.Result, error) {
+				attempts.Add(1)
+				return executor.Result{IdleTimedOut: true, StructuredOutput: findingsJSON(
+					`{"file":"a.go","line":1,"severity":"major","confidence":85,"title":"delivered"}`)}, nil
+			}}
+		}
+
+		f := h.finder(func(Event) {})
+		res := f.runAgent(context.Background(), h.cfg.Roster[0], 0)
+		require.True(t, res.ok(), "the watchdog fired on the teardown, not on a dead agent")
+		require.Len(t, res.findings, 1)
+		assert.Equal(t, "delivered", res.findings[0].Title)
+		assert.Equal(t, int64(1), attempts.Load(), "a retry would pay for the same findings twice")
+	})
+
+	t.Run("a stall reaped by signal is not retried on its exit code", func(t *testing.T) {
+		h := newHarness(t)
+		var attempts atomic.Int64
+		h.cfg.NewRunner = func(RunnerSpec) Runner {
+			return &mocks.RunnerMock{RunFunc: func(context.Context, executor.Request, executor.EventSink) (executor.Result, error) {
+				attempts.Add(1)
+				return executor.Result{IdleTimedOut: true, ExitCode: -1, StructuredOutput: findingsJSON(
+					`{"file":"a.go","line":1,"severity":"major","confidence":85,"title":"delivered"}`)}, nil
+			}}
+		}
+
+		f := h.finder(func(Event) {})
+		res := f.runAgent(context.Background(), h.cfg.Roster[0], 0)
+		require.True(t, res.ok(), "the watchdog kill set that exit code, and the answer is already whole")
+		require.Len(t, res.findings, 1)
+		assert.Equal(t, "delivered", res.findings[0].Title)
+		assert.Equal(t, int64(1), attempts.Load(), "the stall carve-out is dead if the exit code retries anyway")
+	})
+
+	t.Run("a rate limit carrying structured output is not retried", func(t *testing.T) {
+		h := newHarness(t)
+		var attempts atomic.Int64
+		h.cfg.NewRunner = func(RunnerSpec) Runner {
+			return &mocks.RunnerMock{RunFunc: func(context.Context, executor.Request, executor.EventSink) (executor.Result, error) {
+				attempts.Add(1)
+				return executor.Result{
+					RateLimited: true, RateLimit: executor.RateLimitInfo{Status: "rejected"},
+					StructuredOutput: findingsJSON(`{"file":"a.go","line":1,"severity":"major","confidence":85,"title":"delivered"}`),
+				}, nil
+			}}
+		}
+
+		f := h.finder(func(Event) {})
+		res := f.runAgent(context.Background(), h.cfg.Roster[0], 0)
+		require.True(t, res.ok(), "the CLI survived the limit and returned the whole answer")
+		require.Len(t, res.findings, 1)
+		assert.Equal(t, "delivered", res.findings[0].Title)
+		assert.Equal(t, int64(1), attempts.Load(), "a retry would hit the same limit and degrade a source that reported")
+	})
+
 	t.Run("the first attempt's context is canceled before the second runs", func(t *testing.T) {
 		h := newHarness(t)
 		var mu sync.Mutex
@@ -281,6 +340,61 @@ func TestFinder_retry(t *testing.T) {
 		assert.NotSame(t, seen[0], seen[1], "each attempt owns its own context")
 	})
 
+	t.Run("a clean exit carrying nothing is retried", func(t *testing.T) {
+		h := newHarness(t)
+		var attempts atomic.Int64
+		h.cfg.NewRunner = func(RunnerSpec) Runner {
+			return &mocks.RunnerMock{RunFunc: func(context.Context, executor.Request, executor.EventSink) (executor.Result, error) {
+				if attempts.Add(1) == 1 {
+					return executor.Result{}, nil
+				}
+				return executor.Result{StructuredOutput: findingsJSON(
+					`{"file":"a.go","line":1,"severity":"major","confidence":85,"title":"delivered"}`)}, nil
+			}}
+		}
+
+		f := h.finder(func(Event) {})
+		res := f.runAgent(context.Background(), h.cfg.Roster[0], 0)
+		require.True(t, res.ok(), "the second attempt delivered")
+		require.Len(t, res.findings, 1)
+		assert.Equal(t, "delivered", res.findings[0].Title)
+		assert.Equal(t, int64(2), attempts.Load(), "an empty answer is owed the same retry a crash gets")
+	})
+
+	t.Run("a clean exit carrying nothing twice degrades the source", func(t *testing.T) {
+		h := newHarness(t)
+		var attempts atomic.Int64
+		h.cfg.NewRunner = func(RunnerSpec) Runner {
+			return &mocks.RunnerMock{RunFunc: func(context.Context, executor.Request, executor.EventSink) (executor.Result, error) {
+				attempts.Add(1)
+				return executor.Result{}, nil
+			}}
+		}
+
+		f := h.finder(func(Event) {})
+		res := f.runAgent(context.Background(), h.cfg.Roster[0], 0)
+		require.False(t, res.ok())
+		assert.Contains(t, res.err.Error(), "no structured output")
+		assert.Equal(t, int64(2), attempts.Load(), "retry once, then degrade")
+	})
+
+	t.Run("an empty findings list is delivered, not retried", func(t *testing.T) {
+		h := newHarness(t)
+		var attempts atomic.Int64
+		h.cfg.NewRunner = func(RunnerSpec) Runner {
+			return &mocks.RunnerMock{RunFunc: func(context.Context, executor.Request, executor.EventSink) (executor.Result, error) {
+				attempts.Add(1)
+				return executor.Result{StructuredOutput: findingsJSON()}, nil
+			}}
+		}
+
+		f := h.finder(func(Event) {})
+		res := f.runAgent(context.Background(), h.cfg.Roster[0], 0)
+		require.True(t, res.ok(), "an agent that found nothing answered the question")
+		assert.Empty(t, res.findings)
+		assert.Equal(t, int64(1), attempts.Load(), "a clean nothing-found must not be retried as an empty answer")
+	})
+
 	t.Run("a parse failure is not retried", func(t *testing.T) {
 		h := newHarness(t)
 		var attempts atomic.Int64
@@ -295,6 +409,32 @@ func TestFinder_retry(t *testing.T) {
 		res := f.runAgent(context.Background(), h.cfg.Roster[0], 0)
 		require.False(t, res.ok())
 		assert.Equal(t, int64(1), attempts.Load(), "a malformed answer is a delivered one, not a stall")
+	})
+
+	t.Run("an answer of another shape degrades the source rather than reporting nothing", func(t *testing.T) {
+		h := newHarness(t)
+		var attempts atomic.Int64
+		h.cfg.NewRunner = func(RunnerSpec) Runner {
+			return &mocks.RunnerMock{RunFunc: func(context.Context, executor.Request, executor.EventSink) (executor.Result, error) {
+				attempts.Add(1)
+				return executor.Result{StructuredOutput: json.RawMessage(`{"note":"here is an example finding"}`)}, nil
+			}}
+		}
+
+		var seen []Event
+		var mu sync.Mutex
+		f := h.finder(func(ev Event) { mu.Lock(); seen = append(seen, ev); mu.Unlock() })
+		res := f.runAgent(context.Background(), h.cfg.Roster[0], 0)
+		require.False(t, res.ok(), "a source that answered something else has not reported")
+		assert.Equal(t, int64(1), attempts.Load(), "a wrong-shaped answer is a delivered one, not a stall")
+
+		degraded := 0
+		for _, ev := range seen {
+			if ev.Kind == EventAgentDegraded {
+				degraded++
+			}
+		}
+		assert.Equal(t, 1, degraded, "silently counting it as zero findings is what hides a dead source")
 	})
 
 	t.Run("a canceled run degrades without a second attempt", func(t *testing.T) {
@@ -386,6 +526,37 @@ func TestFinder_run_concurrency(t *testing.T) {
 			"a follower opening the gate would release the roster before the leader proved auth")
 	})
 
+	t.Run("the leader's process starting does not release the rest", func(t *testing.T) {
+		h := newHarness(t)
+		started, hold := make(chan struct{}), make(chan struct{})
+		h.cfg.NewRunner = func(RunnerSpec) Runner {
+			return &mocks.RunnerMock{RunFunc: func(_ context.Context, req executor.Request, sink executor.EventSink) (executor.Result, error) {
+				if strings.Contains(req.Prompt, "lens bugs") {
+					// what proc emits the instant the fork succeeds, before a byte has been read
+					sink.Emit(executor.Event{Kind: executor.EventStarted, Text: "claude"})
+					close(started)
+					<-hold
+				}
+				return executor.Result{StructuredOutput: findingsJSON(``)}, nil
+			}}
+		}
+
+		s, fire := newHeldStagger(time.Hour, 0)
+		f := &finder{cfg: h.cfg, save: h.save, emit: func(Event) {}, stagger: s}
+		done := make(chan []sourceResult, 1)
+		go func() {
+			got, err := f.run(context.Background())
+			assert.NoError(t, err)
+			done <- got
+		}()
+
+		<-started
+		assert.False(t, s.open(), "a launched process has proved nothing, so the gate must still be shut")
+		fire()
+		close(hold)
+		assert.Len(t, <-done, 2)
+	})
+
 	t.Run("the delay releases the roster when the leader never emits", func(t *testing.T) {
 		h := newHarness(t)
 		h.cfg.NewRunner = h.runner(map[string]executor.Result{
@@ -473,6 +644,16 @@ func TestFinder_parse(t *testing.T) {
 		_, err := f.parse(spec, json.RawMessage(`{"findings":`))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "decode findings")
+	})
+
+	t.Run("an object of another shape is not an empty answer", func(t *testing.T) {
+		// codex has no --json-schema and extraction takes the first object in its prose, so a decodable
+		// object carrying anything else must degrade the source rather than pass for zero findings
+		for _, raw := range []string{`{"error":"no scope file"}`, `{}`, `{"verdicts":[]}`} {
+			_, err := f.parse(spec, json.RawMessage(raw))
+			require.Error(t, err, raw)
+			assert.Contains(t, err.Error(), "no findings object", raw)
+		}
 	})
 }
 

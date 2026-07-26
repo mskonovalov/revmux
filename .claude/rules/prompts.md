@@ -113,6 +113,12 @@ Lens text must stay executor-agnostic.
 The output-contract difference — claude has `--json-schema`, codex does not — is injected by the executor.
 Never write "return JSON shaped like…" into a lens file.
 
+**The contract is appended after the stage has already archived the prompt, so the stage appends it to what
+it stores too**, through the exported `executor.CodexOutputContract`.
+The text stays in the executor — that is what the rule above is about — but an archived codex prompt missing
+the one instruction that asks for JSON at all is not the bytes the model saw, and describes a run that did
+not happen.
+
 Keep the vocabulary singular: the front-matter key is `executor`, so do not call the same concept
 a "runner" in one layer and an "executor" in another.
 
@@ -212,6 +218,12 @@ an override is different text, and the default's summary would describe somethin
 - `color`, when present, is an ANSI-16 name (`red`, `bright-blue`, …) or `#RRGGBB`
 - no duplicate agent names in one roster
 - front matter parses, and a profile with no `agents` is an error rather than an empty run
+- front matter carries only the keys its own kind of file defines, so each kind declares its own shape
+  rather than sharing one: `executor` belongs to a roster entry and a stage, `agents` to a profile,
+  and a lens takes `description` alone.
+  One shared shape accepts every key in every file, and a profile-level `executor:` reads exactly like
+  the `model:` and `effort:` defaults beside it — it would parse, then be ignored while every agent ran
+  on claude
 
 Invalid values are rejected, never silently defaulted.
 A typo'd model quietly changing which model reviews your code is worse than a startup error.

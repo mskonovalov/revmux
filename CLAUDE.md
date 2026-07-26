@@ -111,12 +111,22 @@ to see that.
 Anything that makes a run un-auditable after the fact — dropping the composed prompt, keeping only the final
 findings, reusing a run directory — defeats the purpose even when the review itself is fine.
 
-**A failed archive write fails the run (exit `2`).**
+**A failed archive write fails the run (exit `2`), with exactly two carve-outs.**
 A report emitted next to a half-written archive is worse than no report: it reads as complete, and the gap
 only surfaces later when someone tries to audit it.
 For the same reason the archive is written synchronously and is never a second subscriber on the event
 channel — a Go channel distributes rather than broadcasts, so a second reader would silently take a random
 half of the events. See `.claude/rules/pipeline.md`.
+
+The carve-outs are both about attribution, and neither may be widened.
+A **per-agent tee** under `agents/` degrades that one source instead of failing the run: it is owned by that
+agent's own goroutine and is the only artifact whose failure belongs to a single source, so it is reported
+through the same banner and `degraded` list every other agent failure is, rather than throwing away the
+other agents' completed work.
+A **`Prune` failure** warns and leaves the exit code alone: it runs after the report is written and an
+undeletable old round is housekeeping, not a missing artifact of this run.
+Everything else — the manifest, the composed prompts, the stage snapshots, `events.jsonl`, the report —
+either lands or the run exits `2`.
 
 `--task` and `--run` are caller-supplied and become filesystem paths, so they are validated before use:
 no separators, no `..`, not absolute, and containment re-checked on the resolved path because a symlink
@@ -210,7 +220,9 @@ Stamping happens in `find`, not synthesis, or `--no-synthesis` runs carry invent
   It is reported by `revmux config` automatically: `knobs` is built by reflection over the `options` struct.
 - A new roster key needs: the `agentYAML` field it parses into, the `AgentSpec` field it resolves to,
   front-matter validation, and the profile examples in README and `.claude/rules/prompts.md`.
-- A new pipeline `EventKind` needs a case in `app/progress.go` **and** in the TUI's `apply`, or it is silently invisible in one renderer.
+- A new pipeline `EventKind` needs a case in `app/progress.go` **and** in the TUI — in `agentState.track`
+  for an agent-scoped kind, or in `Model.apply` for one that is not, since `apply` dispatches everything
+  else to `track` and both switches end in a `default` that renders nothing.
 - A new lens file needs an entry in at least one shipped profile, or nothing will ever run it.
 - A new prompt input — a variable, an injected block, a per-agent knob — needs a matching record in
   `manifest.json` or the archived prompt, or a reflection agent cannot tell what shaped the review.

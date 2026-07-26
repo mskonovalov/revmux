@@ -133,7 +133,7 @@ runs/after-fix/
 │       ├── synthesis.md
 │       ├── verify-app-executor.md      one per directory group
 │       └── verify-app-pipeline.md
-├── stages/
+├── stages/                   a skipped stage writes no snapshot, so --no-verify leaves 3- absent
 │   ├── 1-found.json          findings as the find stage left them
 │   ├── 2-synthesized.json
 │   └── 3-verified.json
@@ -153,6 +153,11 @@ agent: `claude --model` can be silently ignored, so a roster's model pin is a cl
 A failed archive write fails the run. A report emitted next to a half-written archive reads as complete, and
 the gap only surfaces later when someone tries to audit it.
 
+The one exception is a per-agent tee under `agents/`, which degrades that one source instead. It is owned by
+that agent's own goroutine and it is the only artifact whose failure is attributable to a single source, so a
+failure there is reported the way any other agent failure is — named in the report banner and in `degraded`
+— rather than discarding the other agents' work.
+
 Old rounds are pruned to `--keep-runs` by modification time. Pruning only ever reads `runs/`, so `scope.md`,
 `goal.md`, `profile.md` and `context/` are never candidates however aggressive the setting is.
 
@@ -167,6 +172,13 @@ is auto-detected: no flag selects it, and its absence simply drops it.
 **Prompt and lens files** — `./.revmux/`, then `~/.config/revmux/`, then the `go:embed` defaults, resolved
 **per file**. Overriding one lens does not orphan the other six, and deleting an override falls back to the
 embedded copy rather than disabling the lens. To actually drop a lens, remove it from the profile roster.
+
+The project layer wins over both of the others, and it supplies prompt text as well as knobs — a checked-in
+`.revmux/lenses/bugs.md` replaces the shipped lens, and that text becomes the instructions a headless agent
+with a shell executes. So `.revmux/` is code, and running revmux inside a repository trusts it the same way
+`.claude/` or a `Makefile` there does. Review it before reviewing a branch you did not write, or run revmux
+from outside the tree — the project layer is read from the process working directory, never from `--workdir`,
+so an invocation that stays outside never picks up the reviewed repository's own `.revmux/`.
 
 ```
 ~/.config/revmux/
@@ -260,7 +272,8 @@ on claude, so a roster's codex entry does not survive the override.
 
 One agent's prompt is the profile body plus each of its lens files, concatenated, with `{{VAR}}` substituted
 and the prior-rounds block appended. The variable vocabulary is closed — `{{SCOPE}}`, `{{GOAL}}`,
-`{{PROFILE}}`, `{{CONTEXT}}`, `{{WORKDIR}}`, plus `{{FINDINGS}}` and `{{SOURCES}}` for the two model stages.
+`{{PROFILE}}`, `{{CONTEXT}}`, `{{WORKDIR}}`, plus `{{FINDINGS}}` for both model stages and `{{SOURCES}}` for
+synthesis only — verify sees one group at a time and is never given the roster.
 A prompt file naming anything else fails at load, which is what makes a typo loud instead of silent.
 
 ## Flags
@@ -287,7 +300,7 @@ The runtime knobs below also read from the config file, under the same name as t
 | Flag | Config key | Default | Description |
 |---|---|---|---|
 | `--idle-timeout=<d>` | `idle-timeout` | `2m` | kill and retry an agent after this long with no output |
-| `--hard-timeout=<d>` | `hard-timeout` | `20m` | kill an agent after this long in total |
+| `--hard-timeout=<d>` | `hard-timeout` | `20m` | kill an agent after this long, per attempt |
 | `--stagger-delay=<d>` | `stagger-delay` | `30s` | how long to wait for the first agent before releasing the rest |
 | `--max-parallel=<n>` | `max-parallel` | `4` | how many agents run at once |
 | `--verify-groups=<n>` | `verify-groups` | `6` | cap on the number of verifier groups |
@@ -342,8 +355,9 @@ independently agreed". The two are never interchangeable.
 the verify stage was skipped. Empty lists are emitted as arrays rather than `null`, so a caller can index
 into them without a nil check.
 
-`--min-confidence` filters once, before rendering, and both the report and the exit code are computed from
-the filtered set. Open questions, pre-existing and immaterial findings pass through untouched.
+`--min-confidence` filters once, before anything renders, and the printed report, the findings browser and
+the exit code are all computed from the filtered set — a finding the exit code says is absent is never
+listed in the TUI. Open questions, pre-existing and immaterial findings pass through untouched.
 
 ### Exit codes
 
@@ -355,10 +369,25 @@ the filtered set. Open questions, pre-existing and immaterial findings pass thro
 
 `1` is a normal outcome, not a failure. Callers script against these values.
 
+A per-agent tee is the one artifact whose failure degrades a source rather than failing the run, and a
+`--keep-runs` prune that cannot delete an old round warns without changing the exit code.
+
+A delivered signal — `SIGINT` or `SIGTERM` — cancels the run and exits `2`. Agent processes are started in
+their own session, so the terminal never signals them: revmux tears each process group down itself on the
+way out rather than leaving the model CLIs and everything they spawned running unsupervised.
+
+`Ctrl-C` delivers that signal under `--no-tui`. While the TUI is running it does not: the terminal is in raw
+mode, so the keystroke reaches revmux as a key rather than a signal and quits the findings view without
+stopping the run — see below. A second `Ctrl-C`, once the TUI has restored the terminal, cancels.
+
 ## Terminal UI
 
-A status table on top, one row per agent — name, state, elapsed, last activity — and one detail pane below
-it. Tab `0 · all` is the combined chronological view and is focused by default; tabs `1`-`9` are per-agent
+A status table on top, one row per supervised process — name, state, elapsed, last activity — and one detail
+pane below it. The roster fills it first, and the synthesis and verify processes take rows of their own as
+they start, so the table shows what is running rather than only what the profile named. The findings count
+in the header follows the same logic: the finders add to it, and a later stage's merged count replaces it.
+
+Tab `0 · all` is the combined chronological view and is focused by default; tabs `1`-`9` are per-agent
 full-detail scrollback including thinking. On completion the model switches to the findings browser, and the
 agent tabs stay reachable so a reader can check why a finding was raised.
 

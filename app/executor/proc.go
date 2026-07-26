@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 // maxLineBytes bounds one stream-json line. A result event carrying structured output runs well past
@@ -72,20 +73,28 @@ func (p *proc) run(ctx context.Context, req Request, spec runSpec) (Result, erro
 	}
 	p.emit(spec.sink, Event{Kind: EventStarted, Text: p.bin})
 
+	// both streams touch the watchdog, so it is serialized: stdout is read here and stderr in its own
+	// goroutine, and a Timer implementation is not required to tolerate two callers
+	var idleMu sync.Mutex
+	touch := func() {
+		if idle == nil {
+			return
+		}
+		idleMu.Lock()
+		defer idleMu.Unlock()
+		idle.Reset(p.opts.IdleTimeout)
+	}
+
 	// stderr is drained alongside stdout: reading it after the parse would let a chatty child fill the
 	// pipe and block, and cmd.Wait closes both once it returns.
 	stderrDone := make(chan struct{})
 	go func() {
 		defer close(stderrDone)
-		p.drainStderr(runCtx, run.stderr, spec.stderrLine)
+		p.drainStderr(runCtx, run.stderr, spec.stderrLine, touch)
 	}()
 
 	var raw strings.Builder
-	tee := &teeReader{src: run.stdout, dst: p.rawSink(&raw, req.RawOutput), touch: func() {
-		if idle != nil {
-			idle.Reset(p.opts.IdleTimeout)
-		}
-	}}
+	tee := &teeReader{src: run.stdout, dst: p.rawSink(&raw, req.RawOutput), touch: touch}
 
 	res := spec.parse(runCtx, tee)
 	<-stderrDone
@@ -135,13 +144,29 @@ func (p *proc) start(ctx context.Context, argv []string, prompt string) (*procRu
 	return &procRun{cmd: cmd, stdout: stdout, stderr: stderr, cleanup: newProcessGroupCleanup(cmd, ctx.Done())}, nil
 }
 
-// drainStderr consumes the child's stderr, handing each line to the executor's filter when it has one.
-// Draining is not optional even without a filter: an unread pipe fills and blocks the process.
-func (p *proc) drainStderr(ctx context.Context, r io.Reader, line func(string)) {
-	if line == nil {
-		line = func(string) {}
+// drainStderr consumes the child's stderr, touching the idle watchdog on every line and handing it to
+// the executor's filter when it has one. Draining is not optional even without a filter: an unread pipe
+// fills and blocks the process.
+//
+// A line here is liveness in its own right: codex reports its reasoning and every tool call on stderr and
+// normally writes stdout only when it answers, so a watchdog ticking on stdout alone kills a healthy codex
+// run at the idle timeout, retries it, and degrades the source. The hard timeout still bounds a process
+// that chatters forever without answering.
+// A read fault or a line past maxLineBytes ends the scanner but not the stream, so the rest is drained to
+// nowhere rather than left unread: stopping here is what fills the pipe and blocks the child, which is the
+// failure this whole goroutine exists to prevent. Liveness is gone with the scanner, so the run then rides
+// on the stdout tick and the two timeouts. A canceled run needs none of it — the process group is already
+// being torn down and the pipe closes with it.
+func (p *proc) drainStderr(ctx context.Context, r io.Reader, line func(string), touch func()) {
+	handler := func(l string) {
+		touch()
+		if line != nil {
+			line(l)
+		}
 	}
-	_ = p.readLines(ctx, r, line)
+	if err := p.readLines(ctx, r, handler); err != nil && ctx.Err() == nil {
+		_, _ = io.Copy(io.Discard, r)
+	}
 }
 
 func (p *proc) readLines(ctx context.Context, r io.Reader, handler func(string)) error {

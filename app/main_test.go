@@ -59,8 +59,16 @@ func TestBinary_versionOutput(t *testing.T) {
 	out, err := build.CombinedOutput()
 	require.NoError(t, err, "build failed: %s", out)
 
-	out, err = exec.Command(bin, "--version").CombinedOutput() //nolint:gosec // binary just built by this test
-	require.NoError(t, err)
+	// main parses arguments before it prints the version, and parsing walks ~/.config/revmux and
+	// ./.revmux. A child inheriting the developer's real environment fails this test over an unrelated
+	// config, and the ban on touching the user's own setup applies to a spawned binary too.
+	home := t.TempDir()
+	cmd := exec.Command(bin, "--version") //nolint:gosec // binary just built by this test
+	cmd.Dir = t.TempDir()
+	cmd.Env = append(os.Environ(), "HOME="+home, "USERPROFILE="+home)
+
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, "output: %s", out)
 	assert.Equal(t, "revmux test-rev\n", string(out))
 }
 
@@ -289,6 +297,59 @@ func TestRun_review(t *testing.T) {
 		assert.Equal(t, 0, run(r.opts()))
 		assert.Contains(t, r.stdout.String(), "No findings.")
 		assert.NotContains(t, r.stdout.String(), "below the bar")
+	})
+
+	// the findings browser is a rendering path like stdout is, and review is what hands it the
+	// report. Filtering after that hand-off lists in the ui exactly what stdout and the exit code
+	// both say is absent, so the threshold has to be applied before review returns.
+	t.Run("min-confidence is applied before the renderer is handed the report", func(t *testing.T) {
+		o := base(t)
+		o.MinConfidence = 80
+		r := newRunOpts(t, o)
+		r.result = executor.Result{StructuredOutput: json.RawMessage(
+			`{"findings":[{"file":"a.go","line":1,"severity":"minor","confidence":55,"title":"below the bar"},` +
+				`{"file":"b.go","line":2,"severity":"major","confidence":90,"title":"above the bar"}]}`)}
+
+		ro := r.opts()
+		cfg, arc, err := ro.pipelineConfig()
+		require.NoError(t, err)
+
+		rep, err := ro.review(context.Background(), cfg, arc)
+		require.NoError(t, err)
+		require.Len(t, rep.Findings, 1, "review returns the same report it gave the renderer")
+		assert.Equal(t, "above the bar", rep.Findings[0].Title)
+	})
+
+	// run derives this context from an interrupt, and children are started with Setsid, so the terminal
+	// never signals them. Cancellation is the only thing that reaps them, and it has to reach the agent
+	// rather than stopping at the pipeline.
+	t.Run("canceling the review's context cancels the agent and stops the run", func(t *testing.T) {
+		r := newRunOpts(t, base(t))
+		ro := r.opts()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		var launched atomic.Int64
+		var agentErr error
+		ro.newRunner = func(pipeline.RunnerSpec) pipeline.Runner {
+			return &pmocks.RunnerMock{
+				RunFunc: func(ctx context.Context, _ executor.Request, _ executor.EventSink) (executor.Result, error) {
+					launched.Add(1)
+					cancel() // stands in for the interrupt landing mid-run
+					agentErr = ctx.Err()
+					return executor.Result{}, ctx.Err()
+				},
+			}
+		}
+
+		cfg, arc, err := ro.pipelineConfig()
+		require.NoError(t, err)
+
+		_, err = ro.review(ctx, cfg, arc)
+		require.Error(t, err, "a canceled run has no review to report")
+		require.Error(t, agentErr, "the agent's own context falls with the run, which is what kills its process group")
+		assert.Equal(t, int64(1), launched.Load(), "a canceled run is not retried")
 	})
 
 	t.Run("the synthesis stage is wired and its merge reaches stdout", func(t *testing.T) {
@@ -634,6 +695,53 @@ func TestRun_reportWrittenOnce(t *testing.T) {
 		assert.Equal(t, 1, strings.Count(out, "unchecked error"))
 		assert.Contains(t, r.stderr.String(), "stage find", "and the plain renderer took the events")
 	})
+}
+
+// the three artifacts package main owns are what make a finished run auditable, and none of them are
+// recoverable from the report the caller was shown. A run that emits findings while leaving the archive
+// short of them reads as a review that died mid-run.
+func TestRun_archivesItsOwnArtifacts(t *testing.T) {
+	o := options{
+		Task: "pr-1", Run: "round-1", TasksDir: taskRoot(t), Profile: "focused", Lenses: []string{"bugs"},
+		StaggerDelay: 30 * time.Second, MaxParallel: 4, KeepRuns: 10, NoSynthesis: true, MinConfidence: 80,
+	}
+	r := newRunOpts(t, o)
+	r.result = executor.Result{
+		StructuredOutput: json.RawMessage(`{"findings":[{"file":"a.go","line":1,"severity":"major",` +
+			`"confidence":90,"title":"above the bar","lenses":["bugs"]},` +
+			`{"file":"b.go","line":2,"severity":"minor","confidence":55,"title":"below the bar"}]}`),
+		Tokens: 4210, ActualModel: "claude-opus-5",
+	}
+
+	assert.Equal(t, 1, run(r.opts()))
+
+	runDir := filepath.Join(o.TasksDir, "pr-1", "runs", "round-1")
+	assert.Subset(t, treeOf(t, runDir), []string{reportFileName, findingsFileName, manifestFileName})
+
+	// the archived report is the filtered one, byte for byte what the caller was shown
+	md, err := os.ReadFile(filepath.Join(runDir, reportFileName)) //nolint:gosec // path from t.TempDir
+	require.NoError(t, err)
+	assert.Equal(t, r.stdout.String(), string(md))
+	assert.Contains(t, string(md), "above the bar")
+	assert.NotContains(t, string(md), "below the bar", "the filter runs before the archive, not after it")
+
+	var archived finding.Report
+	fj, err := os.ReadFile(filepath.Join(runDir, findingsFileName)) //nolint:gosec // path from t.TempDir
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(fj, &archived))
+	require.Len(t, archived.Findings, 1)
+	assert.Equal(t, []string{"lenses"}, archived.Findings[0].Sources)
+
+	var m manifest
+	mj, err := os.ReadFile(filepath.Join(runDir, manifestFileName)) //nolint:gosec // path from t.TempDir
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(mj, &m))
+	assert.Equal(t, "pr-1", m.Task)
+	assert.Equal(t, "round-1", m.Run)
+	assert.Equal(t, "focused", m.Profile)
+	require.Len(t, m.Agents, 1, "the manifest is built from the resolved roster")
+	assert.Equal(t, "claude-opus-5", m.Agents[0].ActualModel, "what actually ran, not what was requested")
+	assert.NotEmpty(t, m.Prompts, "which prompt file won each precedence race")
 }
 
 func TestRun_ttyGate(t *testing.T) {

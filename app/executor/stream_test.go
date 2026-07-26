@@ -3,7 +3,9 @@ package executor_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,6 +29,33 @@ func TestClaude_Run_reportsModelThatActuallyRan(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "haiku", res.RequestedModel)
 	assert.Equal(t, "claude-sonnet-4-6", res.ActualModel, "--model can be silently ignored")
+}
+
+func TestClaude_Run_activityTruncatesOnRuneBoundary(t *testing.T) {
+	// assistant prose is arbitrary text; a byte-indexed cut lands mid-rune and puts invalid UTF-8
+	// into the TUI row, the --no-tui stderr line and events.jsonl
+	long := strings.Repeat("ä", 400)
+	data := patchEvent(t, "assistant", func(ev map[string]any) {
+		msg, ok := ev["message"].(map[string]any)
+		require.True(t, ok)
+		msg["content"] = []any{map[string]any{"type": "text", "text": long}}
+	})
+	path := writeFixture(t, data)
+	sink := discardSink()
+	c := executor.NewClaude(fakeRunner("emit", path), executor.Opts{})
+
+	_, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, sink)
+	require.NoError(t, err)
+
+	var got string
+	for _, call := range sink.EmitCalls() {
+		if call.Event.Kind == executor.EventActivity && strings.HasPrefix(call.Event.Text, "ä") {
+			got = call.Event.Text
+		}
+	}
+	require.NotEmpty(t, got, "the patched assistant text must reach the sink")
+	assert.True(t, utf8.ValidString(got), "a truncated activity line must stay valid UTF-8, got %q", got)
+	assert.Equal(t, strings.Repeat("ä", 120)+"...", got, "the limit counts runes, not bytes")
 }
 
 func TestClaude_Run_picksBusiestModel(t *testing.T) {

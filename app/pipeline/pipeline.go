@@ -32,6 +32,30 @@ const (
 	stageVerify    = "verify"
 )
 
+// the top-level key each stage's answer carries, checked by answered once the payload has decoded.
+const (
+	keyFindings = "findings"
+	keyVerdicts = "verdicts"
+)
+
+// answered reports whether a decoded payload is the shape the stage asked for. Decoding alone does not
+// say so: an object carrying some other key unmarshals into the stage's struct leaving its list nil and
+// returning no error, so a process that answered something else entirely reads as one that found
+// nothing — a dead source counted as reporting, or, on a codex synthesis, every finder's work replaced
+// by an empty report on a run that exits 0.
+//
+// The gap is codex's alone. It has no --json-schema to enforce a shape, and extraction takes the first
+// decodable object anywhere in its stdout, so an illustrative object in its prose becomes the answer.
+// An empty list is still an answer: {"findings": []} carries the key and passes.
+func answered(raw json.RawMessage, key string) bool {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return false
+	}
+	_, ok := obj[key]
+	return ok
+}
+
 // Runner runs one supervised process. It is declared here, by the consumer, and exported only so
 // package main can name it when it supplies the factory.
 type Runner interface {

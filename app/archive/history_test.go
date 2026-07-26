@@ -13,6 +13,13 @@ import (
 	"github.com/umputun/revmux/app/finding"
 )
 
+// testNow is the fixed reference every round in these tests is stamped against. Ordering compares a
+// round's own started_at against another's directory mtime, so mixing a fixed timestamp with a
+// time.Now() offset makes the expected order depend on when the suite runs.
+var testNow = time.Date(2026, 7, 26, 14, 30, 0, 0, time.UTC)
+
+func roundAt(offset time.Duration) time.Time { return testNow.Add(offset) }
+
 func TestHistory(t *testing.T) {
 	t.Run("no prior round omits the block entirely", func(t *testing.T) {
 		got, err := History(t.TempDir())
@@ -47,7 +54,7 @@ func TestHistory(t *testing.T) {
 				{Severity: finding.Major, Title: "c"},
 				{Severity: finding.Minor, Title: "d"},
 			},
-			Stats: finding.Stats{StartedAt: time.Date(2026, 7, 26, 14, 30, 0, 0, time.UTC)},
+			Stats: finding.Stats{StartedAt: testNow},
 		})
 
 		got, err := History(task)
@@ -73,7 +80,7 @@ func TestHistory(t *testing.T) {
 		task := t.TempDir()
 		writeRound(t, task, "round-1", finding.Report{
 			Findings: []finding.Finding{{Severity: finding.Major, Title: "the leak nobody fixed", Body: "details"}},
-			Stats:    finding.Stats{StartedAt: time.Date(2026, 7, 26, 14, 30, 0, 0, time.UTC)},
+			Stats:    finding.Stats{StartedAt: testNow},
 		})
 
 		got, err := History(task)
@@ -86,16 +93,20 @@ func TestHistory(t *testing.T) {
 		task := t.TempDir()
 		writeRound(t, task, "good", finding.Report{
 			Sources: finding.SourceStatus{Expected: 1, Reported: 1},
-			Stats:   finding.Stats{StartedAt: time.Date(2026, 7, 26, 14, 30, 0, 0, time.UTC)},
+			Stats:   finding.Stats{StartedAt: testNow},
 		})
 
-		absent := olderRun(t, task, "never-finished", -2*time.Hour)
+		// both fall back to mtime, so they are stamped against the same fixed clock as good above:
+		// a wall-clock offset would order them ahead of good once the real time passes 14:30Z
+		absent := filepath.Join(task, runsDir, "never-finished")
+		require.NoError(t, os.MkdirAll(absent, 0o750))
+		require.NoError(t, os.Chtimes(absent, roundAt(-2*time.Hour), roundAt(-2*time.Hour)))
+
 		broken := filepath.Join(task, runsDir, "half-written")
 		require.NoError(t, os.MkdirAll(broken, 0o750))
 		require.NoError(t, os.WriteFile(filepath.Join(broken, findingsFile), []byte(`{"findings":`), 0o600))
 		// backdated after the write, since writing into a directory is what moves its mtime
-		at := time.Now().Add(-3 * time.Hour)
-		require.NoError(t, os.Chtimes(broken, at, at))
+		require.NoError(t, os.Chtimes(broken, roundAt(-3*time.Hour), roundAt(-3*time.Hour)))
 
 		got, err := History(task)
 		require.NoError(t, err)
@@ -114,7 +125,7 @@ func TestHistory(t *testing.T) {
 	t.Run("a round whose stats carry no start time falls back to its place on disk", func(t *testing.T) {
 		task := t.TempDir()
 		writeRound(t, task, "stamped", finding.Report{
-			Stats: finding.Stats{StartedAt: time.Date(2026, 7, 26, 14, 30, 0, 0, time.UTC)},
+			Stats: finding.Stats{StartedAt: testNow},
 		})
 		writeRound(t, task, "unstamped", finding.Report{})
 		dir := filepath.Join(task, runsDir, "unstamped")

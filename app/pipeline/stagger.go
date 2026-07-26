@@ -10,7 +10,7 @@ import (
 )
 
 // stagger releases agents onto the runners and caps how many run at once. The agent at index 0 goes
-// immediately; every other one waits until that leader produces real activity or stagger_delay
+// immediately; every other one waits until that leader produces real activity or stagger-delay
 // elapses, whichever comes first.
 //
 // The gate latches open on either path and never re-arms, which is what lets one instance serve every
@@ -25,8 +25,8 @@ type stagger struct {
 	once sync.Once
 }
 
-// newStagger builds the gate and arms the release timer. The parameter is named timeout rather than
-// cap because cap shadows the builtin; a non-positive one means no stagger at all.
+// newStagger builds the gate and arms the release timer. A non-positive timeout opens the gate
+// immediately, so there is no stagger at all, and a non-positive maxParallel leaves it uncapped.
 func newStagger(timeout time.Duration, maxParallel int, clk executor.Clock) *stagger {
 	s := &stagger{gate: make(chan struct{})}
 	if maxParallel > 0 {
@@ -71,6 +71,10 @@ func (s *stagger) release() {
 
 // leaderStarted opens the gate. Every call after the first is a no-op, so the timer firing after real
 // activity already released the roster costs nothing.
+//
+// The timer is deliberately not stopped here. Stopping it needs the handle, and reading a field the
+// constructor is still writing is a race the timer's own goroutine would win occasionally — a worse
+// bug than one runtime timer left armed for the rest of a one-shot process.
 func (s *stagger) leaderStarted() { s.once.Do(func() { close(s.gate) }) }
 
 // open reports whether the gate has already latched. An agent arriving after the release must not

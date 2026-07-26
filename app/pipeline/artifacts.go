@@ -2,8 +2,10 @@ package pipeline
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 
+	"github.com/umputun/revmux/app/executor"
 	"github.com/umputun/revmux/app/finding"
 )
 
@@ -39,6 +41,19 @@ func (p *Pipeline) save(name string, data []byte) {
 	if err := w.Close(); err != nil {
 		p.fail(fmt.Errorf("close %s: %w", name, err))
 	}
+}
+
+// archivedPrompt is the prompt the process actually receives, which is the only version worth storing.
+// The codex executor appends its own output contract to the composed text — claude carries the same
+// instruction as --json-schema instead — so a codex prompt archived as composed would be missing the one
+// line asking for JSON at all, and describe a review that did not happen.
+//
+// It is package-level rather than a method because all three stages call it, each with its own schema.
+func archivedPrompt(exec, text string, schema json.RawMessage) string {
+	if exec != executorCodex {
+		return text
+	}
+	return text + executor.CodexOutputContract(schema)
 }
 
 // saveStage snapshots the findings as one stage left them, so what synthesis merged and what verify

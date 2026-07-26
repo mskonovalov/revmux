@@ -73,6 +73,35 @@ func TestPipeline_Run_artifacts(t *testing.T) {
 		assert.Contains(t, stage.String(), verifyMarker)
 	})
 
+	t.Run("a codex prompt is archived with the contract its executor appends", func(t *testing.T) {
+		h := newHarnessWith(t, map[string]string{"prompts/profiles/peer.md": codexPeerProfile})
+		profile, err := h.cfg.Set.Profile("peer")
+		require.NoError(t, err)
+		roster, err := profile.Roster(nil, h.cfg.Set.LensNames())
+		require.NoError(t, err)
+		h.cfg.Profile, h.cfg.Roster = profile, roster
+
+		var got executor.Request
+		h.cfg.NewRunner = func(RunnerSpec) Runner {
+			return &mocks.RunnerMock{RunFunc: func(_ context.Context, req executor.Request, _ executor.EventSink) (executor.Result, error) {
+				got = req // the roster holds one agent, so p.Run joining it is the barrier on this write
+				return executor.Result{StructuredOutput: findingsJSON()}, nil
+			}}
+		}
+
+		p := New(h.cfg)
+		drain(p)
+		_, err = p.Run(context.Background())
+		require.NoError(t, err)
+
+		archived := h.get("prompts/agents/codex.md")
+		require.NotNil(t, archived, "no prompt was archived for the codex entry")
+		assert.Equal(t, got.Prompt+executor.CodexOutputContract(got.Schema), archived.String(),
+			"codex appends its output contract after dispatch, so an archive without it describes a different run")
+		assert.Contains(t, archived.String(), "Return ONLY a JSON object",
+			"the one instruction asking codex for JSON at all cannot be the missing part")
+	})
+
 	t.Run("an agent named events keeps its stream out of the event log", func(t *testing.T) {
 		h := newHarnessWith(t, map[string]string{
 			"prompts/profiles/collide.md": collidingProfile,
@@ -273,6 +302,15 @@ func verdictIn(t *testing.T, b *syncBuffer) finding.Verdict {
 	require.NotEmpty(t, rep.Findings)
 	return rep.Findings[0].Verdict
 }
+
+// codexPeerProfile is one codex entry alone, so the archived prompt a test reads back belongs to the
+// executor that appends its own output contract to it.
+const codexPeerProfile = `---
+description: one codex peer
+agents:
+  - {name: codex, executor: codex, lenses: [bugs]}
+---
+review the change`
 
 // collidingProfile names its agents after the two fixed stage prompts and the event log, which is why
 // per-agent artifacts live in their own directories.

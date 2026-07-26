@@ -23,10 +23,13 @@ lint:
 	golangci-lint run --max-issues-per-linter=0 --max-same-issues=0
 
 fmt:
-	~/.claude/format.sh
+	gofmt -s -w $(shell find . -type f -name "*.go" -not -path "./vendor/*" -not -path "*/mocks/*")
+	goimports -w $(shell find . -type f -name "*.go" -not -path "./vendor/*" -not -path "*/mocks/*")
 
+# the executor tests re-exec the race-instrumented test binary once per supervised run, so this
+# package alone costs ~40s on a fast machine; the timeout is headroom for slower hardware, not a budget
 race:
-	go test -race -timeout=60s ./...
+	go test -race -timeout=300s ./...
 
 version:
 	@echo "branch: $(BRANCH), hash: $(HASH), timestamp: $(TIMESTAMP)"

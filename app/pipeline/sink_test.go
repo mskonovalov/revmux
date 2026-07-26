@@ -33,6 +33,11 @@ func TestSink_Emit(t *testing.T) {
 			want: Event{Kind: EventAgentState, Agent: "bugs", Text: "exit 0"},
 		},
 		{
+			name: "a resolved-config line is a state change, not model output",
+			in:   executor.Event{Kind: executor.EventInfo, Text: "model: gpt-5.6-sol"},
+			want: Event{Kind: EventAgentState, Agent: "bugs", Text: "model: gpt-5.6-sol"},
+		},
+		{
 			name: "an unknown executor kind still reaches a renderer",
 			in:   executor.Event{Kind: executor.EventKind("something-new"), Text: "?"},
 			want: Event{Kind: EventAgentState, Agent: "bugs", Text: "?"},
@@ -59,6 +64,29 @@ func TestSink_firstActivity(t *testing.T) {
 		s.Emit(executor.Event{Kind: executor.EventActivity, Text: "b"})
 		s.Emit(executor.Event{Kind: executor.EventActivity, Text: "c"})
 		assert.Equal(t, []string{"first", "emit", "emit", "emit"}, order)
+	})
+
+	t.Run("only real output releases the roster", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			kind  executor.EventKind
+			fires bool
+		}{
+			{name: "activity is output", kind: executor.EventActivity, fires: true},
+			{name: "a forked process has produced nothing yet", kind: executor.EventStarted},
+			{name: "a codex banner prints before a model is reached", kind: executor.EventInfo},
+			{name: "an exit is not the first output", kind: executor.EventFinished},
+			{name: "a throttled leader must not release the rest", kind: executor.EventRateLimit},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				var fired bool
+				s := newSink("bugs", func(Event) {}, func() { fired = true })
+				s.Emit(executor.Event{Kind: tt.kind})
+				assert.Equal(t, tt.fires, fired)
+			})
+		}
 	})
 
 	t.Run("no callback is fine", func(t *testing.T) {

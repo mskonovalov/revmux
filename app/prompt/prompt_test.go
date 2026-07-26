@@ -168,6 +168,25 @@ func TestLoad_Errors(t *testing.T) {
 			map[string]string{"prompts/profiles/focused.md": "---\ndescription: x\n---\nbody"},
 			"roster is empty",
 		},
+		{
+			// it reads like the model: and effort: defaults beside it, so accepting and ignoring it would
+			// run every agent on claude while the file says codex
+			"profile-level executor",
+			map[string]string{
+				"prompts/profiles/focused.md": "---\nexecutor: codex\nagents:\n  - {name: a, lenses: [bugs]}\n---\nbody",
+			},
+			"parse front matter",
+		},
+		{
+			"lens naming a runner it does not select",
+			map[string]string{"lenses/bugs.md": "---\ndescription: x\nmodel: opus\n---\nbody"},
+			"parse front matter",
+		},
+		{
+			"stage declaring a roster it cannot have",
+			map[string]string{"prompts/verify.md": "---\nagents:\n  - {name: a, lenses: [bugs]}\n---\nbody"},
+			"parse front matter",
+		},
 	}
 
 	for _, tt := range tests {
@@ -198,8 +217,17 @@ func TestSplitFrontMatter(t *testing.T) {
 		{name: "meta only no trailing newline", in: "---\na: 1\n---", meta: "a: 1\n"},
 		{name: "body has a rule", in: "---\na: 1\n---\nbody\n\n---\n\nmore\n", meta: "a: 1\n", body: "body\n\n---\n\nmore\n"},
 		{name: "longer marker is not a terminator", in: "---\na: 1\n----\n", wantErr: true},
+		// an override may open and close the block without authoring any keys; the body must survive it
+		{name: "empty block and body", in: "---\n---\nbody\n", body: "body\n"},
+		{name: "empty block only", in: "---\n---\n"},
+		{name: "empty block no trailing newline", in: "---\n---"},
+		{name: "empty block then a rule", in: "---\n---\n\n---\n\nmore\n", body: "\n---\n\nmore\n"},
 		{name: "unterminated", in: "---\na: 1\nbody\n", wantErr: true},
 		{name: "empty", in: "", body: ""},
+		// a profile override saved by a Windows editor: without CR stripping the whole file is body,
+		// and the failure surfaces as "roster is empty" rather than anything about line endings
+		{name: "crlf line endings", in: "---\r\na: 1\r\n---\r\nbody\r\n", meta: "a: 1\n", body: "body\n"},
+		{name: "crlf meta only", in: "---\r\na: 1\r\n---\r\n", meta: "a: 1\n"},
 	}
 
 	for _, tt := range tests {

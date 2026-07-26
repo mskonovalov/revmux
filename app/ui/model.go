@@ -58,6 +58,7 @@ type Model struct {
 	combined *combinedState
 	findings *findingsState
 	stage    string
+	found    int
 }
 
 // viewState is where the reader is looking: the focused tab, the scroll offset within it and the
@@ -71,13 +72,12 @@ type viewState struct {
 
 // agentState is one agent's status row plus its full scrollback, thinking included.
 type agentState struct {
-	spec     prompt.AgentSpec
-	state    string
-	started  time.Time
-	updated  time.Time
-	last     string
-	findings int
-	lines    []string
+	spec    prompt.AgentSpec
+	state   string
+	started time.Time
+	updated time.Time
+	last    string
+	lines   []string
 }
 
 // eventsDone says the pipeline closed its channel, so the run is over and no further events arrive.
@@ -165,6 +165,9 @@ func (m *Model) apply(ev pipeline.Event) {
 		return
 	}
 	text := a.track(ev)
+	if ev.Kind == pipeline.EventFindings {
+		m.count(ev)
+	}
 	if text == "" {
 		return
 	}
@@ -186,6 +189,28 @@ func (m *Model) agent(name string) *agentState {
 	a := &agentState{spec: prompt.AgentSpec{Name: name}, state: stateRunning}
 	m.agents = append(m.agents, a)
 	return a
+}
+
+// count folds a findings event into the header total. A roster agent adds to it, a stage process
+// replaces it: synthesis merges what the finders already reported, so summing the two counts every
+// finding twice and shows a number that is neither the raw total nor the merged one.
+func (m *Model) count(ev pipeline.Event) {
+	if m.rostered(ev.Agent) {
+		m.found += len(ev.Findings)
+		return
+	}
+	m.found = len(ev.Findings)
+}
+
+// rostered reports whether the name is a roster entry rather than a stage process. The roster is the
+// authority, not the status rows, which grow to cover both.
+func (m Model) rostered(name string) bool {
+	for _, spec := range m.cfg.Roster {
+		if spec.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // find looks a rostered agent up without creating one, so rendering never grows the table.
@@ -227,7 +252,6 @@ func (a *agentState) track(ev pipeline.Event) string {
 	case pipeline.EventAgentDegraded:
 		a.state, a.last = stateDegraded, "degraded: "+ev.Text
 	case pipeline.EventFindings:
-		a.findings += len(ev.Findings)
 		a.last = strconv.Itoa(len(ev.Findings)) + " findings emitted"
 	case pipeline.EventRateLimit:
 		a.state, a.last = stateLimited, "rate limited: "+ev.Text

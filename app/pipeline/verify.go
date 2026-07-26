@@ -23,7 +23,7 @@ import (
 const thinGroup = 2
 
 // labelDirs caps how many directory names a merged group spells out before the rest are counted,
-// since task 11 turns the label into a filename.
+// since the label becomes a filename under prompts/stages/.
 const labelDirs = 3
 
 // labelUnsafe is everything a group label may not carry. Separators collapse to a dash rather than
@@ -47,12 +47,13 @@ type verifier struct {
 }
 
 // verifyGroup is what one verifier sees: the directories it covers, their findings and the prompt
-// composed from them. The composed text rides along because task 11 archives it per group, under a
+// composed from them. The composed text rides along because the archive stores it per group, under a
 // filename built from the same label.
 type verifyGroup struct {
 	dirs     []string
 	findings []finding.Finding
 	text     string
+	name     string // the resolved, collision-free label; assigned once by compose
 }
 
 // verdict is the wire shape of one entry the model returns. The correction fields apply to a
@@ -115,24 +116,49 @@ func (v *verifier) compose(groups []verifyGroup) error {
 		return fmt.Errorf("resolve verify stage: %w", err)
 	}
 	v.stage = stage
+	v.name(groups)
 
 	for i := range groups {
 		text, err := stage.Compose(prompt.ComposeOpts{Vars: v.vars(groups[i]), History: v.cfg.History})
 		if err != nil {
-			return fmt.Errorf("compose verify prompt for %s: %w", groups[i].label(), err)
+			return fmt.Errorf("compose verify prompt for %s: %w", groups[i].name, err)
 		}
 		groups[i].text = text
 		// one file per group: this stage fans out per directory, so a single verify.md would lose
 		// every prompt but the last and leave "what did that verifier see" unanswerable
-		v.save(v.promptName(groups[i]), []byte(text))
+		v.save(v.promptName(groups[i]), []byte(archivedPrompt(stage.Executor, text, finding.VerifySchema())))
 	}
 	return nil
 }
 
-// promptName is where one group's composed prompt goes. The label is already a filename-safe slug, so
+// name resolves each group's label, suffixing any that collide. Two distinct directories can slug to
+// one label — app/executor and app-executor both give app-executor — and grouping buckets on the exact
+// path, so without this they would share one archived prompt and one event agent name. One prompt
+// silently overwriting another is precisely the un-auditable run the archive exists to prevent.
+func (v *verifier) name(groups []verifyGroup) {
+	taken := make(map[string]bool, len(groups))
+	for i := range groups {
+		name := v.freeName(groups[i].label(), taken)
+		groups[i].name = name
+		taken[name] = true
+	}
+}
+
+// freeName returns the first unused name for a label. The generated candidate is checked against
+// taken as well, not just the label: a directory literally named foo-bar-2 would otherwise claim the
+// name built for the second foo-bar, and one archived prompt would overwrite the other.
+func (v *verifier) freeName(label string, taken map[string]bool) string {
+	name := label
+	for n := 2; taken[name]; n++ {
+		name = label + "-" + strconv.Itoa(n)
+	}
+	return name
+}
+
+// promptName is where one group's composed prompt goes. The name is already a filename-safe slug, so
 // a group covering app/executor lands in a file rather than a stray nested directory.
 func (v *verifier) promptName(g verifyGroup) string {
-	return path.Join(stagePromptDir, stageVerify+"-"+g.label()+".md")
+	return path.Join(stagePromptDir, stageVerify+"-"+g.name+".md")
 }
 
 // judge runs one group and falls back to leaving its findings unverified when the verifier does not
@@ -156,17 +182,19 @@ func (v *verifier) judge(ctx context.Context, g verifyGroup, index int) []findin
 
 // runOne runs one group's already-composed prompt and applies the verdicts it returned.
 func (v *verifier) runOne(ctx context.Context, g verifyGroup) ([]finding.Finding, error) {
-	agent := stageVerify + "-" + g.label()
+	agent := stageVerify + "-" + g.name
 	v.emit(Event{Kind: EventAgentStarted, Agent: agent, Text: strings.Join(g.dirs, ", ")})
 
 	spec := RunnerSpec{Executor: v.stage.Executor, Model: v.stage.Model, Effort: v.stage.Effort}
 	res, err := v.cfg.NewRunner(spec).Run(ctx, executor.Request{
 		Prompt: g.text, Model: v.stage.Model, Effort: v.stage.Effort, Schema: finding.VerifySchema(),
 	}, newSink(agent, v.emit, nil))
-	if err != nil {
-		return nil, fmt.Errorf("verify %s: %w", g.label(), err)
-	}
+	// counted before the error is judged: a group that stalled or died still spent what it spent, and
+	// the run total is what was billed, not what was useful — the same accounting find and synthesis do
 	v.tokens.Add(int64(res.Tokens))
+	if err != nil {
+		return nil, fmt.Errorf("verify %s: %w", g.name, err)
+	}
 
 	out, err := v.apply(g, res.StructuredOutput)
 	if err != nil {
@@ -180,16 +208,23 @@ func (v *verifier) runOne(ctx context.Context, g verifyGroup) ([]finding.Finding
 // apply turns the returned verdicts into findings. A finding the model said nothing about stays,
 // marked unverified: silence is not a rejection, and dropping it would let a lazy answer delete a
 // real problem.
+//
+// A payload carrying no verdicts key at all is a different thing from silence about a finding, and
+// degrades the group rather than passing for one that judged nothing: it means the process answered
+// something else, which on the codex path is whatever JSON its prose happened to carry first.
 func (v *verifier) apply(g verifyGroup, raw json.RawMessage) ([]finding.Finding, error) {
 	if len(raw) == 0 {
-		return nil, fmt.Errorf("verify %s returned no structured output", g.label())
+		return nil, fmt.Errorf("verify %s returned no structured output", g.name)
 	}
 
 	var out struct {
 		Verdicts []verdict `json:"verdicts"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("decode verdicts for %s: %w", g.label(), err)
+		return nil, fmt.Errorf("decode verdicts for %s: %w", g.name, err)
+	}
+	if !answered(raw, keyVerdicts) {
+		return nil, fmt.Errorf("verify %s returned no verdicts object", g.name)
 	}
 
 	byID := make(map[string]verdict, len(out.Verdicts))
@@ -280,7 +315,7 @@ func (v *verifier) dir(f finding.Finding) string {
 // unverifiedGroup marks a group nothing judged and says so on the event channel, so a failed
 // verifier is visible rather than looking like a group that confirmed everything.
 func (v *verifier) unverifiedGroup(g verifyGroup, err error) []finding.Finding {
-	v.emit(Event{Kind: EventAgentDegraded, Agent: stageVerify + "-" + g.label(), Text: err.Error()})
+	v.emit(Event{Kind: EventAgentDegraded, Agent: stageVerify + "-" + g.name, Text: err.Error()})
 	out := make([]finding.Finding, 0, len(g.findings))
 	for _, f := range g.findings {
 		f.Verdict = finding.Unverified
@@ -310,6 +345,18 @@ func (d verdict) known() bool {
 	}
 }
 
+// knownSeverity reports whether a refined verdict's severity is from the enum. Same reason as known
+// above: the codex path has no schema, so an unrecognized word must not replace a severity that was
+// schema-checked when the finder raised it.
+func (d verdict) knownSeverity() bool {
+	switch d.Severity {
+	case finding.Critical, finding.Major, finding.Minor:
+		return true
+	default:
+		return false
+	}
+}
+
 // applyTo folds one verdict into the finding it judged. Only a refined verdict carries corrections,
 // and an omitted field leaves the original value in place.
 func (d verdict) applyTo(f finding.Finding) finding.Finding {
@@ -323,7 +370,7 @@ func (d verdict) applyTo(f finding.Finding) finding.Finding {
 	if d.EndLine > 0 {
 		f.EndLine = d.EndLine
 	}
-	if d.Severity != "" {
+	if d.knownSeverity() {
 		f.Severity = d.Severity
 	}
 	if d.Confidence > 0 {
@@ -347,8 +394,8 @@ func (g verifyGroup) merge(o verifyGroup) verifyGroup {
 	return verifyGroup{dirs: slices.Concat(g.dirs, o.dirs), findings: slices.Concat(g.findings, o.findings)}
 }
 
-// label is the group's filename-safe slug: task 11 builds prompts/stages/verify-<label>.md from it,
-// so a separator here would silently create a nested directory instead of a file.
+// label is the group's filename-safe slug: promptName builds prompts/stages/verify-<label>.md from
+// it, so a separator here would silently create a nested directory instead of a file.
 func (g verifyGroup) label() string {
 	if len(g.dirs) == 0 {
 		return "root"

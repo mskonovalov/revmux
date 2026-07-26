@@ -7,6 +7,11 @@ import (
 	"strings"
 )
 
+// rateLimitRejected is the one rate_limit_event status that means the request was refused. The CLI's
+// vocabulary is allowed / allowed_warning / rejected, and allowed_warning rides along on a successful
+// response once utilization passes a threshold — treating it as a limit throws away a completed run.
+const rateLimitRejected = "rejected"
+
 // Claude runs the claude CLI in print mode and decodes its stream-json output.
 type Claude struct {
 	proc
@@ -74,7 +79,7 @@ func (c *Claude) parseStream(ctx context.Context, r io.Reader, sink EventSink) R
 				return
 			}
 			res.RateLimit = *ev.RateLimitInfo
-			res.RateLimited = ev.RateLimitInfo.Status != "allowed"
+			res.RateLimited = ev.RateLimitInfo.Status == rateLimitRejected
 			if res.RateLimited {
 				c.emit(sink, Event{Kind: EventRateLimit, Text: ev.RateLimitInfo.Status})
 			}

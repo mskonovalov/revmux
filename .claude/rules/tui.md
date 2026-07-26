@@ -6,7 +6,7 @@ paths:
 ## TUI — bubbletea model
 
 Built on bubbletea, bubbles and lipgloss.
-A single `Model` with state grouped into sub-structs (`cfg`, `layout`, `agents`, `view`, `findings`),
+A single `Model` with state grouped into sub-structs (`cfg`, `view`, `agents`, `combined`, `findings`),
 methods split across files by concern, each source file with a matching `_test.go`.
 
 ### This package does no OS work. Ever.
@@ -50,8 +50,17 @@ program returns.
 
 ### Layout
 
-A status table on top, one row per agent: name, state, elapsed, last activity.
+A status table on top, one row per supervised process: name, state, elapsed, last activity.
+The roster fills it first and `Model.agent` opens a row for any other name an event carries, so the
+synthesis and verify processes appear as they start — the table shows what is running, not only what the
+profile named.
 Below it, one focused detail pane, switched with tab and number keys.
+
+**The header's findings total is not the sum of those rows.**
+A roster agent adds to it and a stage process replaces it, because synthesis merges what the finders already
+reported: summing the two counts every finding twice and shows a number that is neither the raw total nor
+the merged one. `Model.rostered` reads the roster to tell them apart — never the status rows, which grow to
+cover both.
 
 - Tab `0 · all` is the combined chronological view and is **focused by default**.
   It is deliberately compact: tool calls, state transitions and findings emitted, one line each, agent-prefixed and colored.

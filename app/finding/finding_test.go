@@ -3,6 +3,7 @@ package finding
 import (
 	"encoding/json"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -132,4 +133,7 @@ func TestSeverity_Heading(t *testing.T) {
 	assert.Equal(t, "Minor", Minor.heading())
 	assert.Equal(t, "Unspecified", Severity("").heading())
 	assert.Equal(t, "Bogus", Severity("bogus").heading())
+	// only claude gets a --json-schema, so a codex source can put any string here
+	assert.Equal(t, "Ölarm", Severity("ölarm").heading(), "a multi-byte first rune must survive titlecasing")
+	assert.True(t, utf8.ValidString(Severity("ölarm").heading()), "a byte-indexed cut would split the rune")
 }

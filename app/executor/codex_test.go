@@ -1,6 +1,7 @@
 package executor_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,6 +53,19 @@ func codexRepeatedBannerCapture(t *testing.T) []byte {
 	t.Helper()
 	data := codexStderrCapture(t)
 	return append(slices.Clone(data), data...)
+}
+
+// codexStderrLines is how many lines that stderr scans to, which is how many watchdog touches it owes:
+// liveness is every line the child printed, not the handful the filter keeps.
+func codexStderrLines(t *testing.T) int {
+	t.Helper()
+	sc := bufio.NewScanner(bytes.NewReader(codexStderrCapture(t)))
+	n := 0
+	for sc.Scan() {
+		n++
+	}
+	require.NoError(t, sc.Err())
+	return n
 }
 
 func codexProseCapture(t *testing.T) []byte {
@@ -240,7 +255,7 @@ func TestCodex_Run_stderrHeader(t *testing.T) {
 	header := []string{"model: gpt-5.6-sol", "sandbox: read-only", "reasoning effort: high"}
 
 	// the header lines are forwarded once each and the rest of the banner is dropped. Their position
-	// among the activity events is deliberately not asserted: stderr is drained alongside the stdout
+	// among the stdout events is deliberately not asserted: stderr is drained alongside the stdout
 	// parse, so whether a header line or the first raw write reaches the sink first is unspecified.
 	run := func(t *testing.T, stderr []byte) []string {
 		t.Helper()
@@ -255,11 +270,18 @@ func TestCodex_Run_stderrHeader(t *testing.T) {
 		assert.Equal(t, "requested", res.RequestedModel)
 		assert.Equal(t, "gpt-5.6-sol", res.ActualModel, "the report states what actually ran")
 
-		texts := eventTexts(sink, executor.EventActivity)
+		texts := eventTexts(sink, executor.EventInfo)
 		for _, text := range texts {
 			assert.NotContains(t, text, "session id", "the rest of the banner is suppressed")
 			assert.NotContains(t, text, "provider")
 			assert.NotContains(t, text, "hook:")
+		}
+		// codex prints the banner before it has contacted a model, so a header must never arrive as
+		// activity: that kind is a stagger leader's release signal and the banner proves nothing
+		for _, text := range eventTexts(sink, executor.EventActivity) {
+			for _, h := range header {
+				assert.NotEqual(t, h, text, "a resolved-config line is not activity")
+			}
 		}
 		return texts
 	}
@@ -279,6 +301,82 @@ func TestCodex_Run_stderrHeader(t *testing.T) {
 	})
 }
 
+func TestCodex_Run_tokensFromStderrFooter(t *testing.T) {
+	// codex has no result event carrying usage, so the footer it prints on stderr is the only count
+	path := writeFixture(t, codexCapture(t))
+
+	tests := []struct {
+		name   string
+		stderr string
+		want   int
+	}{
+		{name: "as recorded", stderr: string(codexStderrCapture(t)), want: 13549},
+		{name: "the last footer wins", stderr: "tokens used\n10\ntokens used\n2,500\n", want: 2500},
+		{name: "an echoed prompt line is not a total", stderr: "tokens used\nis what the reviewed code logs\n", want: 0},
+		{name: "no footer at all", stderr: "model: gpt-5.6-sol\n", want: 0},
+		{name: "an echoed marker and number the run never printed a footer after", stderr: "tokens used\n123\nhook: Stop\n", want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errPath := writeFixture(t, []byte(tt.stderr))
+			c := executor.NewCodex(fakeRunner("emit", path, errPath), executor.Opts{})
+			res, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, discardSink())
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, res.Tokens)
+		})
+	}
+}
+
+func TestCodex_Run_failedRunReportsNoEchoedTokens(t *testing.T) {
+	// codex echoes the whole prompt to stderr, so a lens body can carry the marker and a number on
+	// consecutive lines. A run that then fails never prints the real footer over it, and charging the
+	// failed attempt for whatever the prompt happened to contain is worse than reporting nothing
+	echoed := "user\ntokens used\n123\nERROR: unexpected argument --nope\n"
+	path := writeFixture(t, nil)
+	errPath := writeFixture(t, []byte(echoed))
+
+	c := executor.NewCodex(fakeRunner("fail", path, errPath), executor.Opts{})
+	res, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, discardSink())
+
+	require.Error(t, err)
+	assert.Equal(t, 3, res.ExitCode)
+	assert.Equal(t, 0, res.Tokens, "no footer arrived, so the run spent nothing it can report")
+}
+
+func TestCodex_Run_stderrKeepsTheWatchdogAlive(t *testing.T) {
+	// codex reports its reasoning and every tool call on stderr and writes stdout only when it answers,
+	// so a watchdog ticking on stdout alone kills a healthy run at the idle timeout
+	path := writeFixture(t, nil)
+	errPath := writeFixture(t, codexStderrCapture(t))
+
+	timer := &mocks.TimerMock{
+		StopFunc:  func() bool { return true },
+		ResetFunc: func(time.Duration) bool { return true },
+	}
+	clk := &mocks.ClockMock{
+		NowFunc:       func() time.Time { return time.Unix(0, 0).UTC() },
+		AfterFuncFunc: func(time.Duration, func()) executor.Timer { return timer },
+	}
+
+	sink := discardSink()
+	c := executor.NewCodex(fakeRunner("emit", path, errPath), executor.Opts{IdleTimeout: time.Minute, Clock: clk})
+	res, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, sink)
+	require.NoError(t, err)
+
+	assert.False(t, res.IdleTimedOut)
+	assert.Empty(t, res.Raw, "the process wrote nothing to stdout, so only stderr could have touched it")
+
+	// per line, not per line the filter keeps: the run's reasoning and tool chatter are the only liveness
+	// a long codex run has, and a watchdog touched by the banner alone still kills it at the idle timeout
+	lines := codexStderrLines(t)
+	assert.Len(t, timer.ResetCalls(), lines, "every stderr line is liveness")
+	assert.Greater(t, lines, len(eventTexts(sink, executor.EventInfo)), "the fixture is more than its banner")
+	for _, call := range timer.ResetCalls() {
+		assert.Equal(t, time.Minute, call.D, "a touch rearms the configured idle timeout, not a zero one")
+	}
+}
+
 func TestCodex_Run_patternTiers(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -295,6 +393,14 @@ func TestCodex_Run_patternTiers(t *testing.T) {
 			wantErr: "codex failed: ERROR: unexpected argument --nope"},
 		{name: "500 is not transient", stderr: "ERROR: API Error: 500 internal\n",
 			wantErr: "codex failed: ERROR: API Error: 500 internal"},
+		// codex echoes the whole prompt to stderr before it reports anything of its own, so the first
+		// "error:" line is routinely one the prompt quoted and the real diagnostic is the last printed
+		{name: "an echoed prompt line does not shadow the real diagnostic",
+			stderr:  "error: the write error is dropped here\nERROR: unexpected argument --nope\n",
+			wantErr: "codex failed: ERROR: unexpected argument --nope"},
+		{name: "an echoed prompt line does not manufacture a rate limit",
+			stderr:  "error: retry once you've hit your usage limit\nERROR: unexpected argument --nope\n",
+			wantErr: "codex failed: ERROR: unexpected argument --nope"},
 	}
 
 	for _, tt := range tests {

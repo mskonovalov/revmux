@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jessevdk/go-flags"
@@ -81,14 +83,16 @@ func run(o runOpts) int {
 	if err != nil {
 		return o.fail(err)
 	}
+	defer arc.Close() // every artifact is already on disk, only the directory handles are left
 
-	rep, err := o.review(cfg)
+	// the pipeline runs under a signal-canceled context so an interrupt tears the agent process groups
+	// down: children are started with Setsid, so the terminal never signals them and dying without
+	// canceling would leave every model CLI and everything it spawned running unsupervised
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	rep, err := o.review(ctx, cfg, arc)
 	if err != nil {
-		return o.fail(err)
-	}
-
-	rep = rep.Above(o.opts.MinConfidence)
-	if err := o.archiveRun(arc, cfg, rep); err != nil {
 		return o.fail(err)
 	}
 	// the report goes to stdout only here, after review returned and with it the bubbletea program:
@@ -153,7 +157,12 @@ func (o runOpts) pipelineConfig() (pipeline.Config, *archive.Archive, error) {
 	if err != nil {
 		return pipeline.Config{}, nil, fmt.Errorf("read prior rounds: %w", err)
 	}
-	arc, err := archive.New(archive.Opts{TaskDir: rc.TaskDir, Run: runName, Keep: o.opts.KeepRuns})
+	// the tasks root and the task name rather than the joined path resolveContext already checked: a
+	// path string handed over here is one archive.New would have to reopen by name, which is the
+	// check-then-open window its os.Root chain exists to remove
+	arc, err := archive.New(archive.Opts{
+		TasksDir: o.opts.TasksDir, Task: o.opts.Task, Run: runName, Keep: o.opts.KeepRuns,
+	})
 	if err != nil {
 		return pipeline.Config{}, nil, fmt.Errorf("open run archive: %w", err)
 	}
@@ -170,16 +179,39 @@ func (o runOpts) pipelineConfig() (pipeline.Config, *archive.Archive, error) {
 	}, arc, nil
 }
 
-// review runs the pipeline with a renderer subscribed to its events, hands the finished report to
-// that renderer, and returns only once the renderer has let go of the terminal.
-func (o runOpts) review(cfg pipeline.Config) (finding.Report, error) {
+// review runs the pipeline with a renderer subscribed to its events, writes the run's own artifacts,
+// hands the finished report to that renderer, and returns only once the renderer has let go of the
+// terminal.
+//
+// The archive lands between the pipeline finishing and the report reaching the renderer, because finish
+// blocks until the reader closes the findings browser and the run ending is deliberately not a reason to
+// quit it. Archiving afterwards leaves a run parked there — or killed there — holding every
+// pipeline-owned artifact and none of the three package main owns, which reads as a review that died
+// mid-run when it actually completed, and a round with no findings.json is one archive.History cannot
+// see at all, so a loop accumulating rounds silently loses it.
+//
+// --min-confidence is applied here, before the renderer sees the report, because the findings browser
+// is a rendering path like stdout is: filtering afterwards would list in the TUI exactly the findings
+// the printed report and the exit code both claim are absent.
+func (o runOpts) review(ctx context.Context, cfg pipeline.Config, arc *archive.Archive) (finding.Report, error) {
 	p := pipeline.New(cfg)
 	r := o.render(cfg.Roster, p.Events())
 
-	rep, err := p.Run(context.Background())
+	rep, err := p.Run(ctx)
+	rep = rep.Above(o.opts.MinConfidence)
+
+	// a failed run has no report to archive, and its own error is the one worth returning
+	var arcErr error
+	if err == nil {
+		arcErr = o.archiveRun(arc, cfg, rep)
+	}
 	r.finish(rep, err)
-	if err != nil {
+
+	switch {
+	case err != nil:
 		return finding.Report{}, fmt.Errorf("review failed: %w", err)
+	case arcErr != nil:
+		return finding.Report{}, arcErr
 	}
 	return rep, nil
 }

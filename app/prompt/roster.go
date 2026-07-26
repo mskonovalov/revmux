@@ -44,14 +44,33 @@ var colorPalette = []string{"cyan", "magenta", "green", "yellow", "blue", "red",
 
 var hexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
-// frontMatter is the wire shape of a prompt file's YAML block. Unknown keys are rejected so a
-// misspelled roster key fails at load rather than being silently ignored.
-type frontMatter struct {
+// Each kind of prompt file declares its own front-matter shape rather than sharing one, because
+// unknown keys are rejected and one shared shape accepts every key in every file. A profile-level
+// executor: reads exactly like the model: and effort: defaults beside it, would parse, and would then
+// be ignored while every agent ran on claude — the silent-default this package rejects everywhere else.
+
+// profileYAML is a profile's front matter: roster-wide model and effort defaults, plus the roster.
+// Which binary runs an entry is per-entry only, since a roster mixing claude and codex is the point.
+type profileYAML struct {
 	Description string      `yaml:"description"`
 	Model       string      `yaml:"model"`
 	Effort      string      `yaml:"effort"`
-	Executor    string      `yaml:"executor"`
 	Agents      []agentYAML `yaml:"agents"`
+}
+
+// stageYAML is a stage prompt's front matter. A stage picks its own binary, model and effort exactly
+// as a roster entry does, and has no roster of its own.
+type stageYAML struct {
+	Description string `yaml:"description"`
+	Executor    string `yaml:"executor"`
+	Model       string `yaml:"model"`
+	Effort      string `yaml:"effort"`
+}
+
+// lensYAML is a lens file's front matter. A lens is executor-agnostic text and carries no runner
+// selection: the roster entry composing it is where model, effort and executor live.
+type lensYAML struct {
+	Description string `yaml:"description"`
 }
 
 type agentYAML struct {
@@ -251,12 +270,13 @@ func (a AgentSpec) resolveColor() (string, error) {
 }
 
 func parseProfile(name string, meta, body []byte) (*Profile, error) {
-	fm, d, err := parseFile(meta, body)
+	var fm profileYAML
+	text, err := parseFile(meta, body, &fm)
 	if err != nil {
 		return nil, err
 	}
 
-	p := &Profile{doc: d, Name: name, model: fm.Model, effort: fm.Effort}
+	p := &Profile{doc: doc{Description: fm.Description, Body: text}, Name: name, model: fm.Model, effort: fm.Effort}
 	p.agents = make([]AgentSpec, 0, len(fm.Agents))
 	for _, a := range fm.Agents {
 		spec := AgentSpec{
@@ -278,12 +298,14 @@ func parseProfile(name string, meta, body []byte) (*Profile, error) {
 }
 
 func parseStage(name string, meta, body []byte) (*Stage, error) {
-	fm, d, err := parseFile(meta, body)
+	var fm stageYAML
+	text, err := parseFile(meta, body, &fm)
 	if err != nil {
 		return nil, err
 	}
 
-	st := &Stage{doc: d, Name: name, Executor: fm.Executor, Model: fm.Model, Effort: fm.Effort}
+	st := &Stage{doc: doc{Description: fm.Description, Body: text}, Name: name,
+		Executor: fm.Executor, Model: fm.Model, Effort: fm.Effort}
 	if st.Executor == "" {
 		st.Executor = executorClaude
 	}
@@ -291,6 +313,10 @@ func parseStage(name string, meta, body []byte) (*Stage, error) {
 }
 
 func parseLens(meta, body []byte) (doc, error) {
-	_, d, err := parseFile(meta, body)
-	return d, err
+	var fm lensYAML
+	text, err := parseFile(meta, body, &fm)
+	if err != nil {
+		return doc{}, err
+	}
+	return doc{Description: fm.Description, Body: text}, nil
 }
