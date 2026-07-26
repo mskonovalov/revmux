@@ -13,7 +13,7 @@ revmux runs a review and returns findings, and does nothing else. It performs no
 operations, no PR fetching and no source modification. All review context is written to a task directory by
 the caller and passed in with `--task`.
 
-**Status: initial build in progress.** The find stage runs end to end; synthesis, verification and the
+**Status: initial build in progress.** The find and synthesis stages run end to end; verification and the
 terminal UI are not wired up yet. The build sequence is `docs/plans/20260726-revmux-initial-build.md`.
 
 ## Flags

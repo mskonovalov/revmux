@@ -25,8 +25,11 @@ import (
 // which any per-agent stream contains.
 const eventsFile = "events.jsonl"
 
-// stage names, used for both the stage events and the recorded timings.
-const stageFind = "find"
+// stage names, used for the stage events, the recorded timings and the stage prompt lookup.
+const (
+	stageFind      = "find"
+	stageSynthesis = "synthesis"
+)
 
 // Runner runs one supervised process. It is declared here, by the consumer, and exported only so
 // package main can name it when it supplies the factory.
@@ -117,8 +120,11 @@ func (p *Pipeline) Run(ctx context.Context) (rep finding.Report, err error) {
 	p.openEvents()
 	started := p.cfg.Clock.Now()
 
-	rep, err = p.runFind(ctx)
+	rep, sources, err := p.runFind(ctx)
 	if err != nil {
+		return finding.Report{}, err
+	}
+	if rep, err = p.runSynthesis(ctx, rep, sources); err != nil {
 		return finding.Report{}, err
 	}
 
@@ -131,19 +137,45 @@ func (p *Pipeline) Run(ctx context.Context) (rep finding.Report, err error) {
 
 // runFind runs the find stage and appends its own timing to the report it returns. Each stage
 // records its own, since manifest.json reads them back and nothing can recompute one afterwards.
-func (p *Pipeline) runFind(ctx context.Context) (finding.Report, error) {
+//
+// The per-source results travel out alongside the report because synthesis needs the true roster —
+// which process emitted which finding, and which degraded — as data rather than as an inference.
+func (p *Pipeline) runFind(ctx context.Context) (finding.Report, []sourceResult, error) {
 	p.emit(Event{Kind: EventStage, Stage: stageFind})
 	at := p.cfg.Clock.Now()
 
 	f := &finder{cfg: p.cfg, emit: p.emit, stagger: p.stagger}
 	sources, err := f.run(ctx)
 	if err != nil {
-		return finding.Report{}, err
+		return finding.Report{}, nil, err
 	}
 
 	rep := f.report(sources)
 	rep.Stats.Stages = append(rep.Stats.Stages,
 		finding.StageTiming{Name: stageFind, DurationMS: p.cfg.Clock.Now().Sub(at).Milliseconds()})
+	return rep, sources, nil
+}
+
+// runSynthesis merges the roster's findings into one set. --no-synthesis passes them through with
+// their sources and lenses attribution intact, since find already stamped both.
+func (p *Pipeline) runSynthesis(ctx context.Context, rep finding.Report, sources []sourceResult) (finding.Report, error) {
+	if p.cfg.NoSynthesis {
+		return rep, nil
+	}
+
+	p.emit(Event{Kind: EventStage, Stage: stageSynthesis})
+	at := p.cfg.Clock.Now()
+
+	s := &synthesizer{cfg: p.cfg, emit: p.emit}
+	out, err := s.run(ctx, sources)
+	if err != nil {
+		return finding.Report{}, err
+	}
+
+	rep.Findings, rep.OpenQuestions, rep.PreExisting = out.Findings, out.OpenQuestions, out.PreExisting
+	rep.Stats.Tokens += out.Stats.Tokens
+	rep.Stats.Stages = append(rep.Stats.Stages,
+		finding.StageTiming{Name: stageSynthesis, DurationMS: p.cfg.Clock.Now().Sub(at).Milliseconds()})
 	return rep, nil
 }
 

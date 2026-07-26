@@ -321,10 +321,11 @@ func newHarness(t *testing.T) *harness {
 		Archive: &mocks.ArchiverMock{WriterFunc: h.writer},
 		Clock:   tickingClock(),
 		Set:     set, Profile: profile, Roster: roster,
-		Vars:      prompt.Vars{"SCOPE": "/abs/scope.md", "GOAL": "none provided", "PROFILE": "none provided", "CONTEXT": "none provided", "WORKDIR": "/repo"},
-		Task:      "pr-1",
-		Run:       "round-1",
-		ScopePath: "/abs/scope.md",
+		NoSynthesis: true, // most tests here are about the find stage; the synthesis ones turn it back on
+		Vars:        prompt.Vars{"SCOPE": "/abs/scope.md", "GOAL": "none provided", "PROFILE": "none provided", "CONTEXT": "none provided", "WORKDIR": "/repo"},
+		Task:        "pr-1",
+		Run:         "round-1",
+		ScopePath:   "/abs/scope.md",
 	}
 	return h
 }
@@ -353,11 +354,15 @@ func (h *harness) get(name string) *syncBuffer {
 }
 
 // runner returns a factory whose runner answers per agent, keyed off the composed prompt, since the
-// spec a factory receives names the executor rather than the agent.
+// spec a factory receives names the executor rather than the agent. A fixture under the synthesis
+// stage's own name answers that stage, so one map drives a whole run.
 func (h *harness) runner(byAgent map[string]executor.Result) func(RunnerSpec) Runner {
 	return func(RunnerSpec) Runner {
 		return &mocks.RunnerMock{
 			RunFunc: func(_ context.Context, req executor.Request, _ executor.EventSink) (executor.Result, error) {
+				if res, ok := byAgent[stageSynthesis]; ok && strings.Contains(req.Prompt, synthesisMarker) {
+					return res, nil
+				}
 				for name, res := range byAgent {
 					if strings.Contains(req.Prompt, "lens "+name) {
 						return res, nil

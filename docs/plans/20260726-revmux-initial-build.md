@@ -1184,20 +1184,20 @@ with output that looks entirely plausible.
 The ids are unique because task 6's `finder.parse` stamps them as `<agent>-<n>`. Model-supplied ids would
 collide across agents and the union would be wrong rather than absent, which is worse.
 
-- [ ] create `app/pipeline/synthesize.go` composing the synthesis prompt from the `synthesis.md` stage with `{{FINDINGS}}` and `{{SOURCES}}`
-- [ ] build `{{SOURCES}}` from the real roster: which agents ran, which degraded, which emitted each finding
-- [ ] run the stage through `Config.NewRunner` with a `RunnerSpec` built from the stage's own `executor` / `model` / `effort`, and parse its structured output into `finding.Report`
-- [ ] **derive `sources` and `lenses` in Go from the merged input ids the model returned**, never from a `sources` field in the output: build the id-keyed map from `sources []sourceResult` in `run`, hand it to `parse`, and union the attribution of every merged input onto the output finding
-- [ ] a merged id the map does not contain is a hard error, not a silent skip — it means the model invented an id, and quietly dropping it produces a finding with fewer sources than it earned or none at all
-- [ ] honor `--no-synthesis` by passing findings through with their `sources` and `lenses` attribution intact
-- [ ] author `synthesis.md`: split open questions and pre-existing issues first, dedupe on file plus line ±2 with similar descriptions, boost `min(99, max_conf + 10*(N-1))` over distinct sources, severity max, drop single-source below 80 without corroboration, and route would-be-drops to the verifier when the run is degraded
-- [ ] write tests with a mocked runner asserting the prompt carries an accurate source roster
-- [ ] write a test asserting the composed synthesis prompt instructs the model to route would-be-drops to the verifier when the run is degraded — the drop rule itself lives in `synthesis.md` and is executed by the model, so with a mocked runner prompt content is the only thing a Go test can assert
-- [ ] write a test asserting a finding merged from two agents carries both names in `sources` and the union of their lenses, and that one merged from a single agent's two lenses carries **one** source — the self-corroboration case the confidence boost exists to catch
-- [ ] write a test asserting an unknown merged id fails rather than being skipped
-- [ ] write a test asserting `{{SOURCES}}` names the degraded agents, the third of the three places the rules require a degraded source to be loud
-- [ ] write tests for `--no-synthesis` passthrough and for malformed synthesis output
-- [ ] run tests - must pass before task 10
+- [x] create `app/pipeline/synthesize.go` composing the synthesis prompt from the `synthesis.md` stage with `{{FINDINGS}}` and `{{SOURCES}}`
+- [x] build `{{SOURCES}}` from the real roster: which agents ran, which degraded, which emitted each finding
+- [x] run the stage through `Config.NewRunner` with a `RunnerSpec` built from the stage's own `executor` / `model` / `effort`, and parse its structured output into `finding.Report`
+- [x] **derive `sources` and `lenses` in Go from the merged input ids the model returned**, never from a `sources` field in the output: build the id-keyed map from `sources []sourceResult` in `run`, hand it to `parse`, and union the attribution of every merged input onto the output finding
+- [x] a merged id the map does not contain is a hard error, not a silent skip — it means the model invented an id, and quietly dropping it produces a finding with fewer sources than it earned or none at all
+- [x] honor `--no-synthesis` by passing findings through with their `sources` and `lenses` attribution intact
+- [x] author `synthesis.md`: split open questions and pre-existing issues first, dedupe on file plus line ±2 with similar descriptions, boost `min(99, max_conf + 10*(N-1))` over distinct sources, severity max, drop single-source below 80 without corroboration, and route would-be-drops to the verifier when the run is degraded
+- [x] write tests with a mocked runner asserting the prompt carries an accurate source roster
+- [x] write a test asserting the composed synthesis prompt instructs the model to route would-be-drops to the verifier when the run is degraded — the drop rule itself lives in `synthesis.md` and is executed by the model, so with a mocked runner prompt content is the only thing a Go test can assert
+- [x] write a test asserting a finding merged from two agents carries both names in `sources` and the union of their lenses, and that one merged from a single agent's two lenses carries **one** source — the self-corroboration case the confidence boost exists to catch
+- [x] write a test asserting an unknown merged id fails rather than being skipped
+- [x] write a test asserting `{{SOURCES}}` names the degraded agents, the third of the three places the rules require a degraded source to be loud
+- [x] write tests for `--no-synthesis` passthrough and for malformed synthesis output
+- [x] run tests - must pass before task 10
 
 ### Task 10: Verification stage
 

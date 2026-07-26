@@ -135,6 +135,7 @@ func TestRun_review(t *testing.T) {
 	base := options{
 		Task: "pr-1", Run: "round-1", TasksDir: root, Profile: "focused", Lenses: []string{"bugs"},
 		StaggerDelay: 30 * time.Second, MaxParallel: 4,
+		NoSynthesis: true, // these assert rendering and exit codes; the merge has its own case below
 	}
 
 	t.Run("markdown to stdout, progress to stderr, exit 1", func(t *testing.T) {
@@ -188,6 +189,24 @@ func TestRun_review(t *testing.T) {
 		assert.Equal(t, 0, run(r.opts()))
 		assert.Contains(t, r.stdout.String(), "No findings.")
 		assert.NotContains(t, r.stdout.String(), "below the bar")
+	})
+
+	t.Run("the synthesis stage is wired and its merge reaches stdout", func(t *testing.T) {
+		o := base
+		o.NoSynthesis = false
+		r := newRunOpts(t, o)
+		r.result = executor.Result{StructuredOutput: json.RawMessage(
+			`{"findings":[{"file":"a.go","line":1,"severity":"minor","confidence":55,"title":"raw","lenses":["bugs"]}]}`)}
+		r.synth = executor.Result{StructuredOutput: json.RawMessage(
+			`{"findings":[{"merged_ids":["lenses-1"],"file":"a.go","line":1,"severity":"major","confidence":85,` +
+				`"title":"merged","body":"what it breaks"}],"open_questions":[],"pre_existing":[]}`)}
+
+		assert.Equal(t, 1, run(r.opts()))
+		out := r.stdout.String()
+		assert.Contains(t, out, "merged", "the merged finding replaces the passthrough")
+		assert.NotContains(t, out, "raw")
+		assert.Contains(t, out, "sources: lenses", "attribution survives the merge")
+		assert.Contains(t, r.stderr.String(), "stage synthesis")
 	})
 
 	t.Run("nothing found exits 0", func(t *testing.T) {
@@ -267,9 +286,14 @@ type runHarness struct {
 	stdout *strings.Builder
 	stderr *strings.Builder
 	result executor.Result
+	synth  executor.Result
 	runErr error
 	runs   atomic.Int64
 }
+
+// synthesisMarker is a line only the synthesis prompt carries, so the harness answers that stage
+// with its own fixture rather than handing it a finder-shaped one.
+const synthesisMarker = "merging a review panel"
 
 // attempts is how many processes the run launched, which is what proves a failing source was retried
 // exactly once rather than not at all or forever.
@@ -303,6 +327,9 @@ func (r *runHarness) newRunner(pipeline.RunnerSpec) pipeline.Runner {
 			r.runs.Add(1)
 			if req.RawOutput != nil {
 				_, _ = req.RawOutput.Write([]byte(r.result.Raw))
+			}
+			if strings.Contains(req.Prompt, synthesisMarker) {
+				return r.synth, nil
 			}
 			return r.result, r.runErr
 		},
