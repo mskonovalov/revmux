@@ -36,6 +36,19 @@ The supervisor's behavior is defined by these, so they are written before the co
 Fixtures are recorded from real CLI output, not hand-written.
 Hand-written fixtures encode what someone assumed the CLI emits, which is exactly the class of bug they should catch.
 
+**Only the clean capture per CLI is recorded live. Every other fixture is derived from it, in code.**
+A truncated stream is the clean capture cut mid-line; a stalling one is the clean capture cut early;
+rate-limited and model-mismatch are the clean capture with a single field patched.
+Those are still real CLI bytes, so the ban above holds — what it forbids is inventing the wire shape,
+not slicing a recording of it.
+
+Deriving rather than recording is also what keeps the build autonomous.
+Live capture cannot run from an executing agent's own tool shell (see `.claude/rules/executor.md`),
+so every fixture that needs its own recording is a step the build cannot take by itself.
+Two recordings are a one-time prerequisite; nine would be a permanent blocker.
+Keep the derivations in a `_test.go` helper, not committed as separate files, so a re-record of the clean
+capture regenerates all of them.
+
 ### Never touch the user's real config or task directories
 
 Every test that touches the filesystem uses `t.TempDir()`.
@@ -56,7 +69,7 @@ A cheap audit: checksum the real config directory before and after a full `go te
 
 Both are testable without a terminal and without a subprocess, by construction.
 
-- **Pipeline**: mock `agentRunner`, assert on the emitted event sequence and the resulting report.
+- **Pipeline**: mock `Runner` and `archiver`, assert on the emitted event sequence and the resulting report.
   Degrade behavior, retry-once, stagger ordering and source counting are all unit-testable this way.
 - **TUI**: drive `Update` with synthetic messages and assert on `View()` output. Never require a tty.
 

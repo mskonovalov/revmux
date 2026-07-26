@@ -72,7 +72,13 @@ Two independent timers catching two different failures.
   set `Result.IdleTimedOut` so the caller can retry rather than fail the run.
 - **Hard timeout** is a plain `context.WithTimeout` over the whole call,
   catching the slow-but-alive case where the agent keeps emitting output forever.
-- Both default to disabled at the executor level; the pipeline sets them from config.
+- Both default to disabled at the executor level; the composition root sets them from config when it builds
+  each executor. Not the pipeline — it never constructs one, it receives an injected factory.
+- **Both timers come from an injected clock, never from `time.AfterFunc` directly.**
+  `.claude/rules/testing.md` forbids wall-clock waits in tests, and an idle-timeout test that actually sleeps
+  is either slow or flaky. A recorded fixture that simply ends is EOF, not a stall — proving the watchdog
+  fires needs a fake runner that emits fixture bytes and then blocks until cancellation, plus a clock the
+  test advances itself.
 
 ### Process groups
 
@@ -95,6 +101,17 @@ Each executor supplies only its own `args()` and its own output parsing.
 Model and effort belong on the **per-run request**, not on construction-time options —
 a single executor instance has to serve roster entries with different models.
 
+### Raw output belongs to the caller, not just the parser
+
+`Request` carries an optional `RawOutput io.Writer`, and `proc` tees every byte to it **before** parsing.
+
+Without this the archive cannot do its job. Raw stdout is consumed inside `proc` and the per-executor
+parsers, so a caller holding only parsed events can never reconstruct byte-identical claude stream-json or
+codex prose. Re-serializing parsed events is not the same artifact: a reflection agent reading a paraphrase
+of what the model emitted is worse off than one with no data, because it cannot tell the difference.
+
+Tee before parse, not after — a stream that fails to parse is exactly the one worth having on disk.
+
 ### Codex differences
 
 Codex is a peer executor, not a special case in the pipeline — but the executor itself is genuinely different.
@@ -104,8 +121,11 @@ Codex is a peer executor, not a special case in the pipeline — but the executo
   printed in the stderr header banner.
   If per-agent activity for codex is ever wanted in the TUI, tail that rollout — do not try to parse stderr prose.
 - **Codex has no `--json-schema`.**
-  The executor appends its own "return only JSON matching this shape" contract to the composed prompt.
-  That text lives in the executor, never in a lens file, which must stay executor-agnostic.
+  The executor appends its own "return only JSON matching this shape" contract to the composed prompt,
+  rendering `Request.Schema` inline. That field is set for **both** executors and carries the running
+  stage's schema, so a codex entry running synthesis or verify asks for that stage's shape.
+  Hardcoding a finder-shaped contract here breaks the moment a stage prompt declares `executor: codex`.
+  The wrapper text lives in the executor, never in a lens file, which must stay executor-agnostic.
 - The idle watchdog ticks on raw stdout writes rather than parsed events.
 - Extraction must tolerate JSON wrapped in surrounding prose; finding no JSON is a degraded source, not a crash.
 - Codex stderr is noisy — startup banner, exec echo, hook lifecycle lines, reasoning stream.

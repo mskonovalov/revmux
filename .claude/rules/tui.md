@@ -17,9 +17,14 @@ The pipeline runs headless and emits typed events; the TUI is one subscriber and
 The cost of a new package is lower than keeping `app/ui` entangled with OS boundaries.
 When the TUI appears to need OS work, extract it and consume it through a consumer-side interface.
 
-**The final report is not written from here.**
-The model carries it out through its final state; `package main` writes it after the bubbletea program returns.
-That is also what makes "the report is emitted exactly once on quit" testable without a terminal.
+**The final report is not written from here, and not carried out from here either.**
+`Pipeline.Run` returns it to `package main`, which owns it.
+The model receives a copy through a completion message purely to render the findings browser,
+and `package main` writes it to stdout after the bubbletea program returns.
+
+It arrives as a bubbletea message rather than a pipeline event on purpose:
+the event channel drops under load, and a dropped completion would park the TUI on the agent panes forever.
+That split is also what makes "the report is emitted exactly once on quit" testable without a terminal.
 
 ### Output streams
 
@@ -28,6 +33,12 @@ Render to the **tty**, never to stdout. stdout belongs to the report alone.
 Gate the TUI on the tty being openable, **never** on stdout being a TTY.
 With `revmux --json > findings.json` the stdout check is false while the user is sitting at a terminal
 expecting to watch the run — that check would silently disable the TUI in one of the most common invocations.
+
+That same tty handle is the program's **input** as well as its output: pass it to both `tea.WithInput` and
+`tea.WithOutput`. Leaving input at bubbletea's `os.Stdin` default makes the key bindings work only when
+stdin happens to be a terminal, which is not safe for a binary whose caller is a model, and it is unrelated
+to the condition the gate actually tests. `package main` opens it, hands it over, and closes it after the
+program returns.
 
 `--no-tui` and a non-openable tty both fall back to the plain stderr renderer over the same event channel.
 
@@ -38,6 +49,9 @@ Below it, one focused detail pane, switched with tab and number keys.
 
 - Tab `0 · all` is the combined chronological view and is **focused by default**.
   It is deliberately compact: tool calls, state transitions and findings emitted, one line each, agent-prefixed and colored.
+  The color arrives on the agent's spec — `color` front matter, or a palette entry by roster position when
+  it is omitted (`.claude/rules/prompts.md`). This package never picks one, or the plain `--no-tui`
+  renderer would color the same agent differently.
   It must NOT carry thinking text — four concurrent agents make it scroll faster than anyone can read,
   and it stops being the situational-awareness view it exists to be.
 - Tabs `1-9` are per-agent full-detail scrollback, thinking included. Those are the forensic views.
