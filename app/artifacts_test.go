@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -181,6 +183,97 @@ func TestRun_archive(t *testing.T) {
 		assert.FileExists(t, filepath.Join(root, "pr-1", "runs", "round-1", "report.md"))
 		assert.FileExists(t, filepath.Join(root, "pr-1", "runs", "after-fix", "report.md"))
 	})
+}
+
+func TestRun_writesOnlyUnderItsOwnRun(t *testing.T) {
+	// every path a review could reach is watched: the caller's context above runs/, a sibling round,
+	// and both config layers — loading the prompt tree must never install anything as a side effect
+	r, root := archiveRun(t)
+	user, project := t.TempDir(), t.TempDir()
+	writeConfig(t, user, "keep-runs = 10\n")
+	r.o.layers = configLayers{user: user, project: project}
+
+	sibling := filepath.Join(root, "pr-1", "runs", "earlier")
+	require.NoError(t, os.MkdirAll(sibling, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(sibling, findingsFileName), []byte(`{"findings":[]}`), 0o600))
+
+	before := map[string][]string{"tasks": treeOf(t, root), "user": treeOf(t, user), "project": treeOf(t, project)}
+	siblingBefore := treeOf(t, sibling)
+	require.Equal(t, 1, run(r.opts()))
+
+	assert.Equal(t, before["user"], treeOf(t, user), "a review reads the config tree and writes none of it")
+	assert.Equal(t, before["project"], treeOf(t, project))
+	assert.Equal(t, siblingBefore, treeOf(t, sibling), "an earlier round is what a reflection agent reads")
+
+	own := filepath.Join("pr-1", "runs", "round-1")
+	for _, p := range treeOf(t, root) {
+		if slices.Contains(before["tasks"], p) {
+			continue
+		}
+		assert.True(t, p == own || strings.HasPrefix(p, own+string(filepath.Separator)),
+			"%q was created outside runs/<run>/", p)
+	}
+}
+
+func TestRun_tokensPerAgentSumToTheRunTotal(t *testing.T) {
+	// per-agent token counts are one of the things a subprocess buys, so both the report and the
+	// manifest carry them and the run total has to be their sum rather than an independent number
+	tokens := map[string]int{"bugs": 4210, "codex": 1234}
+
+	r, root := archiveRun(t)
+	r.o.Lenses, r.o.StaggerDelay, r.o.Profile = nil, 0, "focused"
+
+	ro := r.opts()
+	ro.newRunner = func(spec pipeline.RunnerSpec) pipeline.Runner {
+		name := "bugs"
+		if spec.Executor == executorCodex {
+			name = "codex"
+		}
+		return &pmocks.RunnerMock{
+			RunFunc: func(_ context.Context, _ executor.Request, _ executor.EventSink) (executor.Result, error) {
+				res := r.result
+				res.Tokens = tokens[name]
+				return res, nil
+			},
+		}
+	}
+	require.Equal(t, 1, run(ro))
+
+	want := tokens["bugs"] + tokens["codex"]
+	dir := filepath.Join(root, "pr-1", "runs", "round-1")
+
+	var rep finding.Report
+	data, err := os.ReadFile(filepath.Join(dir, "findings.json")) //nolint:gosec // path built from t.TempDir
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &rep))
+
+	got := 0
+	require.Len(t, rep.Sources.Agents, 2)
+	for _, a := range rep.Sources.Agents {
+		assert.Equal(t, tokens[a.Name], a.Tokens, "agent %s", a.Name)
+		got += a.Tokens
+	}
+	assert.Equal(t, want, got)
+	assert.Equal(t, want, rep.Stats.Tokens, "the run total is what the agents actually spent")
+
+	var got2 manifest
+	data, err = os.ReadFile(filepath.Join(dir, manifestFileName)) //nolint:gosec // path built from t.TempDir
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &got2))
+
+	sum := 0
+	require.Len(t, got2.Agents, 2)
+	for _, a := range got2.Agents {
+		assert.Equal(t, tokens[a.Name], a.Tokens, "agent %s", a.Name)
+		sum += a.Tokens
+	}
+	assert.Equal(t, want, sum)
+	assert.Equal(t, want, got2.Tokens, "the manifest and the report must not disagree on what a run cost")
+
+	for name, n := range tokens {
+		assert.Contains(t, r.stdout.String(), fmt.Sprintf("| %s |", name))
+		assert.Contains(t, r.stdout.String(), fmt.Sprintf("| %d |", n), "the rendered report shows per-agent tokens")
+	}
 }
 
 func TestRun_history(t *testing.T) {

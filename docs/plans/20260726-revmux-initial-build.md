@@ -1665,18 +1665,40 @@ see his tree, or the catalog describes a review that will not happen.
 
 Everything here is checkable without spawning a model — anything needing a live agent is in Post-Completion.
 
-- [ ] verify all requirements from Overview are implemented
-- [ ] verify revmux runs no git command and imports no VCS library: `go list -deps ./... | grep -iE 'go-git|libgit2|golang.org/x/tools/go/vcs'` finds nothing, and `grep -rn 'exec.Command' app/ | grep -v '^app/executor/'` finds nothing. **Do not grep the dependency list for the bare substring `git`** — every `github.com/...` path contains it, including revmux's own module path, so that check can only ever report a false positive
-- [ ] verify with a mocked runner that revmux writes nothing outside `runs/<run>/`, that a second run under a new name coexists with the first, and that reusing a name fails without overwriting
-- [ ] verify a composed prompt contains only paths and no file contents, including when `--tasks-dir` points outside the repo
-- [ ] verify the report and `manifest.json` show tokens per agent and a run total matching their sum
-- [ ] verify a killed agent is retried once, then degrades without aborting the run, and that an all-degraded run exits 2
-- [ ] verify `--json` output round-trips against the documented shape, and that `--json > file` still enables the TUI when a tty is openable
-- [ ] verify exit codes 0, 1 and 2 in their respective conditions
-- [ ] verify `revmux config` output is enough to compose a `--lenses` invocation without reading the prompt tree: every lens named there loads, and every profile's reported roster matches what a run of that profile actually dispatches
-- [ ] run full test suite: `make test`
-- [ ] run `golangci-lint run --max-issues-per-linter=0 --max-same-issues=0`
-- [ ] verify test coverage meets project standard
+- [x] verify all requirements from Overview are implemented
+- [x] verify revmux runs no git command and imports no VCS library: `go list -deps ./... | grep -iE 'go-git|libgit2|golang.org/x/tools/go/vcs'` finds nothing, and `grep -rn 'exec.Command' app/ | grep -v '^app/executor/'` finds nothing. **Do not grep the dependency list for the bare substring `git`** — every `github.com/...` path contains it, including revmux's own module path, so that check can only ever report a false positive
+- [x] verify with a mocked runner that revmux writes nothing outside `runs/<run>/`, that a second run under a new name coexists with the first, and that reusing a name fails without overwriting
+- [x] verify a composed prompt contains only paths and no file contents, including when `--tasks-dir` points outside the repo
+- [x] verify the report and `manifest.json` show tokens per agent and a run total matching their sum
+- [x] verify a killed agent is retried once, then degrades without aborting the run, and that an all-degraded run exits 2
+- [x] verify `--json` output round-trips against the documented shape, and that `--json > file` still enables the TUI when a tty is openable
+- [x] verify exit codes 0, 1 and 2 in their respective conditions
+- [x] verify `revmux config` output is enough to compose a `--lenses` invocation without reading the prompt tree: every lens named there loads, and every profile's reported roster matches what a run of that profile actually dispatches
+- [x] run full test suite: `make test`
+- [x] run `golangci-lint run --max-issues-per-linter=0 --max-same-issues=0`
+- [x] verify test coverage meets project standard
+
+**Verification notes:**
+
+➕ The `exec.Command` grep as written above also matches two **test** call sites in `app/main_test.go`,
+which build the binary and run `--version` — neither is revmux running a command.
+The check was therefore run against non-test code, where it finds exactly one subprocess boundary:
+`exec.CommandContext` in `app/executor/executor.go`. No `git` invocation and no VCS library anywhere.
+
+➕ Tests added for the criteria that had no end-to-end coverage:
+`TestRun_promptsCarryPathsNotContents`, `TestRun_degradedSourceDoesNotAbortTheRun` and
+`TestRun_configComposesARunnableInvocation` in `app/main_test.go`;
+`TestRun_writesOnlyUnderItsOwnRun` and `TestRun_tokensPerAgentSumToTheRunTotal` in `app/artifacts_test.go`.
+Each was mutation-checked against the production code it covers, so none of them passes vacuously.
+
+⚠️ `TestCodex_Run_stderrHeader` was flaky and failed once during this task's first full run.
+Cause: it asserted the stderr header line landed at activity index 0, while `proc.run` drains stderr in a
+goroutine **alongside** the stdout parse — so whether a header line or codex's first raw write reaches the
+sink first is unspecified. The assertion's own message claimed to check "forwarded once per process", which
+is what `codexStderr.seen` actually guarantees, so the oracle was fixed to assert that instead.
+The single live capture prints each header line once and could not exercise the dedup at all, so
+`codexRepeatedBannerCapture` derives a doubled banner from it. The rewritten test now catches removal of the
+`seen` guard, which the index assertion did not.
 
 ### Task 17: [Final] Update documentation
 

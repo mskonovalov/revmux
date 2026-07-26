@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,6 +42,15 @@ func codexStderrCapture(t *testing.T) []byte {
 	require.NoError(t, err)
 	require.NotEmpty(t, data)
 	return data
+}
+
+// codexRepeatedBannerCapture is the same stderr with its banner printed twice, which is what the
+// once-per-process filter exists to absorb. The single capture cannot exercise it: codex printed each
+// header line once, so a filter that forwarded every one of them would look correct against it.
+func codexRepeatedBannerCapture(t *testing.T) []byte {
+	t.Helper()
+	data := codexStderrCapture(t)
+	return append(slices.Clone(data), data...)
 }
 
 func codexProseCapture(t *testing.T) []byte {
@@ -227,28 +237,46 @@ func TestCodex_Run_firstStdoutWriteEmitsActivity(t *testing.T) {
 }
 
 func TestCodex_Run_stderrHeader(t *testing.T) {
-	path := writeFixture(t, codexCapture(t))
-	errPath := writeFixture(t, codexStderrCapture(t))
-	sink := discardSink()
+	header := []string{"model: gpt-5.6-sol", "sandbox: read-only", "reasoning effort: high"}
 
-	c := executor.NewCodex(fakeRunner("emit", path, errPath), executor.Opts{})
-	res, err := c.Run(context.Background(), executor.Request{Prompt: "x", Model: "requested"}, sink)
-	require.NoError(t, err)
+	// the header lines are forwarded once each and the rest of the banner is dropped. Their position
+	// among the activity events is deliberately not asserted: stderr is drained alongside the stdout
+	// parse, so whether a header line or the first raw write reaches the sink first is unspecified.
+	run := func(t *testing.T, stderr []byte) []string {
+		t.Helper()
+		path := writeFixture(t, codexCapture(t))
+		errPath := writeFixture(t, stderr)
+		sink := discardSink()
 
-	assert.Equal(t, "requested", res.RequestedModel)
-	assert.Equal(t, "gpt-5.6-sol", res.ActualModel, "the report states what actually ran")
+		c := executor.NewCodex(fakeRunner("emit", path, errPath), executor.Opts{})
+		res, err := c.Run(context.Background(), executor.Request{Prompt: "x", Model: "requested"}, sink)
+		require.NoError(t, err)
 
-	texts := eventTexts(sink, executor.EventActivity)
-	assert.Contains(t, texts, "model: gpt-5.6-sol")
-	assert.Contains(t, texts, "sandbox: read-only")
-	assert.Contains(t, texts, "reasoning effort: high")
+		assert.Equal(t, "requested", res.RequestedModel)
+		assert.Equal(t, "gpt-5.6-sol", res.ActualModel, "the report states what actually ran")
 
-	assert.Equal(t, 1, slices.Index(texts, "model: gpt-5.6-sol")+1, "the header is forwarded once per process")
-	for _, text := range texts {
-		assert.NotContains(t, text, "session id", "the rest of the banner is suppressed")
-		assert.NotContains(t, text, "provider")
-		assert.NotContains(t, text, "hook:")
+		texts := eventTexts(sink, executor.EventActivity)
+		for _, text := range texts {
+			assert.NotContains(t, text, "session id", "the rest of the banner is suppressed")
+			assert.NotContains(t, text, "provider")
+			assert.NotContains(t, text, "hook:")
+		}
+		return texts
 	}
+
+	t.Run("as recorded", func(t *testing.T) {
+		texts := run(t, codexStderrCapture(t))
+		for _, want := range header {
+			assert.Contains(t, texts, want)
+		}
+	})
+
+	t.Run("a banner printed twice is still forwarded once", func(t *testing.T) {
+		joined := strings.Join(run(t, codexRepeatedBannerCapture(t)), "\n")
+		for _, want := range header {
+			assert.Equal(t, 1, strings.Count(joined, want), "%q must reach the sink once per process", want)
+		}
+	})
 }
 
 func TestCodex_Run_patternTiers(t *testing.T) {

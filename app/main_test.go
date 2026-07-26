@@ -338,6 +338,164 @@ func TestRun_review(t *testing.T) {
 	})
 }
 
+func TestRun_promptsCarryPathsNotContents(t *testing.T) {
+	// the tasks root is outside the tree under review, which is where the never-embed rule is easiest
+	// to break: nothing about these paths is relative to the repo, so a composer tempted to inline
+	// would have to inline the whole file
+	root := t.TempDir()
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.False(t, strings.HasPrefix(root, cwd+string(os.PathSeparator)), "the tasks root must be outside the repo")
+
+	dir := filepath.Join(root, "pr-1")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, contextDirName), 0o750))
+	contents := map[string]string{
+		scopeFileName: "SENTINEL-SCOPE run git diff master...HEAD",
+		goalFileName:  "SENTINEL-GOAL make the watchdog observable",
+		profFileName:  "SENTINEL-PROFILE go, tests with testify",
+		filepath.Join(contextDirName, "ticket.md"): "SENTINEL-CONTEXT the ticket body",
+	}
+	for name, body := range contents {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600))
+	}
+
+	r := newRunOpts(t, options{
+		Task: "pr-1", Run: "round-1", TasksDir: root, Profile: "focused", Lenses: []string{"bugs"},
+		StaggerDelay: 30 * time.Second, MaxParallel: 4, KeepRuns: 10, VerifyGroups: 4, NoSynthesis: true,
+	})
+	r.result = executor.Result{StructuredOutput: json.RawMessage(
+		`{"findings":[{"file":"app/main.go","line":42,"severity":"major","confidence":90,"title":"unchecked error"}]}`)}
+	require.Equal(t, 1, run(r.opts()))
+
+	prompts := r.prompts()
+	require.Len(t, prompts, 2, "the finder and the verifier its finding produced")
+
+	for _, want := range []string{
+		filepath.Join(dir, scopeFileName), filepath.Join(dir, goalFileName),
+		filepath.Join(dir, profFileName), filepath.Join(dir, contextDirName),
+	} {
+		assert.Contains(t, prompts[0], want, "the agent is handed the path and reads the file itself")
+	}
+
+	// the archived prompt is the bytes the process received, so a leak would show up in both
+	archived, err := os.ReadFile(filepath.Join(dir, "runs", "round-1", "prompts", "agents", "lenses.md")) //nolint:gosec // path built from t.TempDir
+	require.NoError(t, err)
+	assert.Equal(t, prompts[0], string(archived))
+
+	for _, body := range contents {
+		sentinel := strings.SplitN(body, " ", 2)[0]
+		for i, p := range prompts {
+			assert.NotContains(t, p, sentinel, "prompt %d carries file contents, not just a path", i)
+		}
+		assert.NotContains(t, string(archived), sentinel)
+	}
+}
+
+func TestRun_degradedSourceDoesNotAbortTheRun(t *testing.T) {
+	// the whole focused roster: a claude lens agent plus a codex peer, no stagger, since the mock
+	// runner emits no activity and the fake clock fires no timer, so nothing would open the gate
+	r := newRunOpts(t, options{
+		Task: "pr-1", Run: "round-1", TasksDir: taskRoot(t), Profile: "focused",
+		MaxParallel: 4, KeepRuns: 10, NoSynthesis: true, NoVerify: true,
+	})
+	r.result = executor.Result{
+		StructuredOutput: json.RawMessage(`{"findings":[{"file":"app/main.go","line":42,"severity":"major",` +
+			`"confidence":90,"title":"unchecked error","lenses":["bugs"]}]}`),
+		Tokens: 4210, ActualModel: "claude-opus-5",
+	}
+
+	var codexRuns atomic.Int64
+	ro := r.opts()
+	ro.newRunner = func(spec pipeline.RunnerSpec) pipeline.Runner {
+		return &pmocks.RunnerMock{
+			RunFunc: func(_ context.Context, _ executor.Request, _ executor.EventSink) (executor.Result, error) {
+				if spec.Executor == executorCodex {
+					codexRuns.Add(1)
+					return executor.Result{}, errors.New("killed")
+				}
+				return r.result, nil
+			},
+		}
+	}
+
+	assert.Equal(t, 1, run(ro), "one dead source must not waste every other agent's work")
+	assert.EqualValues(t, 2, codexRuns.Load(), "one launch plus one retry, and never a third")
+
+	out := r.stdout.String()
+	assert.Contains(t, out, "**Degraded run**: 1 of 2 sources reported, missing codex",
+		"a degraded run that reads like a complete one is the worst failure this tool has")
+	assert.Contains(t, out, "unchecked error", "the surviving source still reported")
+	assert.Contains(t, out, "| codex | codex |")
+	assert.Contains(t, out, "| degraded |")
+
+	stderr := r.stderr.String()
+	assert.Contains(t, stderr, "retrying:")
+	assert.Contains(t, stderr, "degraded:")
+}
+
+func TestRun_configComposesARunnableInvocation(t *testing.T) {
+	// what a caller model actually does: read the catalog, then compose from it alone
+	catalogOf := func(t *testing.T, root string) catalog {
+		t.Helper()
+		r := newRunOpts(t, options{showConfig: true, TasksDir: root})
+		require.Equal(t, 0, run(r.opts()))
+		var c catalog
+		require.NoError(t, json.Unmarshal([]byte(r.stdout.String()), &c))
+		return c
+	}
+
+	review := func(t *testing.T, o options) (*runHarness, string) {
+		t.Helper()
+		root := taskRoot(t)
+		o.Task, o.Run, o.TasksDir = "pr-1", "round-1", root
+		o.MaxParallel, o.KeepRuns, o.NoSynthesis, o.NoVerify = 4, 10, true, true
+		r := newRunOpts(t, o)
+		r.result = executor.Result{StructuredOutput: json.RawMessage(
+			`{"findings":[{"file":"a.go","line":1,"severity":"minor","confidence":55,"title":"x"}]}`)}
+		require.Equal(t, 1, run(r.opts()), "an invocation composed from the catalog must run")
+		return r, root
+	}
+
+	t.Run("every lens the catalog names composes into a prompt", func(t *testing.T) {
+		c := catalogOf(t, taskRoot(t))
+		require.NotEmpty(t, c.Lenses)
+
+		lenses := make([]string, 0, len(c.Lenses))
+		for _, l := range c.Lenses {
+			lenses = append(lenses, l.Name)
+		}
+
+		r, _ := review(t, options{Profile: c.Profiles[0].Name, Lenses: lenses})
+		for _, name := range lenses {
+			assert.Contains(t, r.prompts()[0], "## Lens: "+name, "lens %s is named by the catalog but never loaded", name)
+		}
+	})
+
+	t.Run("a reported roster is what that profile dispatches", func(t *testing.T) {
+		for _, p := range catalogOf(t, taskRoot(t)).Profiles {
+			t.Run(p.Name, func(t *testing.T) {
+				_, root := review(t, options{Profile: p.Name})
+
+				// the agents that ran, read back from the prompt each one was archived under
+				entries, err := os.ReadDir(filepath.Join(root, "pr-1", "runs", "round-1", "prompts", "agents"))
+				require.NoError(t, err)
+				dispatched := make([]string, 0, len(entries))
+				for _, e := range entries {
+					dispatched = append(dispatched, strings.TrimSuffix(e.Name(), ".md"))
+				}
+
+				want := make([]string, 0, len(p.Roster))
+				for _, a := range p.Roster {
+					want = append(want, a.Name)
+				}
+				slices.Sort(want)
+				slices.Sort(dispatched)
+				assert.Equal(t, want, dispatched)
+			})
+		}
+	})
+}
+
 func TestRunOpts_tty(t *testing.T) {
 	// a real terminal is never opened in a test, so the opener stands in for one: what matters is
 	// that the gate is the opener and nothing else
