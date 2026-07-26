@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -22,15 +23,18 @@ import (
 )
 
 // helperCmd re-executes the test binary as a stand-in for a model CLI. Everything after "--" is ours:
-// the testing package stops flag parsing there and leaves the rest in os.Args.
-func helperCmd(mode, path string) *exec.Cmd {
-	//nolint:gosec // both arguments come from the test that builds this command
-	return exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--", mode, path)
+// the testing package stops flag parsing there and leaves the rest in os.Args. An optional third
+// argument names a file the helper writes to stderr, which is where codex puts its header and its
+// plan-quota diagnostics.
+func helperCmd(mode, path string, errPath ...string) *exec.Cmd {
+	argv := append([]string{"-test.run=TestHelperProcess", "--", mode, path}, errPath...)
+	//nolint:gosec // every argument comes from the test that builds this command
+	return exec.Command(os.Args[0], argv...)
 }
 
-func fakeRunner(mode, path string) *mocks.CommandRunnerMock {
+func fakeRunner(mode, path string, errPath ...string) *mocks.CommandRunnerMock {
 	return &mocks.CommandRunnerMock{
-		CommandFunc: func(_ context.Context, _ string, _ ...string) *exec.Cmd { return helperCmd(mode, path) },
+		CommandFunc: func(_ context.Context, _ string, _ ...string) *exec.Cmd { return helperCmd(mode, path, errPath...) },
 	}
 }
 
@@ -46,9 +50,23 @@ func TestHelperProcess(t *testing.T) {
 	}
 	mode, path := os.Args[idx+1], os.Args[idx+2]
 
-	if mode == "env" {
+	switch mode {
+	case "env":
 		fmt.Print(strings.Join(os.Environ(), "\n"))
 		os.Exit(0)
+	case "echo":
+		_, _ = io.Copy(os.Stdout, os.Stdin)
+		os.Exit(0)
+	}
+
+	if idx+3 < len(os.Args) {
+		errData, err := os.ReadFile(os.Args[idx+3]) //nolint:gosec // the path is built by the test that spawned this
+		if err != nil {
+			os.Exit(1)
+		}
+		if _, err := os.Stderr.Write(errData); err != nil {
+			os.Exit(1)
+		}
 	}
 
 	data, err := os.ReadFile(path) //nolint:gosec // the path is built by the test that spawned this
@@ -114,6 +132,19 @@ func TestClaude_Run_teesRawOutput(t *testing.T) {
 			assert.Equal(t, string(tt.data), res.Raw)
 		})
 	}
+}
+
+func TestProc_Run_drainsStderrWithoutAFilter(t *testing.T) {
+	// claude supplies no stderr filter, and an unread pipe would fill and block the child
+	noise := writeFixture(t, bytes.Repeat([]byte("chatter on stderr\n"), 8000))
+	path := writeFixture(t, cleanCapture(t))
+
+	c := executor.NewClaude(fakeRunner("emit", path, noise), executor.Opts{})
+	res, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, discardSink())
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.ExitCode)
+	assert.NotEmpty(t, res.StructuredOutput)
+	assert.NotContains(t, res.Raw, "chatter on stderr", "stderr never reaches the parsed stream")
 }
 
 func TestClaude_Run_reportsExitCode(t *testing.T) {

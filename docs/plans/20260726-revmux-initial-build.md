@@ -1124,27 +1124,32 @@ Standalone helpers planned (justification why NOT a method):
 Exports (justification per item: who outside the package calls this?):
 - `Codex`, `NewCodex` — constructed inside the `NewRunner` factory in `package main`
 
-- [ ] add stderr as a field on the `*procRun` handle task 3 returns and populate it in `proc.start`, since codex reads both streams — a new field, not a signature change
-- [ ] create `app/executor/codex.go` embedding `proc`, invoking `codex exec --sandbox read-only` with model and effort from `Request`
-- [ ] implement `outputContract(req.Schema)` appending the "return only JSON matching this shape" instruction with the schema rendered inline, since codex has no `--json-schema`. It takes the schema rather than hardcoding one because a codex entry can run any stage — `synthesis.md` and `verify.md` both accept `executor: codex`, and each carries its own schema
-- [ ] implement `extract` pulling the JSON block out of the final output, tolerating surrounding prose
-- [ ] tick the idle watchdog on raw stdout writes rather than parsed events, and tee those raw bytes to `Request.RawOutput`
-- [ ] **emit an activity `executor.Event` on the first raw stdout write**, so a codex leader fires the sink's first-activity callback. `pipeline.md` requires "the first raw stdout write for codex" to count as first activity, but nothing else in the plan tells codex to call `sink.Emit` — without this a codex leader never opens the stagger gate and `stagger_delay` silently becomes the only release path, which is the exact failure that wire exists to prevent
-- [ ] write a test asserting a codex leader releases the rest through that first stdout write rather than by timing out. It belongs here, not in task 7: `Codex` does not exist until this task, and against a mocked `pipeline.Runner` the test could only simulate an event and would assert nothing about codex
-- [ ] filter codex stderr to the resolved model/sandbox/effort header lines, once per process
-- [ ] implement the retry → limit → error pattern tiering for codex only, checked against the **tail** of output and only on non-zero exit, skipped entirely when the context was canceled — matching against the whole output self-triggers on this project's own code, which discusses rate limits
-- [ ] detect plan-quota errors on stderr with an empty stdout, which a stdout-only check misses
-- [ ] extend the `NewRunner` factory in `package main` to select codex per `RunnerSpec.Executor`
-- [ ] derive the codex fixtures from `testdata/codex-clean.txt` in a `_test.go` helper: prose-wrapped wraps the clean JSON in surrounding text, no-JSON strips the block, stalled cuts the capture early
-- [ ] write tests for `args()` and `outputContract()`, one asserting the contract for a finder request contains `FinderSchema()` and the contract for a verify request contains `VerifySchema()`
-- [ ] write tests for `extract` against all four fixtures including the graceful failure path
-- [ ] write a test asserting a codex roster entry routes to the codex executor and a claude entry does not
-- [ ] write a test asserting a codex prompt gets the output contract appended and a claude prompt does not
-- [ ] write tests for each pattern tier, including one asserting a findings body containing the words "rate limit" on a **zero** exit is not misread as a limit
-- [ ] write a test for plan-quota-on-stderr with empty stdout
-- [ ] confirm `dupl` reports no duplication between the two executors
-- [ ] re-verify `GOOS=windows GOARCH=amd64 go build ./...` now that a second executor exists
-- [ ] run tests - must pass before task 9
+- [x] add stderr as a field on the `*procRun` handle task 3 returns and populate it in `proc.start`, since codex reads both streams — a new field, not a signature change
+- [x] create `app/executor/codex.go` embedding `proc`, invoking `codex exec --sandbox read-only` with model and effort from `Request`
+- [x] implement `outputContract(req.Schema)` appending the "return only JSON matching this shape" instruction with the schema rendered inline, since codex has no `--json-schema`. It takes the schema rather than hardcoding one because a codex entry can run any stage — `synthesis.md` and `verify.md` both accept `executor: codex`, and each carries its own schema
+- [x] implement `extract` pulling the JSON block out of the final output, tolerating surrounding prose
+- [x] tick the idle watchdog on raw stdout writes rather than parsed events, and tee those raw bytes to `Request.RawOutput`
+- [x] **emit an activity `executor.Event` on the first raw stdout write**, so a codex leader fires the sink's first-activity callback. `pipeline.md` requires "the first raw stdout write for codex" to count as first activity, but nothing else in the plan tells codex to call `sink.Emit` — without this a codex leader never opens the stagger gate and `stagger_delay` silently becomes the only release path, which is the exact failure that wire exists to prevent
+- [x] write a test asserting a codex leader releases the rest through that first stdout write rather than by timing out. It belongs here, not in task 7: `Codex` does not exist until this task, and against a mocked `pipeline.Runner` the test could only simulate an event and would assert nothing about codex
+- [x] filter codex stderr to the resolved model/sandbox/effort header lines, once per process
+- [x] implement the retry → limit → error pattern tiering for codex only, checked against the **tail** of output and only on non-zero exit, skipped entirely when the context was canceled — matching against the whole output self-triggers on this project's own code, which discusses rate limits
+- [x] detect plan-quota errors on stderr with an empty stdout, which a stdout-only check misses
+- [x] extend the `NewRunner` factory in `package main` to select codex per `RunnerSpec.Executor`
+- [x] derive the codex fixtures from `testdata/codex-clean.txt` in a `_test.go` helper: prose-wrapped wraps the clean JSON in surrounding text, no-JSON strips the block, stalled cuts the capture early
+- [x] write tests for `args()` and `outputContract()`, one asserting the contract for a finder request contains `FinderSchema()` and the contract for a verify request contains `VerifySchema()`
+- [x] write tests for `extract` against all four fixtures including the graceful failure path
+- [x] write a test asserting a codex roster entry routes to the codex executor and a claude entry does not
+- [x] write a test asserting a codex prompt gets the output contract appended and a claude prompt does not
+- [x] write tests for each pattern tier, including one asserting a findings body containing the words "rate limit" on a **zero** exit is not misread as a limit
+- [x] write a test for plan-quota-on-stderr with empty stdout
+- [x] confirm `dupl` reports no duplication between the two executors
+- [x] re-verify `GOOS=windows GOARCH=amd64 go build ./...` now that a second executor exists
+- [x] ➕ write a test asserting the tail bound itself holds: the same limit phrase is invisible above the
+  tail of a long failed run and a match inside it. The zero-exit case only proves patterns are gated on
+  exit status, not that a long findings body naming a limit early on is out of range
+- [x] ➕ write a proc-level test asserting stderr is drained when an executor supplies no filter, since
+  claude passes none and an unread pipe fills and blocks the child
+- [x] run tests - must pass before task 9
 
 ### Task 9: Synthesis stage
 

@@ -17,11 +17,13 @@ const maxLineBytes = 8 << 20
 // parser turns a process's stdout into a Result. Each executor supplies its own.
 type parser func(ctx context.Context, r io.Reader) Result
 
-// runSpec is the per-run wiring proc.run needs beyond Request.
+// runSpec is the per-run wiring proc.run needs beyond Request. stderrLine is optional: a nil one still
+// drains the stream, since an unread stderr pipe fills and blocks the child.
 type runSpec struct {
-	argv  []string
-	parse parser
-	sink  EventSink
+	argv       []string
+	parse      parser
+	sink       EventSink
+	stderrLine func(string)
 }
 
 // proc is the machinery Claude and Codex share: start, idle watchdog, process-group teardown, line
@@ -44,6 +46,7 @@ func newProc(bin string, runner CommandRunner, opts Opts) proc {
 type procRun struct {
 	cmd     *exec.Cmd
 	stdout  io.ReadCloser
+	stderr  io.ReadCloser
 	cleanup *processGroupCleanup
 }
 
@@ -69,6 +72,14 @@ func (p *proc) run(ctx context.Context, req Request, spec runSpec) (Result, erro
 	}
 	p.emit(spec.sink, Event{Kind: EventStarted, Text: p.bin})
 
+	// stderr is drained alongside stdout: reading it after the parse would let a chatty child fill the
+	// pipe and block, and cmd.Wait closes both once it returns.
+	stderrDone := make(chan struct{})
+	go func() {
+		defer close(stderrDone)
+		p.drainStderr(runCtx, run.stderr, spec.stderrLine)
+	}()
+
 	var raw strings.Builder
 	tee := &teeReader{src: run.stdout, dst: p.rawSink(&raw, req.RawOutput), touch: func() {
 		if idle != nil {
@@ -77,6 +88,7 @@ func (p *proc) run(ctx context.Context, req Request, spec runSpec) (Result, erro
 	}}
 
 	res := spec.parse(runCtx, tee)
+	<-stderrDone
 	res.Raw = raw.String()
 	res.ExitCode = run.finish()
 	p.emit(spec.sink, Event{Kind: EventFinished, Text: fmt.Sprintf("exit %d", res.ExitCode)})
@@ -111,12 +123,25 @@ func (p *proc) start(ctx context.Context, argv []string, prompt string) (*procRu
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe for %s: %w", p.bin, err)
 	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stderr pipe for %s: %w", p.bin, err)
+	}
 
 	p.setupProcessGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start %s: %w", p.bin, err)
 	}
-	return &procRun{cmd: cmd, stdout: stdout, cleanup: newProcessGroupCleanup(cmd, ctx.Done())}, nil
+	return &procRun{cmd: cmd, stdout: stdout, stderr: stderr, cleanup: newProcessGroupCleanup(cmd, ctx.Done())}, nil
+}
+
+// drainStderr consumes the child's stderr, handing each line to the executor's filter when it has one.
+// Draining is not optional even without a filter: an unread pipe fills and blocks the process.
+func (p *proc) drainStderr(ctx context.Context, r io.Reader, line func(string)) {
+	if line == nil {
+		line = func(string) {}
+	}
+	_ = p.readLines(ctx, r, line)
 }
 
 func (p *proc) readLines(ctx context.Context, r io.Reader, handler func(string)) error {

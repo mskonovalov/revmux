@@ -16,6 +16,9 @@ import (
 
 var revision = "unknown"
 
+// executorCodex is the one roster executor that is not claude, which is also the default.
+const executorCodex = "codex"
+
 // runOpts is what run needs from its surroundings. Every one of them is injected so the whole entry
 // point is drivable from a test: no real terminal, no real clock, no writes to the process streams.
 type runOpts struct {
@@ -142,13 +145,20 @@ func (o runOpts) review(cfg pipeline.Config) (finding.Report, error) {
 }
 
 // runnerFactory builds the per-spec executor factory. A caller-supplied one wins, so a test drives
-// the whole slice without spawning a model CLI.
+// the whole slice without spawning a model CLI. Both executors are built once and shared: each holds
+// immutable configuration only, and the roster runs them concurrently.
 func (o runOpts) runnerFactory(rc reviewContext) func(pipeline.RunnerSpec) pipeline.Runner {
 	if o.newRunner != nil {
 		return o.newRunner
 	}
-	claude := executor.NewClaude(executor.NewRunner(), o.opts.executorOpts(rc, o.clock))
-	return func(pipeline.RunnerSpec) pipeline.Runner { return claude }
+	runner, eo := executor.NewRunner(), o.opts.executorOpts(rc, o.clock)
+	claude, codex := executor.NewClaude(runner, eo), executor.NewCodex(runner, eo)
+	return func(spec pipeline.RunnerSpec) pipeline.Runner {
+		if spec.Executor == executorCodex {
+			return codex
+		}
+		return claude
+	}
 }
 
 func (o runOpts) write(rep finding.Report) error {

@@ -226,12 +226,27 @@ func TestRunOpts_runnerFactory(t *testing.T) {
 		assert.IsType(t, &pmocks.RunnerMock{}, got)
 	})
 
-	t.Run("defaults to the claude executor", func(t *testing.T) {
+	t.Run("routes by the spec's executor", func(t *testing.T) {
+		tests := []struct {
+			name string
+			spec pipeline.RunnerSpec
+			want pipeline.Runner
+		}{
+			{"claude", pipeline.RunnerSpec{Executor: "claude"}, &executor.Claude{}},
+			{"codex", pipeline.RunnerSpec{Executor: "codex"}, &executor.Codex{}},
+			{"empty defaults to claude", pipeline.RunnerSpec{}, &executor.Claude{}},
+		}
+
 		r := newRunOpts(t, options{IdleTimeout: time.Minute, HardTimeout: 20 * time.Minute})
 		ro := r.opts()
 		ro.newRunner = nil
-		got := ro.runnerFactory(reviewContext{WorkDir: t.TempDir()})(pipeline.RunnerSpec{Executor: "claude"})
-		assert.IsType(t, &executor.Claude{}, got)
+		factory := ro.runnerFactory(reviewContext{WorkDir: t.TempDir()})
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				assert.IsType(t, tt.want, factory(tt.spec))
+			})
+		}
 	})
 }
 
