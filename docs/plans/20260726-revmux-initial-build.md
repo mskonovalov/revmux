@@ -768,34 +768,34 @@ Exports (justification per item: who outside the package calls this?):
   once and passes it on `Config.Roster`; task 6 states why it is not resolved inside the pipeline
 - `Profile.Compose` / `Stage.Compose` / `Set.Stage` — called from `app/pipeline`
 
-- [ ] create `app/prompt/prompt.go` with `Set`, `LoadOpts`, `Load`, the unexported `doc`, and per-file precedence resolution
-- [ ] create `app/prompt/defaults.go` with the `go:embed` directive over `defaults/`
-- [ ] create `app/prompt/roster.go` parsing YAML front matter into `Profile` / `Stage` / `AgentSpec`, applying top-level model/effort as defaults and per-entry values as overrides; `Stage` parses `executor` too
-- [ ] implement `validate`: unknown executor, unknown effort, missing lens, duplicate agent name, an unparseable `color`, and empty roster are all load-time errors, for stage front matter as well as roster entries
-- [ ] fill an omitted `AgentSpec.Color` from a fixed palette by roster position in `Roster`, so every downstream renderer receives a resolved color and none of them picks its own
-- [ ] implement `Profile.Roster` applying a lens override while keeping the profile body: the override produces **one** agent carrying every named lens, inheriting the profile's top-level model and effort and running on claude, and a roster codex entry does not survive it. Name that synthesized agent `lenses` — the name reaches `Finding.sources` and becomes the filename `agents/<name>.jsonl`, so leaving it empty produces an unnamed source and a dotfile tee
-- [ ] reject a lens override naming a lens that does not exist, at load, using the same `known` map `validate` takes — otherwise `--lenses nonexistent` survives load and fails inside `Compose`
-- [ ] create `app/prompt/compose.go` with `Profile.Compose` and `Stage.Compose`, substituting `Vars` and failing on an unresolved `{{VAR}}`
-- [ ] **three distinct behaviors, each with one owner — do not merge them.** A `{{VAR}}` naming something outside the closed vocabulary is a load-time error (task 4). A known variable whose file is absent gets the "none provided" placeholder, and `app/config.go` puts that placeholder into `Vars` (task 5) — `Compose` never invents one. A `{{VAR}}` still present after substitution is a compose failure (task 4), which can now only mean a bug rather than missing context
-- [ ] append `ComposeOpts.History` to every composed prompt after substitution — an injection, never a `{{VAR}}`, so no lens or overridden profile can omit it; skip it entirely when there are no prior rounds
-- [ ] implement `Set.Provenance` returning the winning precedence layer and content hash per loaded file
-- [ ] parse the optional `description:` front-matter key on every file, expose it as an exported field on `Profile`, `Stage` and `LensInfo`, and implement `Set.Lenses` / `Set.ProfileNames` enumerating what actually resolved rather than what is embedded — a lens the user deleted still resolves from the embedded layer, and one the user added must appear
-- [ ] add `Efforts()` and `Executors()` returning the same package-level slices `validate` checks, so task 15 reports the vocabularies rather than duplicating them
-- [ ] author `synthesis.md` and `verify.md` with their own `description:` front matter alongside the profiles and lenses, since `prompts.md` requires every shipped file to carry one
-- [ ] author the minimal default `focused.md` profile, `bugs.md` and `adversarial.md` lenses, and `synthesis.md` / `verify.md` stage prompts
-- [ ] the profile body must tell agents that `{{SCOPE}}`, `{{GOAL}}`, `{{PROFILE}}` and `{{CONTEXT}}` are paths to read, not text — a path handed to an agent with no instruction is a path it may ignore
-- [ ] write tests for precedence (embedded, user override, project override, single-file override) using `t.TempDir()`
-- [ ] write tests for roster parsing including defaults, per-entry overrides and every validation error
-- [ ] write tests for `color`: every ANSI-16 name resolves to its index, a `#RRGGBB` value survives to `AgentSpec`, an omitted one is filled by roster position and is stable across two loads of the same profile, and a malformed value — including a bare number — fails at load
-- [ ] write a test asserting `Stage` parses and validates `executor`, so a stage naming an unknown binary fails at load rather than being silently ignored
-- [ ] write a test asserting `--lenses` with two lenses yields one agent carrying both, not two agents, since the alternative would change the source count
-- [ ] write tests for lens override, for composition with missing variables resolving to an explicit placeholder, and for the unresolved-variable failure
-- [ ] write a test asserting the history block reaches a composed prompt whose profile and lenses never mention it, and is absent when there are no prior rounds
-- [ ] write a test asserting the injected block carries its re-evaluate-independently instruction, so the data can never appear without the guard
-- [ ] write tests for `Provenance` reporting the correct layer and a hash that changes when an override file changes
-- [ ] write a test asserting `Lenses()` reports an override's own `description` rather than the embedded default's, and an empty one when the override omits it
-- [ ] add `gopkg.in/yaml.v3` and run `go mod vendor` — first import of it, and a committed `vendor/` makes the build fail without it
-- [ ] run tests - must pass before task 5
+- [x] create `app/prompt/prompt.go` with `Set`, `LoadOpts`, `Load`, the unexported `doc`, and per-file precedence resolution
+- [x] create `app/prompt/defaults.go` with the `go:embed` directive over `defaults/`
+- [x] create `app/prompt/roster.go` parsing YAML front matter into `Profile` / `Stage` / `AgentSpec`, applying top-level model/effort as defaults and per-entry values as overrides; `Stage` parses `executor` too
+- [x] implement `validate`: unknown executor, unknown effort, missing lens, duplicate agent name, an unparseable `color`, and empty roster are all load-time errors, for stage front matter as well as roster entries
+- [x] fill an omitted `AgentSpec.Color` from a fixed palette by roster position in `Roster`, so every downstream renderer receives a resolved color and none of them picks its own
+- [x] implement `Profile.Roster` applying a lens override while keeping the profile body: the override produces **one** agent carrying every named lens, inheriting the profile's top-level model and effort and running on claude, and a roster codex entry does not survive it. Name that synthesized agent `lenses` — the name reaches `Finding.sources` and becomes the filename `agents/<name>.jsonl`, so leaving it empty produces an unnamed source and a dotfile tee
+- [x] reject a lens override naming a lens that does not exist, at load, using the same `known` map `validate` takes — otherwise `--lenses nonexistent` survives load and fails inside `Compose`
+- [x] create `app/prompt/compose.go` with `Profile.Compose` and `Stage.Compose`, substituting `Vars` and failing on an unresolved `{{VAR}}`
+- [x] **three distinct behaviors, each with one owner — do not merge them.** A `{{VAR}}` naming something outside the closed vocabulary is a load-time error (task 4). A known variable whose file is absent gets the "none provided" placeholder, and `app/config.go` puts that placeholder into `Vars` (task 5) — `Compose` never invents one. A `{{VAR}}` still present after substitution is a compose failure (task 4), which can now only mean a bug rather than missing context
+- [x] append `ComposeOpts.History` to every composed prompt after substitution — an injection, never a `{{VAR}}`, so no lens or overridden profile can omit it; skip it entirely when there are no prior rounds
+- [x] implement `Set.Provenance` returning the winning precedence layer and content hash per loaded file
+- [x] parse the optional `description:` front-matter key on every file, expose it as an exported field on `Profile`, `Stage` and `LensInfo`, and implement `Set.Lenses` / `Set.ProfileNames` enumerating what actually resolved rather than what is embedded — a lens the user deleted still resolves from the embedded layer, and one the user added must appear
+- [x] add `Efforts()` and `Executors()` returning the same package-level slices `validate` checks, so task 15 reports the vocabularies rather than duplicating them
+- [x] author `synthesis.md` and `verify.md` with their own `description:` front matter alongside the profiles and lenses, since `prompts.md` requires every shipped file to carry one
+- [x] author the minimal default `focused.md` profile, `bugs.md` and `adversarial.md` lenses, and `synthesis.md` / `verify.md` stage prompts
+- [x] the profile body must tell agents that `{{SCOPE}}`, `{{GOAL}}`, `{{PROFILE}}` and `{{CONTEXT}}` are paths to read, not text — a path handed to an agent with no instruction is a path it may ignore
+- [x] write tests for precedence (embedded, user override, project override, single-file override) using `t.TempDir()`
+- [x] write tests for roster parsing including defaults, per-entry overrides and every validation error
+- [x] write tests for `color`: every ANSI-16 name resolves to its index, a `#RRGGBB` value survives to `AgentSpec`, an omitted one is filled by roster position and is stable across two loads of the same profile, and a malformed value — including a bare number — fails at load
+- [x] write a test asserting `Stage` parses and validates `executor`, so a stage naming an unknown binary fails at load rather than being silently ignored
+- [x] write a test asserting `--lenses` with two lenses yields one agent carrying both, not two agents, since the alternative would change the source count
+- [x] write tests for lens override, for composition with missing variables resolving to an explicit placeholder, and for the unresolved-variable failure
+- [x] write a test asserting the history block reaches a composed prompt whose profile and lenses never mention it, and is absent when there are no prior rounds
+- [x] write a test asserting the injected block carries its re-evaluate-independently instruction, so the data can never appear without the guard
+- [x] write tests for `Provenance` reporting the correct layer and a hash that changes when an override file changes
+- [x] write a test asserting `Lenses()` reports an override's own `description` rather than the embedded default's, and an empty one when the override omits it
+- [x] add `gopkg.in/yaml.v3` and run `go mod vendor` — first import of it, and a committed `vendor/` makes the build fail without it
+- [x] run tests - must pass before task 5
 
 ### Task 5: Configuration and CLI options
 
@@ -1267,9 +1267,13 @@ Standalone helpers planned (justification why NOT a method):
   `New(taskDir, run string, ...)` puts two same-typed strings side by side and swapping them compiles clean
   while creating the run directory in the wrong place — the same hazard the plan already avoids on
   `reviewContext` and `combinedEntry`
-- `History(taskDir string) (string, error)` — reads prior rounds and renders the injected block. Called from
-  `package main` before the pipeline exists, so it cannot be a method on the current run's `Archive`, and it
-  reads sibling rounds rather than the one being written
+- `History(taskDir string) (string, error)` — reads prior rounds and renders the **inventory** — the `runs/`
+  path plus one line per round — and nothing else. The re-evaluate-independently guard is appended by
+  `prompt.ComposeOpts.render` (task 4), which is what makes the data and the guard inseparable: any caller
+  that could hand over one without the other reintroduces the anchoring failure. Emitting the guard here too
+  would duplicate it in every composed prompt. Called from `package main` before the pipeline exists, so it
+  cannot be a method on the current run's `Archive`, and it reads sibling rounds rather than the one being
+  written
 
 Exports (justification per item: who outside the package calls this?):
 - `Archive`, `Opts`, `New` — `package main` constructs it and injects it as the pipeline's `archiver`
@@ -1295,7 +1299,7 @@ changed. Everything below exists for one of those two.
 - [ ] write `stages/1-found.json`, `stages/2-synthesized.json`, `stages/3-verified.json` so what synthesis merged or dropped and what verify rejected is directly visible rather than reconstructed from raw streams
 - [ ] write `manifest.json`: resolved roster (name, lenses, executor, requested model and effort) from `Config.Roster`, the model each agent *actually* ran per `modelUsage`, tokens per agent, per-file prompt provenance (which precedence layer won, plus a content hash), degraded sources, and per-stage timings read from `finding.Stats.Stages` — task 2 carries them because nothing here can recompute a stage duration after the fact
 - [ ] have `package main` write `report.md` and `findings.json` into the run directory as well, so an archived run is self-contained
-- [ ] implement `History(taskDir)` rendering the prior-round block: `runs/` path plus one line per round (name, timestamp, finding counts by severity, degraded sources) read from each round's `findings.json`, and the re-evaluate-independently instruction. The timestamp comes from `stats.started_at`, which task 2 puts in the wire shape for exactly this — a run directory's mtime is not it, since pruning and copying both rewrite that
+- [ ] implement `History(taskDir)` rendering the prior-round **inventory**: `runs/` path plus one line per round (name, timestamp, finding counts by severity, degraded sources) read from each round's `findings.json`. Do **not** render the re-evaluate-independently instruction here — task 4's `ComposeOpts.render` appends it to every composed prompt, so emitting it here duplicates it. The timestamp comes from `stats.started_at`, which task 2 puts in the wire shape for exactly this — a run directory's mtime is not it, since pruning and copying both rewrite that
 - [ ] wire it in `package main`: resolve history once, pass it down on `pipeline.Config`, and have the pipeline hand it to every `Compose` call via `ComposeOpts`
 - [ ] a prior round with a missing or unparseable `findings.json` is listed with its counts marked unknown, never dropped and never fatal — a round that failed badly is still evidence
 - [ ] confirm the consumer-side `archiver` interface and its mock already exist in `app/pipeline` from task 6 — `Archive` implements that interface, it is not redeclared here
