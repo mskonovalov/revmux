@@ -431,14 +431,14 @@ Module path `github.com/umputun/revmux`, binary built from `./app`. Makefile tar
 (race + coverage excluding mocks), `lint`, `fmt`, `race`, `version`, with
 `-ldflags "-X main.revision=$(REV) -s -w"` revision stamping.
 
-- [ ] scaffold module, Makefile, `.golangci.yml` and CI workflow
-- [ ] set module path to `github.com/umputun/revmux` and build target to `./app`
-- [ ] record the intended versions (go 1.26, bubbletea v1.3.10, bubbles v1.0.0, lipgloss v1.1.0, go-flags v1.6.1, testify v1.11.1, yaml.v3) but **add each module at the task that first imports it**, not here. `go mod tidy` drops every requirement nothing imports, so pinning all seven now means the bubbletea pins are gone long before task 12 adds the first import. If a version turns out not to exist, that fails at the task that needs it rather than blocking task 1
-- [ ] add `app/main.go` printing version and exiting, so `make build` and `make test` are green from the start
-- [ ] write a smoke test asserting the binary's version output
-- [ ] run `go mod vendor`
-- [ ] **`vendor/` is committed, so every later task adding a first-time import must re-run `go mod vendor` before its build step.** With a `vendor/` directory present Go builds `-mod=vendor` and fails outright on any import missing from `vendor/modules.txt`. That lands on task 4 (`yaml.v3`), task 5 (`go-flags`) and task 12 (`bubbletea`, `bubbles`, `lipgloss`)
-- [ ] run tests, lint and formatter - must pass before task 2
+- [x] scaffold module, Makefile, `.golangci.yml` and CI workflow
+- [x] set module path to `github.com/umputun/revmux` and build target to `./app`
+- [x] record the intended versions (go 1.26, bubbletea v1.3.10, bubbles v1.0.0, lipgloss v1.1.0, go-flags v1.6.1, testify v1.11.1, yaml.v3) but **add each module at the task that first imports it**, not here. `go mod tidy` drops every requirement nothing imports, so pinning all seven now means the bubbletea pins are gone long before task 12 adds the first import. If a version turns out not to exist, that fails at the task that needs it rather than blocking task 1
+- [x] add `app/main.go` printing version and exiting, so `make build` and `make test` are green from the start
+- [x] write a smoke test asserting the binary's version output
+- [x] run `go mod vendor`
+- [x] **`vendor/` is committed, so every later task adding a first-time import must re-run `go mod vendor` before its build step.** With a `vendor/` directory present Go builds `-mod=vendor` and fails outright on any import missing from `vendor/modules.txt`. That lands on task 4 (`yaml.v3`), task 5 (`go-flags`) and task 12 (`bubbletea`, `bubbles`, `lipgloss`)
+- [x] run tests, lint and formatter - must pass before task 2
 
 ### Task 2: Finding types and report rendering
 
