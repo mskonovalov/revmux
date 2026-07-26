@@ -1563,17 +1563,17 @@ Exports (justification per item: who outside the package calls this?):
 Content shared by every lens (output contract, severity language, project-profile calibration) belongs in
 the profile bodies, not duplicated per lens.
 
-- [ ] author the five remaining lenses: impl, architecture, quality, docs, tests
-- [ ] author `comprehensive.md` with the default roster: bugs+impl, arch+quality, docs+tests, codex/adversarial, each with a distinct ANSI-16 `color` so the shipped profile does not lean on palette assignment
-- [ ] author `final.md` as a narrow last pass: two agents, critical and major only
-- [ ] lift shared preamble out of the five new lenses into the profile bodies; `bugs.md` and `adversarial.md` were already authored against the task 4 profile body, so there is nothing to move for those two
-- [ ] write a test asserting every shipped profile parses, names only existing lenses and passes validation
-- [ ] write a test asserting every shipped lens file is non-empty and contains no unresolved `{{VAR}}`
-- [ ] write a test asserting every shipped profile body instructs the agent to read the path variables, so a lens set can never ship with context the agents silently ignore
-- [ ] write a test asserting no shipped prompt file mentions prior rounds — that block is injected, and a profile duplicating it would drift from the injected text
-- [ ] give every shipped lens, profile **and stage prompt** a `description:` one-liner, and write a test asserting none is missing or empty — `revmux config` is the caller model's only view of the lens set, and a blank description there makes a lens uncomposable. `focused.md` and the two stage prompts were authored in task 4, so this pass edits them rather than creating them
-- [ ] **flip `--profile`'s default from `focused` to `comprehensive` now that it exists**, updating the struct tag and `app/defaults/config` together. Task 5 deliberately defaulted to the only profile shipped at the time; leaving it there would mean the flagship roster never runs unless asked for by name. The README flag table is **not** touched here — task 17 authors it, against whatever the default is by then
-- [ ] run tests - must pass before task 15
+- [x] author the five remaining lenses: impl, architecture, quality, docs, tests
+- [x] author `comprehensive.md` with the default roster: bugs+impl, arch+quality, docs+tests, codex/adversarial, each with a distinct ANSI-16 `color` so the shipped profile does not lean on palette assignment
+- [x] author `final.md` as a narrow last pass: two agents, critical and major only
+- [x] lift shared preamble out of the five new lenses into the profile bodies; `bugs.md` and `adversarial.md` were already authored against the task 4 profile body, so there is nothing to move for those two
+- [x] write a test asserting every shipped profile parses, names only existing lenses and passes validation
+- [x] write a test asserting every shipped lens file is non-empty and contains no unresolved `{{VAR}}`
+- [x] write a test asserting every shipped profile body instructs the agent to read the path variables, so a lens set can never ship with context the agents silently ignore
+- [x] write a test asserting no shipped prompt file mentions prior rounds — that block is injected, and a profile duplicating it would drift from the injected text
+- [x] give every shipped lens, profile **and stage prompt** a `description:` one-liner, and write a test asserting none is missing or empty — `revmux config` is the caller model's only view of the lens set, and a blank description there makes a lens uncomposable. `focused.md` and the two stage prompts were authored in task 4, so this pass edits them rather than creating them
+- [x] **flip `--profile`'s default from `focused` to `comprehensive` now that it exists**, updating the struct tag and `app/defaults/config` together. Task 5 deliberately defaulted to the only profile shipped at the time; leaving it there would mean the flagship roster never runs unless asked for by name. The README flag table is **not** touched here — task 17 authors it, against whatever the default is by then
+- [x] run tests - must pass before task 15
 
 ### Task 15: Config introspection command
 

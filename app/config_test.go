@@ -30,7 +30,7 @@ func TestParseArgs_defaults(t *testing.T) {
 	assert.Equal(t, 6, o.VerifyGroups)
 	assert.Equal(t, "./.revmux/tasks", o.TasksDir)
 	assert.Equal(t, 10, o.KeepRuns)
-	assert.Equal(t, "focused", o.Profile)
+	assert.Equal(t, "comprehensive", o.Profile)
 	assert.Equal(t, 0, o.MinConfidence)
 }
 

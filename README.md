@@ -46,7 +46,7 @@ The runtime knobs below also read from the config file, under the same name as t
 | `--verify-groups=<n>` | `verify-groups` | `6` | cap on the number of verifier groups |
 | `--tasks-dir=<dir>` | `tasks-dir` | `./.revmux/tasks` | root directory holding task directories |
 | `--keep-runs=<n>` | `keep-runs` | `10` | how many runs to keep per task |
-| `--profile=<name>` | `profile` | `focused` | profile naming the roster to run |
+| `--profile=<name>` | `profile` | `comprehensive` | profile naming the roster to run |
 
 Precedence is the command line, then `./.revmux/config`, then `~/.config/revmux/config`, then the built-in
 default. Layers merge per key, so a project config setting one knob leaves the rest alone. The project layer

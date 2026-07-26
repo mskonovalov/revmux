@@ -24,11 +24,10 @@ func TestLoad_EmbeddedDefaults(t *testing.T) {
 	set, err := Load(LoadOpts{})
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"focused"}, set.ProfileNames())
-	assert.Equal(t, []LensInfo{
-		{Name: "adversarial", Description: "adversarial pass — attacks the change looking for what a sympathetic reader would accept"},
-		{Name: "bugs", Description: "correctness defects — logic and boundaries, nil and bounds, concurrency, resource lifetime, error handling"},
-	}, set.Lenses())
+	assert.Equal(t, []string{"comprehensive", "final", "focused"}, set.ProfileNames())
+	for _, l := range set.Lenses() {
+		assert.NotEmpty(t, l.Description, "lens %s", l.Name)
+	}
 
 	for _, name := range []string{"synthesis", "verify"} {
 		st, err := set.Stage(name)
@@ -37,13 +36,14 @@ func TestLoad_EmbeddedDefaults(t *testing.T) {
 		assert.NotEmpty(t, st.Body, name)
 	}
 
-	assert.Equal(t, map[string]struct{}{"bugs": {}, "adversarial": {}}, set.LensNames())
+	assert.Equal(t, map[string]struct{}{"adversarial": {}, "architecture": {}, "bugs": {}, "docs": {},
+		"impl": {}, "quality": {}, "tests": {}}, set.LensNames())
 }
 
 func TestLoad_MissingDirsAreAbsentLayers(t *testing.T) {
 	set, err := Load(LoadOpts{ProjectDir: filepath.Join(t.TempDir(), "nope"), UserDir: filepath.Join(t.TempDir(), "also-nope")})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"focused"}, set.ProfileNames())
+	assert.Equal(t, []string{"comprehensive", "final", "focused"}, set.ProfileNames())
 
 	for _, o := range set.Provenance() {
 		assert.Equal(t, LayerEmbedded, o.Layer, o.Path)
@@ -126,10 +126,14 @@ func TestSet_LensDescriptionIsNotInherited(t *testing.T) {
 
 	set, err := Load(LoadOpts{ProjectDir: project})
 	require.NoError(t, err)
-	assert.Equal(t, []LensInfo{
-		{Name: "adversarial", Description: ""},
-		{Name: "bugs", Description: "my own bugs lens"},
-	}, set.Lenses(), "an override reports its own description, or none, never the embedded default's")
+
+	got := map[string]string{}
+	for _, l := range set.Lenses() {
+		got[l.Name] = l.Description
+	}
+	assert.Equal(t, "my own bugs lens", got["bugs"], "an override reports its own description, never the embedded default's")
+	assert.Empty(t, got["adversarial"], "an override with no front matter reports no description rather than inheriting one")
+	assert.NotEmpty(t, got["quality"], "a lens nobody overrode keeps the embedded description")
 }
 
 func TestSet_UnknownNames(t *testing.T) {
