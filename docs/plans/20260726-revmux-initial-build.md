@@ -1318,38 +1318,70 @@ A later self-reflection agent — out of scope here, but its data must be captur
 corpus is worthless — needs to attribute a finding to the lens text that raised it and to see what each stage
 changed. Everything below exists for one of those two.
 
-- [ ] create `app/archive/archive.go` creating `<taskDir>/runs/<run>` and erroring if that directory already exists, so a bad round is never destroyed by a retry
-- [ ] tee every agent's raw output verbatim by passing an archive writer as `executor.Request.RawOutput`, extension matching content: `agents/<agent>.jsonl` for claude stream-json, `agents/<agent>.log` for codex prose
-- [ ] per-agent streams live in their own `agents/` subdirectory: agent names come from the roster, and an agent called `events` would otherwise collide with `events.jsonl`
-- [ ] **a retried agent writes a second file, never the same one.** Task 7 retries once, so name the attempts `agents/<agent>.jsonl` and `agents/<agent>.retry.jsonl`: appending would splice the retry's first line onto the stalled attempt's partial line and make the file unparseable, and truncating would discard the failed attempt — which `.claude/rules/executor.md` calls the stream most worth having on disk
-- [ ] archive prompts under `prompts/agents/<agent>.md` and `prompts/stages/<stage>.md`, so a roster agent named `synthesis` or `verify` cannot overwrite a stage's prompt — the same collision class already handled for `agents/`
-- [ ] verify fans out one agent per directory group, so write `prompts/stages/verify-<group-label>.md` per group using `verifyGroup.label()`; a single `verify.md` loses N-1 prompts and makes "what did that verifier actually see" unanswerable
-- [ ] validate the roster agent name **before** building any filename — reject separators, `..`, absolute and leading `.` there. `Writer` itself accepts clean nested relative paths (it must, for `prompts/`, `stages/` and `agents/`) and rejects only what resolves outside the run root after symlink evaluation
-- [ ] `events.jsonl` is written from `Pipeline.emit`, synchronously, before the event is offered to the channel — recording revmux's own decisions (stalls, retries, degrades, stage transitions) which no per-agent stream contains. The archive is **never** a channel reader: a Go channel distributes rather than broadcasts, so a second reader would take an arbitrary half of the events
-- [ ] guard the `events.jsonl` writer with a mutex held across each whole line write, since `emit` is reached concurrently from every agent goroutine
-- [ ] the archived prompt is the composed text post-substitution — exactly the bytes handed to each process, injected prior-round block and codex output contract included — since a reflection agent cannot judge a lens it cannot read
-- [ ] write `stages/1-found.json`, `stages/2-synthesized.json`, `stages/3-verified.json` so what synthesis merged or dropped and what verify rejected is directly visible rather than reconstructed from raw streams
-- [ ] write `manifest.json`: resolved roster (name, lenses, executor, requested model and effort) from `Config.Roster`, the model each agent *actually* ran per `modelUsage`, tokens per agent, per-file prompt provenance (which precedence layer won, plus a content hash), degraded sources, and per-stage timings read from `finding.Stats.Stages` — task 2 carries them because nothing here can recompute a stage duration after the fact
-- [ ] have `package main` write `report.md` and `findings.json` into the run directory as well, so an archived run is self-contained
-- [ ] implement `History(taskDir)` rendering the prior-round **inventory**: `runs/` path plus one line per round (name, timestamp, finding counts by severity, degraded sources) read from each round's `findings.json`. Do **not** render the re-evaluate-independently instruction here — task 4's `ComposeOpts.render` appends it to every composed prompt, so emitting it here duplicates it. The timestamp comes from `stats.started_at`, which task 2 puts in the wire shape for exactly this — a run directory's mtime is not it, since pruning and copying both rewrite that
-- [ ] wire it in `package main`: resolve history once, pass it down on `pipeline.Config`, and have the pipeline hand it to every `Compose` call via `ComposeOpts`
-- [ ] a prior round with a missing or unparseable `findings.json` is listed with its counts marked unknown, never dropped and never fatal — a round that failed badly is still evidence
-- [ ] confirm the consumer-side `archiver` interface and its mock already exist in `app/pipeline` from task 6 — `Archive` implements that interface, it is not redeclared here
-- [ ] implement `Prune` over `runs/` only, dropping oldest by mtime beyond `keep_runs`; it must never touch `scope.md`, `goal.md`, `profile.md` or `context/`
-- [ ] confirm `tasks_dir` and `keep_runs` are already in the INI from task 5 with documented defaults (`./.revmux/tasks`, 10) rather than adding them a second time
-- [ ] write tests for run-directory creation, the already-exists error, concurrent writes from several agents, and nested-path writers
-- [ ] write a test asserting the archived prompt is byte-identical to what the executor received, since a reflection agent drawing conclusions from a paraphrase is worse than one with no data
-- [ ] write tests for `History`: no prior rounds, several rounds ordered oldest-first, and a round with an unreadable `findings.json` still listed
-- [ ] write a test asserting `manifest.json` records the actual model when it differs from the requested one
-- [ ] write tests for `Prune` ordering by mtime, asserting it leaves caller-written context files untouched even when `keep_runs` is 0, never removes the run currently being written, is a no-op when fewer runs exist than `keep_runs`, tolerates an absent `runs/`, and removes run directories containing nested `prompts/`, `stages/` and `agents/` subtrees
-- [ ] `History` runs before `Prune`, so a round is never read after it has been deleted; state the ordering rather than leaving it to call-site accident
-- [ ] write tests that `Writer` **accepts** clean nested paths (`prompts/agents/x.md`, `stages/1-found.json`, `agents/x.jsonl`) and **rejects** what escapes: a `..` component, an absolute path, and a symlinked run directory pointing outside the tasks root
-- [ ] write tests that roster-name validation rejects an agent name containing a separator, `..`, or a leading `.`, and that an agent named `events` or `verify` cannot collide with a fixed artifact
-- [ ] write a test asserting a retried agent leaves both attempts intact and independently parseable
-- [ ] write a test asserting one verify prompt file exists per directory group, not one per stage
-- [ ] write a test asserting `stages/*.json` is written once per stage and `events.jsonl` actually captured a stall, a retry and a degrade — the two artifacts CLAUDE.md calls non-derivable from each other
-- [ ] write a test with a failing `archiver` mock asserting the run **fails with exit 2**, not a warning — a report next to a half-written archive reads as complete and the gap only surfaces when someone tries to audit it
-- [ ] run tests - must pass before task 12
+- [x] create `app/archive/archive.go` creating `<taskDir>/runs/<run>` and erroring if that directory already exists, so a bad round is never destroyed by a retry
+- [x] tee every agent's raw output verbatim by passing an archive writer as `executor.Request.RawOutput`, extension matching content: `agents/<agent>.jsonl` for claude stream-json, `agents/<agent>.log` for codex prose
+- [x] per-agent streams live in their own `agents/` subdirectory: agent names come from the roster, and an agent called `events` would otherwise collide with `events.jsonl`
+- [x] **a retried agent writes a second file, never the same one.** Task 7 retries once, so name the attempts `agents/<agent>.jsonl` and `agents/<agent>.retry.jsonl`: appending would splice the retry's first line onto the stalled attempt's partial line and make the file unparseable, and truncating would discard the failed attempt — which `.claude/rules/executor.md` calls the stream most worth having on disk
+- [x] archive prompts under `prompts/agents/<agent>.md` and `prompts/stages/<stage>.md`, so a roster agent named `synthesis` or `verify` cannot overwrite a stage's prompt — the same collision class already handled for `agents/`
+- [x] verify fans out one agent per directory group, so write `prompts/stages/verify-<group-label>.md` per group using `verifyGroup.label()`; a single `verify.md` loses N-1 prompts and makes "what did that verifier actually see" unanswerable
+- [x] validate the roster agent name **before** building any filename — reject separators, `..`, absolute and leading `.` there. `Writer` itself accepts clean nested relative paths (it must, for `prompts/`, `stages/` and `agents/`) and rejects only what resolves outside the run root after symlink evaluation
+- [x] `events.jsonl` is written from `Pipeline.emit`, synchronously, before the event is offered to the channel — recording revmux's own decisions (stalls, retries, degrades, stage transitions) which no per-agent stream contains. The archive is **never** a channel reader: a Go channel distributes rather than broadcasts, so a second reader would take an arbitrary half of the events
+- [x] guard the `events.jsonl` writer with a mutex held across each whole line write, since `emit` is reached concurrently from every agent goroutine
+- [x] the archived prompt is the composed text post-substitution — exactly the bytes handed to each process, injected prior-round block and codex output contract included — since a reflection agent cannot judge a lens it cannot read
+- [x] write `stages/1-found.json`, `stages/2-synthesized.json`, `stages/3-verified.json` so what synthesis merged or dropped and what verify rejected is directly visible rather than reconstructed from raw streams
+- [x] write `manifest.json`: resolved roster (name, lenses, executor, requested model and effort) from `Config.Roster`, the model each agent *actually* ran per `modelUsage`, tokens per agent, per-file prompt provenance (which precedence layer won, plus a content hash), degraded sources, and per-stage timings read from `finding.Stats.Stages` — task 2 carries them because nothing here can recompute a stage duration after the fact
+- [x] have `package main` write `report.md` and `findings.json` into the run directory as well, so an archived run is self-contained
+- [x] implement `History(taskDir)` rendering the prior-round **inventory**: `runs/` path plus one line per round (name, timestamp, finding counts by severity, degraded sources) read from each round's `findings.json`. Do **not** render the re-evaluate-independently instruction here — task 4's `ComposeOpts.render` appends it to every composed prompt, so emitting it here duplicates it. The timestamp comes from `stats.started_at`, which task 2 puts in the wire shape for exactly this — a run directory's mtime is not it, since pruning and copying both rewrite that
+- [x] wire it in `package main`: resolve history once, pass it down on `pipeline.Config`, and have the pipeline hand it to every `Compose` call via `ComposeOpts`
+- [x] a prior round with a missing or unparseable `findings.json` is listed with its counts marked unknown, never dropped and never fatal — a round that failed badly is still evidence
+- [x] confirm the consumer-side `archiver` interface and its mock already exist in `app/pipeline` from task 6 — `Archive` implements that interface, it is not redeclared here
+- [x] implement `Prune` over `runs/` only, dropping oldest by mtime beyond `keep_runs`; it must never touch `scope.md`, `goal.md`, `profile.md` or `context/`
+- [x] confirm `tasks_dir` and `keep_runs` are already in the INI from task 5 with documented defaults (`./.revmux/tasks`, 10) rather than adding them a second time
+- [x] write tests for run-directory creation, the already-exists error, concurrent writes from several agents, and nested-path writers
+- [x] write a test asserting the archived prompt is byte-identical to what the executor received, since a reflection agent drawing conclusions from a paraphrase is worse than one with no data
+- [x] write tests for `History`: no prior rounds, several rounds ordered oldest-first, and a round with an unreadable `findings.json` still listed
+- [x] write a test asserting `manifest.json` records the actual model when it differs from the requested one
+- [x] write tests for `Prune` ordering by mtime, asserting it leaves caller-written context files untouched even when `keep_runs` is 0, never removes the run currently being written, is a no-op when fewer runs exist than `keep_runs`, tolerates an absent `runs/`, and removes run directories containing nested `prompts/`, `stages/` and `agents/` subtrees
+- [x] `History` runs before `Prune`, so a round is never read after it has been deleted; state the ordering rather than leaving it to call-site accident
+- [x] write tests that `Writer` **accepts** clean nested paths (`prompts/agents/x.md`, `stages/1-found.json`, `agents/x.jsonl`) and **rejects** what escapes: a `..` component, an absolute path, and a symlinked run directory pointing outside the tasks root
+- [x] write tests that roster-name validation rejects an agent name containing a separator, `..`, or a leading `.`, and that an agent named `events` or `verify` cannot collide with a fixed artifact
+- [x] write a test asserting a retried agent leaves both attempts intact and independently parseable
+- [x] write a test asserting one verify prompt file exists per directory group, not one per stage
+- [x] write a test asserting `stages/*.json` is written once per stage and `events.jsonl` actually captured a stall, a retry and a degrade — the two artifacts CLAUDE.md calls non-derivable from each other
+- [x] write a test with a failing `archiver` mock asserting the run **fails with exit 2**, not a warning — a report next to a half-written archive reads as complete and the gap only surfaces when someone tries to audit it
+- [x] run tests - must pass before task 12
+
+- ➕ `app/archive` is split in two files rather than one: `archive.go` owns the run directory, `Writer`
+  and `Prune`, and `history.go` owns `History` and the `round` it renders. Two concerns, and the
+  one-test-file-per-source rule then gives each its own test file
+- ➕ the pipeline's whole-artifact writers moved to `app/pipeline/artifacts.go` — `save`, `saveStage`
+  and the sticky `fail`, plus the artifact path constants. `pipeline.md` forbids `Pipeline`
+  accumulating I/O plumbing next to the three stages, and the new file is what the new tests match.
+  `events.jsonl` stays in `pipeline.go` beside `emit`: it is a stream held open across the run, not a
+  whole-file write
+- ➕ `package main`'s side lives in `app/artifacts.go`: the `manifest` type, `archiveRun` and
+  `writeArtifact`, mirroring how `app/progress.go` holds the plain renderer rather than growing
+  `app/main.go`
+- ➕ **roster agent names are validated at load, in `prompt.AgentSpec.checkName`, not in the archive.**
+  Load is the earliest point that is still before any filename is built, it is where every other
+  roster-entry rule already lives, and it covers the `--lenses` override for free since that path
+  validates through the same method
+- ➕ ⚠️ **`archive.Opts` carries no `Clock`.** The design contract listed one, but nothing in the
+  package has a timing path: `Prune` orders by mtime and `History` reads `stats.started_at` out of a
+  file. An unused field on an exported option struct is dead weight, so it is omitted rather than
+  carried for symmetry
+- ➕ `Prune` counts the run being written toward `keep_runs`, so `keep_runs` 10 leaves ten
+  directories including the current one, and `keep_runs` 0 or 1 leaves only the current one. The run
+  being written is never a candidate whatever the number says
+- ➕ a `Prune` failure is a warning on stderr and leaves the review's own exit code alone. A stale run
+  directory that will not delete is housekeeping, not one of this run's artifacts, and turning a
+  finished review into exit `2` over it would tell a scripted caller the review failed
+- ➕ the archived `report.md` and `findings.json` are the `--min-confidence` filtered report, byte for
+  byte what the caller was shown, so a later reader sees the round as it was reported. The unfiltered
+  set is still in `stages/3-verified.json`
+- ➕ `TestRun_review`'s subtests each take their own tasks root now. They shared one, and a run name
+  that already exists is a load-time error, so the second subtest to write `round-1` would fail on
+  the collision rather than on what it asserts
 
 ### Task 12: TUI — status table, combined view and per-agent panes
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 type synthesizer struct {
 	cfg  Config
 	emit func(Event)
+	save func(name string, data []byte)
 }
 
 // synthesized is the wire shape of one merged finding: a Finding plus the ids of the inputs it came
@@ -44,6 +46,7 @@ func (s *synthesizer) run(ctx context.Context, sources []sourceResult) (finding.
 	if err != nil {
 		return finding.Report{}, fmt.Errorf("compose synthesis prompt: %w", err)
 	}
+	s.save(path.Join(stagePromptDir, stageSynthesis+".md"), []byte(text))
 
 	spec := RunnerSpec{Executor: stage.Executor, Model: stage.Model, Effort: stage.Effort}
 	res, err := s.cfg.NewRunner(spec).Run(ctx, executor.Request{

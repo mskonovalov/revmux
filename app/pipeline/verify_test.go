@@ -87,6 +87,27 @@ func TestVerifier_groupByDir(t *testing.T) {
 	})
 }
 
+func TestVerifier_promptName(t *testing.T) {
+	v := &verifier{}
+	tests := []struct {
+		name string
+		dirs []string
+		want string
+	}{
+		{name: "one directory", dirs: []string{"app/executor"}, want: "prompts/stages/verify-app-executor.md"},
+		{name: "merged", dirs: []string{"app/ui", "app/pipeline"}, want: "prompts/stages/verify-app-ui+app-pipeline.md"},
+		{name: "repository root", dirs: []string{"."}, want: "prompts/stages/verify-root.md"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := v.promptName(verifyGroup{dirs: tt.dirs})
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, 2, strings.Count(got, "/"), "the label is a filename, never another directory level")
+		})
+	}
+}
+
 func TestVerifyGroup_label(t *testing.T) {
 	tests := []struct {
 		name string
@@ -367,7 +388,7 @@ func TestVerifier_stagger(t *testing.T) {
 		s := newStagger(time.Minute, 0, clk)
 		s.leaderStarted() // the find stage's leader produced activity
 
-		v := &verifier{cfg: h.cfg, emit: func(Event) {}, stagger: s}
+		v := &verifier{cfg: h.cfg, save: h.save, emit: func(Event) {}, stagger: s}
 		rep, err := v.run(context.Background(), judgedReport())
 		require.NoError(t, err)
 
@@ -386,7 +407,7 @@ func TestVerifier_stagger(t *testing.T) {
 		cancel()
 
 		// what a per-stage instance would produce: a gate nothing has opened
-		v := &verifier{cfg: h.cfg, emit: func(Event) {}, stagger: newStagger(time.Minute, 0, clk)}
+		v := &verifier{cfg: h.cfg, save: h.save, emit: func(Event) {}, stagger: newStagger(time.Minute, 0, clk)}
 		rep, err := v.run(ctx, judgedReport())
 		require.NoError(t, err)
 		for _, f := range rep.Findings {

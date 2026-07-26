@@ -39,6 +39,7 @@ var labelUnsafe = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)
 type verifier struct {
 	cfg     Config
 	emit    func(Event)
+	save    func(name string, data []byte)
 	stagger *stagger
 
 	stage  *prompt.Stage // resolved once in run, before any group goroutine reads it
@@ -121,8 +122,17 @@ func (v *verifier) compose(groups []verifyGroup) error {
 			return fmt.Errorf("compose verify prompt for %s: %w", groups[i].label(), err)
 		}
 		groups[i].text = text
+		// one file per group: this stage fans out per directory, so a single verify.md would lose
+		// every prompt but the last and leave "what did that verifier see" unanswerable
+		v.save(v.promptName(groups[i]), []byte(text))
 	}
 	return nil
+}
+
+// promptName is where one group's composed prompt goes. The label is already a filename-safe slug, so
+// a group covering app/executor lands in a file rather than a stray nested directory.
+func (v *verifier) promptName(g verifyGroup) string {
+	return path.Join(stagePromptDir, stageVerify+"-"+g.label()+".md")
 }
 
 // judge runs one group and falls back to leaving its findings unverified when the verifier does not

@@ -54,6 +54,12 @@ func TestProfile_ValidationErrors(t *testing.T) {
 		{"no lenses", "agents:\n  - {name: a, lenses: []}\n", "no lenses"},
 		{"no name", "agents:\n  - {lenses: [bugs]}\n", "roster entry has no name"},
 		{"duplicate name", "agents:\n  - {name: a, lenses: [bugs]}\n  - {name: a, lenses: [adversarial]}\n", `duplicate agent name "a"`},
+		// the name becomes one path component under agents/ and prompts/agents/, so it is rejected at
+		// load rather than at the moment the archive builds a filename out of it
+		{"name with a separator", "agents:\n  - {name: a/b, lenses: [bugs]}\n", `agent "a/b" contains a path separator`},
+		{"absolute name", "agents:\n  - {name: /etc/passwd, lenses: [bugs]}\n", `agent "/etc/passwd" is an absolute path`},
+		{"name referencing a parent", "agents:\n  - {name: ..up, lenses: [bugs]}\n", `agent "..up" references a parent`},
+		{"hidden name", "agents:\n  - {name: .hidden, lenses: [bugs]}\n", `agent ".hidden" starts with a dot`},
 		{"bad color name", "agents:\n  - {name: a, lenses: [bugs], color: puce}\n", `invalid color "puce"`},
 		{"numeric color", "agents:\n  - {name: a, lenses: [bugs], color: \"12\"}\n", `invalid color "12"`},
 		{"short hex color", "agents:\n  - {name: a, lenses: [bugs], color: \"#fff\"}\n", `invalid color "#fff"`},

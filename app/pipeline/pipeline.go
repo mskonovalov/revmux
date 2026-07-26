@@ -148,7 +148,7 @@ func (p *Pipeline) runFind(ctx context.Context) (finding.Report, []sourceResult,
 	p.emit(Event{Kind: EventStage, Stage: stageFind})
 	at := p.cfg.Clock.Now()
 
-	f := &finder{cfg: p.cfg, emit: p.emit, stagger: p.stagger}
+	f := &finder{cfg: p.cfg, emit: p.emit, save: p.save, stagger: p.stagger}
 	sources, err := f.run(ctx)
 	if err != nil {
 		return finding.Report{}, nil, err
@@ -161,6 +161,7 @@ func (p *Pipeline) runFind(ctx context.Context) (finding.Report, []sourceResult,
 	rep := f.report(sources)
 	rep.Stats.Stages = append(rep.Stats.Stages,
 		finding.StageTiming{Name: stageFind, DurationMS: p.cfg.Clock.Now().Sub(at).Milliseconds()})
+	p.saveStage(foundFile, rep)
 	return rep, sources, nil
 }
 
@@ -174,7 +175,7 @@ func (p *Pipeline) runSynthesis(ctx context.Context, rep finding.Report, sources
 	p.emit(Event{Kind: EventStage, Stage: stageSynthesis})
 	at := p.cfg.Clock.Now()
 
-	s := &synthesizer{cfg: p.cfg, emit: p.emit}
+	s := &synthesizer{cfg: p.cfg, emit: p.emit, save: p.save}
 	out, err := s.run(ctx, sources)
 	if err != nil {
 		return finding.Report{}, err
@@ -184,13 +185,14 @@ func (p *Pipeline) runSynthesis(ctx context.Context, rep finding.Report, sources
 	rep.Stats.Tokens += out.Stats.Tokens
 	rep.Stats.Stages = append(rep.Stats.Stages,
 		finding.StageTiming{Name: stageSynthesis, DurationMS: p.cfg.Clock.Now().Sub(at).Milliseconds()})
+	p.saveStage(synthesizedFile, rep)
 	return rep, nil
 }
 
 // runVerify checks each finding against the code and routes it by the verdict that came back.
 // --no-verify marks every finding unverified rather than letting an empty verdict read as checked.
 func (p *Pipeline) runVerify(ctx context.Context, rep finding.Report) (finding.Report, error) {
-	v := &verifier{cfg: p.cfg, emit: p.emit, stagger: p.stagger}
+	v := &verifier{cfg: p.cfg, emit: p.emit, save: p.save, stagger: p.stagger}
 	if p.cfg.NoVerify {
 		return v.unverified(rep), nil
 	}
@@ -204,6 +206,7 @@ func (p *Pipeline) runVerify(ctx context.Context, rep finding.Report) (finding.R
 	}
 	out.Stats.Stages = append(out.Stats.Stages,
 		finding.StageTiming{Name: stageVerify, DurationMS: p.cfg.Clock.Now().Sub(at).Milliseconds()})
+	p.saveStage(verifiedFile, out)
 	return out, nil
 }
 

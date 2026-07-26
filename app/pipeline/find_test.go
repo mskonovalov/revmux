@@ -355,7 +355,7 @@ func TestFinder_run_concurrency(t *testing.T) {
 
 		// the delay never fires, so the run can only complete through the leader's activity
 		s, _ := newHeldStagger(time.Hour, 0)
-		f := &finder{cfg: h.cfg, emit: func(Event) {}, stagger: s}
+		f := &finder{cfg: h.cfg, save: h.save, emit: func(Event) {}, stagger: s}
 		got, err := f.run(context.Background())
 		require.NoError(t, err)
 		require.Len(t, got, 2)
@@ -393,7 +393,7 @@ func TestFinder_run_concurrency(t *testing.T) {
 		})
 
 		s, fire := newHeldStagger(time.Hour, 0)
-		f := &finder{cfg: h.cfg, emit: func(Event) {}, stagger: s}
+		f := &finder{cfg: h.cfg, save: h.save, emit: func(Event) {}, stagger: s}
 		done := make(chan []sourceResult, 1)
 		go func() {
 			got, err := f.run(context.Background())
@@ -474,6 +474,11 @@ func TestFinder_parse(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "decode findings")
 	})
+}
+
+func TestFinder_promptName(t *testing.T) {
+	f := &finder{}
+	assert.Equal(t, "prompts/agents/bugs+impl.md", f.promptName(prompt.AgentSpec{Name: "bugs+impl"}))
 }
 
 func TestFinder_rawName(t *testing.T) {

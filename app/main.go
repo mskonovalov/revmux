@@ -9,6 +9,7 @@ import (
 
 	"github.com/jessevdk/go-flags"
 
+	"github.com/umputun/revmux/app/archive"
 	"github.com/umputun/revmux/app/executor"
 	"github.com/umputun/revmux/app/finding"
 	"github.com/umputun/revmux/app/pipeline"
@@ -67,7 +68,7 @@ func run(o runOpts) int {
 		return 0
 	}
 
-	cfg, err := o.pipelineConfig()
+	cfg, arc, err := o.pipelineConfig()
 	if err != nil {
 		return o.fail(err)
 	}
@@ -78,50 +79,66 @@ func run(o runOpts) int {
 	}
 
 	rep = rep.Above(o.opts.MinConfidence)
+	if err := o.archiveRun(arc, cfg, rep); err != nil {
+		return o.fail(err)
+	}
 	if err := o.write(rep); err != nil {
 		return o.fail(err)
 	}
+	o.prune(arc)
 	return rep.ExitCode()
 }
 
-// pipelineConfig resolves everything the pipeline needs. The roster is resolved exactly once, here:
-// the archive manifest and both renderers take that same slice rather than re-deriving it.
-func (o runOpts) pipelineConfig() (pipeline.Config, error) {
+// pipelineConfig resolves everything the pipeline needs, plus the archive package main writes its own
+// artifacts through. The roster is resolved exactly once, here: the archive manifest and both
+// renderers take that same slice rather than re-deriving it.
+func (o runOpts) pipelineConfig() (pipeline.Config, *archive.Archive, error) {
 	if o.opts.Task == "" {
-		return pipeline.Config{}, errors.New("--task is required")
+		return pipeline.Config{}, nil, errors.New("--task is required")
 	}
 	runName := o.opts.runName(o.clock)
 	if err := o.opts.checkName("--run", runName); err != nil {
-		return pipeline.Config{}, err
+		return pipeline.Config{}, nil, err
 	}
 
 	rc, err := o.opts.resolveContext()
 	if err != nil {
-		return pipeline.Config{}, err
+		return pipeline.Config{}, nil, err
 	}
 	set, err := o.opts.promptSet()
 	if err != nil {
-		return pipeline.Config{}, err
+		return pipeline.Config{}, nil, err
 	}
 	profile, err := set.Profile(o.opts.Profile)
 	if err != nil {
-		return pipeline.Config{}, fmt.Errorf("resolve profile: %w", err)
+		return pipeline.Config{}, nil, fmt.Errorf("resolve profile: %w", err)
 	}
 	roster, err := profile.Roster(o.opts.Lenses, set.LensNames())
 	if err != nil {
-		return pipeline.Config{}, fmt.Errorf("resolve roster: %w", err)
+		return pipeline.Config{}, nil, fmt.Errorf("resolve roster: %w", err)
+	}
+
+	// resolved before the run directory exists, and before Prune ever runs: a round read after
+	// pruning is a round that no longer exists
+	history, err := archive.History(rc.TaskDir)
+	if err != nil {
+		return pipeline.Config{}, nil, fmt.Errorf("read prior rounds: %w", err)
+	}
+	arc, err := archive.New(archive.Opts{TaskDir: rc.TaskDir, Run: runName, Keep: o.opts.KeepRuns})
+	if err != nil {
+		return pipeline.Config{}, nil, fmt.Errorf("open run archive: %w", err)
 	}
 
 	return pipeline.Config{
 		NewRunner: o.runnerFactory(rc),
-		Archive:   discardArchive{},
+		Archive:   arc,
 		Clock:     o.clock,
-		Set:       set, Profile: profile, Roster: roster, Vars: rc.vars(),
+		Set:       set, Profile: profile, Roster: roster, Vars: rc.vars(), History: history,
 		Task: o.opts.Task, Run: runName, ScopePath: rc.Scope,
 		NoSynthesis: o.opts.NoSynthesis, NoVerify: o.opts.NoVerify,
 		StaggerDelay: o.opts.StaggerDelay, MaxParallel: o.opts.MaxParallel,
 		VerifyGroups: o.opts.VerifyGroups,
-	}, nil
+	}, arc, nil
 }
 
 // review runs the pipeline with the plain renderer subscribed to its events, and returns only once
@@ -172,20 +189,19 @@ func (o runOpts) write(rep finding.Report) error {
 	return nil
 }
 
+// prune drops the oldest rounds beyond keep-runs, after the report has been written so a failed run
+// keeps its artifacts. A failure is reported and the review's own exit code kept: an undeletable old
+// round is housekeeping, not a missing artifact of this run.
+func (o runOpts) prune(a *archive.Archive) {
+	if err := a.Prune(); err != nil {
+		_, _ = fmt.Fprintf(o.stderr, "warning: %v\n", err)
+	}
+}
+
 func (o runOpts) fail(err error) int {
 	_, _ = fmt.Fprintf(o.stderr, "error: %v\n", err)
 	return 2
 }
-
-// discardArchive stands in until app/archive exists. It keeps the pipeline's write path exercised
-// while producing no artifacts.
-type discardArchive struct{}
-
-func (discardArchive) Writer(string) (io.WriteCloser, error) { return discardCloser{io.Discard}, nil }
-
-type discardCloser struct{ io.Writer }
-
-func (discardCloser) Close() error { return nil }
 
 // openTTY opens the controlling terminal for both input and output. The TUI is gated on this
 // succeeding, never on stdout being a terminal, which is false whenever the report is redirected.

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -131,15 +132,19 @@ func TestRun_reviewGate(t *testing.T) {
 }
 
 func TestRun_review(t *testing.T) {
-	root := taskRoot(t)
-	base := options{
-		Task: "pr-1", Run: "round-1", TasksDir: root, Profile: "focused", Lenses: []string{"bugs"},
-		StaggerDelay: 30 * time.Second, MaxParallel: 4,
-		NoSynthesis: true, // these assert rendering and exit codes; the merge has its own case below
+	// every subtest takes its own tasks root: a run name that already exists is a load-time error, so
+	// two runs of round-1 under one root would collide rather than exercise what each case asserts
+	base := func(t *testing.T) options {
+		t.Helper()
+		return options{
+			Task: "pr-1", Run: "round-1", TasksDir: taskRoot(t), Profile: "focused", Lenses: []string{"bugs"},
+			StaggerDelay: 30 * time.Second, MaxParallel: 4, KeepRuns: 10,
+			NoSynthesis: true, // these assert rendering and exit codes; the merge has its own case below
+		}
 	}
 
 	t.Run("markdown to stdout, progress to stderr, exit 1", func(t *testing.T) {
-		r := newRunOpts(t, base)
+		r := newRunOpts(t, base(t))
 		r.result = executor.Result{
 			StructuredOutput: json.RawMessage(`{"findings":[{"file":"app/main.go","line":42,"severity":"major",` +
 				`"confidence":90,"title":"unchecked error","body":"the write error is dropped","lenses":["bugs"]}]}`),
@@ -162,7 +167,7 @@ func TestRun_review(t *testing.T) {
 	})
 
 	t.Run("json to stdout", func(t *testing.T) {
-		o := base
+		o := base(t)
 		o.JSON = true
 		r := newRunOpts(t, o)
 		r.result = executor.Result{StructuredOutput: json.RawMessage(
@@ -174,13 +179,13 @@ func TestRun_review(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(r.stdout.String()), &rep))
 		assert.Equal(t, "pr-1", rep.Scope.Task)
 		assert.Equal(t, "round-1", rep.Scope.Run)
-		assert.Equal(t, filepath.Join(root, "pr-1", scopeFileName), rep.Scope.ScopePath)
+		assert.Equal(t, filepath.Join(o.TasksDir, "pr-1", scopeFileName), rep.Scope.ScopePath)
 		require.Len(t, rep.Findings, 1)
 		assert.Equal(t, []string{"lenses"}, rep.Findings[0].Sources)
 	})
 
 	t.Run("min-confidence filters the report and the exit code together", func(t *testing.T) {
-		o := base
+		o := base(t)
 		o.MinConfidence = 80
 		r := newRunOpts(t, o)
 		r.result = executor.Result{StructuredOutput: json.RawMessage(
@@ -192,7 +197,7 @@ func TestRun_review(t *testing.T) {
 	})
 
 	t.Run("the synthesis stage is wired and its merge reaches stdout", func(t *testing.T) {
-		o := base
+		o := base(t)
 		o.NoSynthesis = false
 		r := newRunOpts(t, o)
 		r.result = executor.Result{StructuredOutput: json.RawMessage(
@@ -210,14 +215,14 @@ func TestRun_review(t *testing.T) {
 	})
 
 	t.Run("nothing found exits 0", func(t *testing.T) {
-		r := newRunOpts(t, base)
+		r := newRunOpts(t, base(t))
 		r.result = executor.Result{StructuredOutput: json.RawMessage(`{"findings":[]}`)}
 		assert.Equal(t, 0, run(r.opts()))
 		assert.Contains(t, r.stdout.String(), "No findings.")
 	})
 
 	t.Run("every source degraded exits 2 with no report", func(t *testing.T) {
-		r := newRunOpts(t, base)
+		r := newRunOpts(t, base(t))
 		r.runErr = errors.New("stalled")
 		assert.Equal(t, 2, run(r.opts()))
 		assert.Empty(t, r.stdout.String(), "an empty report would read as a clean run")
@@ -229,7 +234,7 @@ func TestRun_review(t *testing.T) {
 	})
 
 	t.Run("a report that cannot be written exits 2", func(t *testing.T) {
-		r := newRunOpts(t, base)
+		r := newRunOpts(t, base(t))
 		r.result = executor.Result{StructuredOutput: json.RawMessage(`{"findings":[]}`)}
 		ro := r.opts()
 		ro.stdout = failingWriter{}
@@ -289,6 +294,9 @@ type runHarness struct {
 	synth  executor.Result
 	runErr error
 	runs   atomic.Int64
+
+	mu   sync.Mutex
+	seen []string // every prompt the runner was handed, in launch order
 }
 
 // synthesisMarker is a line only the synthesis prompt carries, so the harness answers that stage
@@ -325,6 +333,9 @@ func (r *runHarness) newRunner(pipeline.RunnerSpec) pipeline.Runner {
 	return &pmocks.RunnerMock{
 		RunFunc: func(_ context.Context, req executor.Request, _ executor.EventSink) (executor.Result, error) {
 			r.runs.Add(1)
+			r.mu.Lock()
+			r.seen = append(r.seen, req.Prompt)
+			r.mu.Unlock()
 			if req.RawOutput != nil {
 				_, _ = req.RawOutput.Write([]byte(r.result.Raw))
 			}

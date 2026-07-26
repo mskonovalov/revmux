@@ -34,6 +34,7 @@ var errNoSources = errors.New("every source degraded, no review to report")
 type finder struct {
 	cfg     Config
 	emit    func(Event)
+	save    func(name string, data []byte)
 	stagger *stagger
 }
 
@@ -95,6 +96,9 @@ func (f *finder) runAgent(ctx context.Context, spec prompt.AgentSpec, index int)
 	if err != nil {
 		return f.degrade(res, err)
 	}
+	// archived post-substitution, exactly the bytes the process receives: a reflection agent cannot
+	// judge a lens it cannot read, and a paraphrase is worse than no data
+	f.save(f.promptName(spec), []byte(text))
 
 	if slotErr := f.stagger.acquire(ctx, index); slotErr != nil {
 		return f.degrade(res, slotErr)
@@ -228,6 +232,12 @@ func (f *finder) rawName(spec prompt.AgentSpec, attempt int) string {
 		ext = ".retry" + ext
 	}
 	return path.Join("agents", spec.Name+ext)
+}
+
+// promptName is where this agent's composed prompt goes. Agent prompts live under their own directory
+// so an agent named synthesis or verify cannot overwrite a stage's prompt.
+func (f *finder) promptName(spec prompt.AgentSpec) string {
+	return path.Join(agentPromptDir, spec.Name+".md")
 }
 
 func (f *finder) degrade(res sourceResult, err error) sourceResult {

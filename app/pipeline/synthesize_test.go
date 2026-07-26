@@ -24,7 +24,7 @@ func TestSynthesizer_run(t *testing.T) {
 			`{"merged_ids":["bugs+impl-1","codex-1"],"file":"a.go","line":10,"severity":"critical","confidence":90,"title":"leak","body":"b"}`,
 		), Tokens: 300}, nil)
 
-		s := &synthesizer{cfg: h.cfg, emit: func(Event) {}}
+		s := &synthesizer{cfg: h.cfg, save: h.save, emit: func(Event) {}}
 		rep, err := s.run(context.Background(), synthSources())
 		require.NoError(t, err)
 
@@ -46,7 +46,7 @@ func TestSynthesizer_run(t *testing.T) {
 			}}
 		}
 
-		s := &synthesizer{cfg: h.cfg, emit: func(Event) {}}
+		s := &synthesizer{cfg: h.cfg, save: h.save, emit: func(Event) {}}
 		_, err := s.run(context.Background(), synthSources())
 		require.NoError(t, err)
 		assert.Equal(t, RunnerSpec{Executor: "claude", Model: "opus", Effort: "high"}, spec)
@@ -59,7 +59,7 @@ func TestSynthesizer_run(t *testing.T) {
 		)}, nil)
 
 		var seen []Event
-		s := &synthesizer{cfg: h.cfg, emit: func(ev Event) { seen = append(seen, ev) }}
+		s := &synthesizer{cfg: h.cfg, save: h.save, emit: func(ev Event) { seen = append(seen, ev) }}
 		_, err := s.run(context.Background(), synthSources())
 		require.NoError(t, err)
 
@@ -73,7 +73,7 @@ func TestSynthesizer_run(t *testing.T) {
 		h := newHarness(t)
 		h.cfg.NewRunner = stageRunner(&executor.Request{}, executor.Result{}, errors.New("stalled twice"))
 
-		s := &synthesizer{cfg: h.cfg, emit: func(Event) {}}
+		s := &synthesizer{cfg: h.cfg, save: h.save, emit: func(Event) {}}
 		_, err := s.run(context.Background(), synthSources())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "stalled twice")
@@ -83,7 +83,7 @@ func TestSynthesizer_run(t *testing.T) {
 		h := newHarness(t)
 		h.cfg.NewRunner = stageRunner(&executor.Request{}, executor.Result{}, nil)
 
-		s := &synthesizer{cfg: h.cfg, emit: func(Event) {}}
+		s := &synthesizer{cfg: h.cfg, save: h.save, emit: func(Event) {}}
 		_, err := s.run(context.Background(), synthSources())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "no structured output")
@@ -93,7 +93,7 @@ func TestSynthesizer_run(t *testing.T) {
 		h := newHarness(t)
 		h.cfg.NewRunner = stageRunner(&executor.Request{}, executor.Result{StructuredOutput: json.RawMessage(`{"findings":`)}, nil)
 
-		s := &synthesizer{cfg: h.cfg, emit: func(Event) {}}
+		s := &synthesizer{cfg: h.cfg, save: h.save, emit: func(Event) {}}
 		_, err := s.run(context.Background(), synthSources())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "decode synthesis output")

@@ -350,13 +350,24 @@ func (h *harness) writer(name string) (io.WriteCloser, error) {
 // finder builds a find stage over the harness config with an already-open stagger, so a test that is
 // not about release ordering never has to drive one.
 func (h *harness) finder(emit func(Event)) *finder {
-	return &finder{cfg: h.cfg, emit: emit, stagger: newStagger(0, h.cfg.MaxParallel, h.cfg.Clock)}
+	return &finder{cfg: h.cfg, emit: emit, save: h.save, stagger: newStagger(0, h.cfg.MaxParallel, h.cfg.Clock)}
 }
 
 // verifier builds a verify stage over the harness config with an already-open stagger, for the same
 // reason finder does: a test that is not about release ordering never has to drive one.
 func (h *harness) verifier(emit func(Event)) *verifier {
-	return &verifier{cfg: h.cfg, emit: emit, stagger: newStagger(0, h.cfg.MaxParallel, h.cfg.Clock)}
+	return &verifier{cfg: h.cfg, emit: emit, save: h.save, stagger: newStagger(0, h.cfg.MaxParallel, h.cfg.Clock)}
+}
+
+// save is the stages' whole-artifact writer, recording into the same map the streaming writers use so
+// a test can read back the composed prompt a stage archived.
+func (h *harness) save(name string, data []byte) {
+	w, err := h.writer(name)
+	if err != nil {
+		return
+	}
+	_, _ = w.Write(data)
+	_ = w.Close()
 }
 
 func (h *harness) get(name string) *syncBuffer {

@@ -3,9 +3,11 @@ package prompt
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -154,8 +156,8 @@ func (st *Stage) validate() error {
 }
 
 func (a AgentSpec) validate(known map[string]struct{}) error {
-	if a.Name == "" {
-		return errors.New("roster entry has no name")
+	if err := a.checkName(); err != nil {
+		return err
 	}
 	if len(a.Lenses) == 0 {
 		return fmt.Errorf("agent %s: no lenses", a.Name)
@@ -173,6 +175,25 @@ func (a AgentSpec) validate(known map[string]struct{}) error {
 	}
 	if _, err := a.resolveColor(); err != nil {
 		return fmt.Errorf("agent %s: %w", a.Name, err)
+	}
+	return nil
+}
+
+// checkName rejects a name that cannot become one path component. The archive turns it into
+// agents/<name>.jsonl and prompts/agents/<name>.md, so a separator or a parent reference would let a
+// profile write outside the run directory — the same rule package main applies to --task and --run.
+func (a AgentSpec) checkName() error {
+	switch {
+	case a.Name == "":
+		return errors.New("roster entry has no name")
+	case filepath.IsAbs(a.Name):
+		return fmt.Errorf("agent %q is an absolute path", a.Name)
+	case strings.ContainsAny(a.Name, `/\`):
+		return fmt.Errorf("agent %q contains a path separator", a.Name)
+	case strings.Contains(a.Name, ".."):
+		return fmt.Errorf("agent %q references a parent directory", a.Name)
+	case strings.HasPrefix(a.Name, "."):
+		return fmt.Errorf("agent %q starts with a dot", a.Name)
 	}
 	return nil
 }
