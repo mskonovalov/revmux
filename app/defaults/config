@@ -1,0 +1,32 @@
+# revmux runtime knobs. Everything that shapes a review — rosters, models, effort, lens text — lives in
+# the prompt tree instead, so nothing here changes what a review looks for.
+#
+# Precedence is the command line, then ./.revmux/config, then ~/.config/revmux/config, then the built-in
+# value shown after each key. Layers merge per key: setting one here leaves the rest alone.
+#
+# Every line ships commented out. A file holding only comments is replaced by --init on upgrade, while a
+# single uncommented line marks it customized and is left untouched.
+
+# how long an agent may go without output before it is killed and retried
+# idle-timeout = 2m
+
+# how long one agent may run in total
+# hard-timeout = 20m
+
+# how long to wait for the first agent to start before releasing the rest
+# stagger-delay = 30s
+
+# how many agents run at once
+# max-parallel = 4
+
+# cap on the number of verifier groups
+# verify-groups = 6
+
+# root directory holding task directories
+# tasks-dir = ./.revmux/tasks
+
+# how many runs to keep per task
+# keep-runs = 10
+
+# profile naming the roster to run
+# profile = focused

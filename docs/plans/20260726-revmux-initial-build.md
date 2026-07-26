@@ -828,10 +828,15 @@ which is not a safe assumption for a binary whose stated caller is a model. One 
 
 Methods (full signatures):
 - `(o options) promptOpts() prompt.LoadOpts`
-- `(o options) executorOpts(clk executor.Clock) executor.Opts` — the clock is a parameter because it lives
-  on `runOpts`, not on `options`; without it the production path builds `executor.Opts` with a nil `Clock`
+- `(o options) executorOpts(rc reviewContext, clk executor.Clock) executor.Opts` — the clock is a parameter
+  because it lives on `runOpts`, not on `options`; without it the production path builds `executor.Opts`
+  with a nil `Clock`. ➕ `rc` is a parameter for the same class of reason: the resolved `WorkDir` lives on
+  `reviewContext`, and `config.md` requires the directory an agent is told to review to be the one its
+  process runs in. Reading the raw `--workdir` flag here instead would give two resolutions that can
+  disagree, and resolving it a second time inside `executorOpts` would need an error return it cannot have
 - `(o options) resolveContext() (reviewContext, error)`
-- `(o options) runName() string`
+- `(o options) runName(clk executor.Clock) string` — ➕ the clock is a parameter because `testing.md` bans
+  `time.Now()` in code under test, and the UTC-timestamp default is exactly what a test must pin
 - `(rc reviewContext) vars() prompt.Vars`
 
 `reviewContext` fields are `TaskDir`, `Scope`, `Goal`, `Profile`, `Context` and `WorkDir` — all absolute
@@ -851,7 +856,9 @@ method on `options` would either re-stat the directory or take the struct as a p
 passed down rather than re-derived.
 
 Standalone helpers planned (justification why NOT a method):
-- `parseArgs() (options, error)` — entry point; runs before any `options` value exists
+- `parseArgs(args []string) (options, error)` — entry point; runs before any `options` value exists.
+  ➕ It takes the argv slice rather than reading `os.Args` so precedence and validation are testable
+  without mutating process state
 - `run(o runOpts) int` — the testable entry point. `main()` builds `runOpts` with the production runner
   factory, clock and `os.Stdout`/`os.Stderr`; tests build it with fakes. It takes an option struct rather
   than `(options, factory, stdout, stderr)` because that is four parameters, which this plan's own hard rule
@@ -863,38 +870,38 @@ Standalone helpers planned (justification why NOT a method):
 Exports (justification per item: who outside the package calls this?):
 - none — `package main` internals
 
-- [ ] create `app/config.go` with the `options` struct: `--task`, `--run`, `--tasks-dir`, `--profile`, `--lenses`, `--workdir`, `--min-confidence` (default 0), `--no-synthesis`, `--no-verify`, `--no-tui`, `--json`, `--preserve-anthropic-api-key`, `--config-dir`, `--init`, `--dump-defaults`, `--version`
-- [ ] **`--task` is not `required:"true"`.** go-flags enforces required flags during `Parse`, which would make `--version`, `--init`, `--dump-defaults` and task 15's `revmux config` all unparseable. Check for its presence in `run()` instead, and fail there with exit 2
-- [ ] `--run` is optional and defaults to a UTC timestamp; resolve it via `runName()` in `package main` and pass the resolved value down rather than re-deriving it
-- [ ] validate `--task` and `--run` before joining them into any path: reject empty, path separators, `..`, absolute, and leading `.`, then re-check containment on the resolved path because a symlink inside the tasks root defeats the lexical test
-- [ ] add INI parsing via go-flags `IniParser` in this exact order: `parser.Parse()` for the CLI, then the project INI, then the user INI, **both INI layers with `IniParser{ParseAsDefaults: true}`**. Verified against `go-flags@v1.6.1`: `IniParser.parse` calls `opt.Set(pval)` when `ParseAsDefaults` is false (ini.go:585-593), and `Set` marks the option `preventDefault` (option.go:250) — so loading an INI after `Parse()` **overwrites every CLI flag** and the precedence silently inverts. With `ParseAsDefaults` it calls `setDefault`, which returns early on `preventDefault` (option.go:286), and ini.go sets `preventDefault` after each layer, so CLI beats project beats user. This gives per-field merge for free: a project config setting one key leaves the user config's others untouched. `--config-dir` is a CLI flag, known before either INI load, so no second pass is needed
-- [ ] `no-ini:"true"` on meta flags and `ini-name` tags matching long flag names
-- [ ] auto-detect the project layer at `./.revmux/` in the process working directory — no flag selects it, its absence just drops the layer, and `./` means cwd for it exactly as it does for `--tasks-dir`'s default rather than following `--workdir`
-- [ ] drop the project layer when `--config-dir` resolves to the same directory, comparing absolute **symlink-evaluated** paths: a lexical compare misses `/var` vs `/private/var` on macOS, so the collision survives precisely in `t.TempDir()`-based tests. Loading one directory as two layers makes the layer-origin record wrong, which is what `revmux config` reports
-- [ ] record which layer supplied each knob's final value, into a `knobOrigins map[string]string` field on `options`. **`IsSet()` alone is useless here and the obvious implementation is wrong**: `ParseArgs` ends by calling `clearDefault()` on every option (parser.go:315-324), which for anything carrying a `default:` tag runs `setDefault` → `Set` → `isSet = true` (option.go:345-355, 249). Since the checkbox above requires every knob to have an explicit default, `IsSet()` is true for all of them the moment parsing ends. Use instead:
+- [x] create `app/config.go` with the `options` struct: `--task`, `--run`, `--tasks-dir`, `--profile`, `--lenses`, `--workdir`, `--min-confidence` (default 0), `--no-synthesis`, `--no-verify`, `--no-tui`, `--json`, `--preserve-anthropic-api-key`, `--config-dir`, `--init`, `--dump-defaults`, `--version`
+- [x] **`--task` is not `required:"true"`.** go-flags enforces required flags during `Parse`, which would make `--version`, `--init`, `--dump-defaults` and task 15's `revmux config` all unparseable. Check for its presence in `run()` instead, and fail there with exit 2
+- [x] `--run` is optional and defaults to a UTC timestamp; resolve it via `runName()` in `package main` and pass the resolved value down rather than re-deriving it
+- [x] validate `--task` and `--run` before joining them into any path: reject empty, path separators, `..`, absolute, and leading `.`, then re-check containment on the resolved path because a symlink inside the tasks root defeats the lexical test
+- [x] add INI parsing via go-flags `IniParser` in this exact order: `parser.Parse()` for the CLI, then the project INI, then the user INI, **both INI layers with `IniParser{ParseAsDefaults: true}`**. Verified against `go-flags@v1.6.1`: `IniParser.parse` calls `opt.Set(pval)` when `ParseAsDefaults` is false (ini.go:585-593), and `Set` marks the option `preventDefault` (option.go:250) — so loading an INI after `Parse()` **overwrites every CLI flag** and the precedence silently inverts. With `ParseAsDefaults` it calls `setDefault`, which returns early on `preventDefault` (option.go:286), and ini.go sets `preventDefault` after each layer, so CLI beats project beats user. This gives per-field merge for free: a project config setting one key leaves the user config's others untouched. `--config-dir` is a CLI flag, known before either INI load, so no second pass is needed
+- [x] `no-ini:"true"` on meta flags and `ini-name` tags matching long flag names
+- [x] auto-detect the project layer at `./.revmux/` in the process working directory — no flag selects it, its absence just drops the layer, and `./` means cwd for it exactly as it does for `--tasks-dir`'s default rather than following `--workdir`
+- [x] drop the project layer when `--config-dir` resolves to the same directory, comparing absolute **symlink-evaluated** paths: a lexical compare misses `/var` vs `/private/var` on macOS, so the collision survives precisely in `t.TempDir()`-based tests. Loading one directory as two layers makes the layer-origin record wrong, which is what `revmux config` reports
+- [x] record which layer supplied each knob's final value, into a `knobOrigins map[string]string` field on `options`. **`IsSet()` alone is useless here and the obvious implementation is wrong**: `ParseArgs` ends by calling `clearDefault()` on every option (parser.go:315-324), which for anything carrying a `default:` tag runs `setDefault` → `Set` → `isSet = true` (option.go:345-355, 249). Since the checkbox above requires every knob to have an explicit default, `IsSet()` is true for all of them the moment parsing ends. Use instead:
   - `flag` ⇔ `Option.IsSet() && !Option.IsSetDefault()`. An explicitly-passed flag goes through `Set` directly and never has `isSetDefault` set; a struct default arrives through `setDefault`, which sets it (option.go:294)
   - `project` / `user` ⇔ the key is present in that INI **file** and was not already claimed by a higher layer. Read each file's own key list and attribute first-writer-wins in precedence order. No exported signal distinguishes the two INI layers — both route through `setDefault` and set the same `isSetDefault` — so the file contents are the only sound source
   - `default` ⇔ everything not claimed above
 
   Task 15 reads this map and does not re-derive it
-- [ ] add runtime knobs to the INI, each with a long flag backing it so go-flags has exactly one definition per setting, and each with a stated default: `--idle-timeout` (2m), `--hard-timeout` (20m), `--stagger-delay` (30s, the cap on waiting for the leader), `--max-parallel` (4), `--verify-groups` (6), `--tasks-dir` (`./.revmux/tasks`), `--keep-runs` (10), `--profile` (**`focused`**, the only profile shipped until task 14 — defaulting to `comprehensive` here would break every run and task 5's own clean-install test for nine tasks; task 14 flips it)
-- [ ] **none of these may resolve to a zero value.** The config file ships fully commented out and the executor defaults both timers to disabled, so a struct tag without an explicit default means a clean install runs with no watchdog — the one capability the Overview says the tool exists for — and `max_parallel` 0, a zero-capacity semaphore
-- [ ] implement `resolveContext` against `<tasks-dir>/<task>/`: `scope.md` required (missing or empty is a load-time error), `goal.md` / `profile.md` / `context/` optional, all returned as absolute paths
-- [ ] absent `goal.md` or `profile.md` is a non-error that marks the report generically calibrated; a missing task directory is an error, since revmux never creates one it did not author
-- [ ] implement `reviewContext.vars` assembling `{{SCOPE}}`, `{{GOAL}}`, `{{PROFILE}}`, `{{CONTEXT}}`, `{{WORKDIR}}` as paths, substituting the "none provided" placeholder for anything absent
-- [ ] create `app/defaults/config`, the INI template `--init` writes: every knob from the list above present but **commented out**, so a file containing only comments is safely overwritable on upgrade while any uncommented line marks it customized
-- [ ] implement `--init` and `--dump-defaults`, never overwriting a customized file
-- [ ] write a test asserting every knob in the `options` struct appears in `app/defaults/config`, commented out — a knob missing from the template is invisible to anyone who runs `--init` to discover what is tunable
-- [ ] write tests for config precedence across all four layers using `t.TempDir()`, including a per-field merge where the project layer sets one key and the user layer's other keys survive
-- [ ] write a test asserting `--config-dir` pointed at the auto-detected `./.revmux/` yields one layer rather than two, run under `t.TempDir()` so the symlinked-temp-path case is the one actually exercised
-- [ ] write a test asserting each knob reports the layer that supplied it — flag, project, user, default — across a config where all four win at least once
-- [ ] write tests for task-dir resolution: full directory, scope-only, missing `scope.md`, empty `scope.md`, `scope.md` present as a directory, `context/` present but empty, `context/` present as a file, missing task directory, and a `--tasks-dir` pointed outside the repo
-- [ ] write tests rejecting `--task ../escape`, `--task a/b`, an absolute `--task`, and a symlinked task directory pointing outside the tasks root — each must fail before anything is written
-- [ ] write a test asserting every resolved variable is an absolute path and that no file is opened during resolution
-- [ ] write tests for `--init` and `--dump-defaults` against a temp dir
-- [ ] write a test asserting a zero-value config still yields a live idle timeout, a live hard timeout, `max_parallel >= 1` and a loadable default profile — the clean-install path no other test covers
-- [ ] add `github.com/jessevdk/go-flags` and run `go mod vendor` — first import of it
-- [ ] run tests - must pass before task 6
+- [x] add runtime knobs to the INI, each with a long flag backing it so go-flags has exactly one definition per setting, and each with a stated default: `--idle-timeout` (2m), `--hard-timeout` (20m), `--stagger-delay` (30s, the cap on waiting for the leader), `--max-parallel` (4), `--verify-groups` (6), `--tasks-dir` (`./.revmux/tasks`), `--keep-runs` (10), `--profile` (**`focused`**, the only profile shipped until task 14 — defaulting to `comprehensive` here would break every run and task 5's own clean-install test for nine tasks; task 14 flips it)
+- [x] **none of these may resolve to a zero value.** The config file ships fully commented out and the executor defaults both timers to disabled, so a struct tag without an explicit default means a clean install runs with no watchdog — the one capability the Overview says the tool exists for — and `max_parallel` 0, a zero-capacity semaphore
+- [x] implement `resolveContext` against `<tasks-dir>/<task>/`: `scope.md` required (missing or empty is a load-time error), `goal.md` / `profile.md` / `context/` optional, all returned as absolute paths
+- [x] absent `goal.md` or `profile.md` is a non-error that marks the report generically calibrated; a missing task directory is an error, since revmux never creates one it did not author
+- [x] implement `reviewContext.vars` assembling `{{SCOPE}}`, `{{GOAL}}`, `{{PROFILE}}`, `{{CONTEXT}}`, `{{WORKDIR}}` as paths, substituting the "none provided" placeholder for anything absent
+- [x] create `app/defaults/config`, the INI template `--init` writes: every knob from the list above present but **commented out**, so a file containing only comments is safely overwritable on upgrade while any uncommented line marks it customized
+- [x] implement `--init` and `--dump-defaults`, never overwriting a customized file
+- [x] write a test asserting every knob in the `options` struct appears in `app/defaults/config`, commented out — a knob missing from the template is invisible to anyone who runs `--init` to discover what is tunable
+- [x] write tests for config precedence across all four layers using `t.TempDir()`, including a per-field merge where the project layer sets one key and the user layer's other keys survive
+- [x] write a test asserting `--config-dir` pointed at the auto-detected `./.revmux/` yields one layer rather than two, run under `t.TempDir()` so the symlinked-temp-path case is the one actually exercised
+- [x] write a test asserting each knob reports the layer that supplied it — flag, project, user, default — across a config where all four win at least once
+- [x] write tests for task-dir resolution: full directory, scope-only, missing `scope.md`, empty `scope.md`, `scope.md` present as a directory, `context/` present but empty, `context/` present as a file, missing task directory, and a `--tasks-dir` pointed outside the repo
+- [x] write tests rejecting `--task ../escape`, `--task a/b`, an absolute `--task`, and a symlinked task directory pointing outside the tasks root — each must fail before anything is written
+- [x] write a test asserting every resolved variable is an absolute path and that no file is opened during resolution
+- [x] write tests for `--init` and `--dump-defaults` against a temp dir
+- [x] write a test asserting a zero-value config still yields a live idle timeout, a live hard timeout, `max_parallel >= 1` and a loadable default profile — the clean-install path no other test covers
+- [x] add `github.com/jessevdk/go-flags` and run `go mod vendor` — first import of it
+- [x] run tests - must pass before task 6
 
 ### Task 6: Find stage, event channel and end-to-end slice
 
