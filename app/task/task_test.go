@@ -256,59 +256,6 @@ func TestCheckReclaim(t *testing.T) {
 	}
 }
 
-func TestOldLayoutEntry(t *testing.T) {
-	tests := []struct {
-		name    string
-		entries []string
-		want    string
-	}{
-		{name: "a task holding rounds", entries: []string{"01-initial", metaFile}},
-		{name: "the old task-level scope", entries: []string{ScopeFile}, want: ScopeFile},
-		{name: "the old runs directory", entries: []string{oldRunsDir}, want: oldRunsDir},
-		{name: "both shapes report the scope", entries: []string{oldRunsDir, ScopeFile}, want: ScopeFile},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			for _, name := range tc.entries {
-				if filepath.Ext(name) == "" {
-					require.NoError(t, os.Mkdir(filepath.Join(dir, name), 0o750))
-					continue
-				}
-				require.NoError(t, os.WriteFile(filepath.Join(dir, name), nil, 0o600))
-			}
-
-			got, err := OldLayoutEntry(dir, func(name string) (fs.FileInfo, error) {
-				return os.Lstat(filepath.Join(dir, name))
-			})
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, got)
-		})
-	}
-
-	// this is the gate between a task written for the previous shape and a review that reads half of it, so
-	// a stat nobody could answer must never pass as "the entry is not there"
-	t.Run("an entry that cannot be stat'd is an error, never an absence", func(t *testing.T) {
-		dir := t.TempDir()
-		got, err := OldLayoutEntry(dir, func(string) (fs.FileInfo, error) { return nil, fs.ErrPermission })
-		require.Error(t, err)
-		assert.Empty(t, got)
-		assert.Contains(t, err.Error(), "stat "+filepath.Join(dir, ScopeFile), "and it names the entry it asked about")
-	})
-
-	t.Run("a dangling link is a link, not a missing file", func(t *testing.T) {
-		dir := t.TempDir()
-		require.NoError(t, os.Symlink(filepath.Join(dir, "gone"), filepath.Join(dir, ScopeFile)))
-
-		got, err := OldLayoutEntry(dir, func(name string) (fs.FileInfo, error) {
-			return os.Lstat(filepath.Join(dir, name))
-		})
-		require.NoError(t, err)
-		assert.Equal(t, ScopeFile, got, "the task still carries a task-level scope, whatever it points at")
-	})
-}
-
 func TestScaffold_containment(t *testing.T) {
 	t.Run("a task symlinked out of the tasks root creates nothing at the target", func(t *testing.T) {
 		root, outside := t.TempDir(), t.TempDir()
@@ -491,8 +438,6 @@ func TestScaffold_errors(t *testing.T) {
 		{name: "empty run", opts: Round{Task: "pr-1"}, msg: "--run is empty"},
 		{name: "run with a separator", opts: Round{Task: "pr-1", Run: `a\b`}, msg: "--run"},
 		{name: "run climbing out", opts: Round{Task: "pr-1", Run: "../elsewhere"}, msg: "--run"},
-		{name: "run named after the old runs directory", opts: Round{Task: "pr-1", Run: "runs"}, msg: "is reserved"},
-		{name: "run named after the old task-level scope", opts: Round{Task: "pr-1", Run: "scope.md"}, msg: "is reserved"},
 		{name: "run named after the task's own metadata", opts: Round{Task: "pr-1", Run: "task.md"}, msg: "is reserved"},
 	}
 
@@ -576,40 +521,6 @@ func TestScaffold_errors(t *testing.T) {
 		_, err := Scaffold(Round{TasksDir: root, Task: "pr-1", Run: "01"})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), filepath.Join(taskDir, "01"))
-	})
-
-	// archive.New and the review path both refuse a task written for the layout before rounds, so
-	// scaffolding a round into one hands the caller a round every review of it rejects — after he has
-	// filled its input/
-	t.Run("a task written for the old layout is refused", func(t *testing.T) {
-		tests := []struct {
-			name  string
-			entry string
-			plant func(t *testing.T, taskDir string)
-		}{
-			{name: "scope.md beside the rounds", entry: ScopeFile, plant: func(t *testing.T, taskDir string) {
-				require.NoError(t, os.WriteFile(filepath.Join(taskDir, ScopeFile), []byte("one scope for N rounds"), 0o600))
-			}},
-			{name: "a runs directory", entry: oldRunsDir, plant: func(t *testing.T, taskDir string) {
-				require.NoError(t, os.MkdirAll(filepath.Join(taskDir, oldRunsDir, "round-1"), 0o750))
-			}},
-		}
-
-		for _, tc := range tests {
-			t.Run(tc.name, func(t *testing.T) {
-				root := t.TempDir()
-				taskDir := filepath.Join(root, "pr-1")
-				require.NoError(t, os.Mkdir(taskDir, 0o750))
-				tc.plant(t, taskDir)
-				before := treeOf(t, taskDir)
-
-				_, err := Scaffold(Round{TasksDir: root, Task: "pr-1", Run: "02-after-fix"})
-				require.Error(t, err, "the review path refuses this task, so a round scaffolded into it is unreviewable")
-				assert.Contains(t, err.Error(), "old layout")
-				assert.Contains(t, err.Error(), tc.entry, "the message names the entry to remove")
-				assert.Equal(t, before, treeOf(t, taskDir), "and nothing was written into the task it refused")
-			})
-		}
 	})
 
 	t.Run("an unwritable round directory", func(t *testing.T) {
@@ -780,10 +691,8 @@ func TestCheckRoundName(t *testing.T) {
 		msg   string
 	}{
 		{name: "plain", input: "01-initial"},
-		{name: "a name close to the marker", input: "runs-2"},
+		{name: "a name close to the reserved one", input: "task.md-2"},
 		{name: "carries the lexical rules", input: "a/b", msg: "path separator"},
-		{name: "the old runs directory", input: "runs", msg: "is reserved"},
-		{name: "the old task-level scope", input: "scope.md", msg: "is reserved"},
 		{name: "the task's own metadata", input: "task.md", msg: "is reserved"},
 	}
 

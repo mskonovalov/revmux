@@ -104,27 +104,6 @@ shaped: without the check a round nobody created is reported as `scope.md is req
 which names a path two levels inside a directory that does not exist and reads as a scope the caller wrote
 wrong. `archive.New` says it properly and never runs — `resolveContext` fails first.
 
-**The old task-level layout is refused, and the refusal lives here as well as in `archive.New` and
-`task.Scaffold`.**
-`resolveContext` runs first, so a check only in the archive is never reached from a review — a task with
-`scope.md` or `runs/` beside its rounds would fail on a missing round `input/` instead, naming a path the
-caller has no reason to expect.
-There is no migration: one task-level scope describes N rounds at once and there is no correct round to
-assign it to, so the error names both shapes and stops.
-
-**`revmux new` refuses it too, and that is not redundancy — it is the same invariant every other gate has.**
-Scaffolding a round into such a task hands the caller a round the review path always rejects, after he has
-written `scope.md`, `goal.md`, `profile.md` and `context/` into it, and revmux has mutated caller-owned state
-on a path it will not accept. `Paths.build` therefore asks right after the task directory is opened and
-**before `task.md` is written**, so a refusal leaves the task exactly as it was.
-The judgment is `task.OldLayoutEntry` and the refusal `resolveContext` and `Scaffold` share is
-`task.CheckOldLayout`, both in `app/task` beside `CheckName`, `CheckMarker` and `CheckReclaim` — the entries
-are read by the caller through what it holds on the task (`os.Root.Lstat` for the two paths that walk down as
-nested roots, `os.Lstat` here, where a resolved path is all there is) and the shared function judges them,
-exactly as `CheckReclaim` takes the entries its caller read.
-An entry that cannot be stat'd is an error there, never an absence: this gate is what stands between a task
-written for the previous shape and a review that reads half of it.
-
 The struct also carries `TaskDir`, and it is the **task** directory even though every context file sits two
 levels below it.
 `archive.History` enumerates the task's rounds from it, and the rounds are its children.
@@ -171,14 +150,10 @@ name rule is consolidated against; do not inline a second one.
 between is the whole attack — `task.Scaffold` and `archive.New` both walk down as nested `os.Root`s
 instead, which contains every hop by construction.
 
-**A round name passes `task.CheckRoundName` on top of it, which refuses a reserved entry.**
-A round is a direct child of the task directory and shares its namespace, so `--run runs` and
-`--run scope.md` land exactly where the old-layout markers are looked for: creating one makes every later
-review of that task — including of a legitimate `01-initial` beside it — fail as an old-layout task until
-the directory is removed by hand. `task.md` is reserved for the same reason, it being the task's own file.
-The reserved set is `task.OldLayout()` plus `task.md`, defined once in `app/task`; `archive.checkOldLayout`
-and `options.checkOldLayout` reach it through `task.OldLayoutEntry` rather than spelling `runs` a second and
-third time.
+**A round name passes `task.CheckRoundName` on top of it, which refuses the one reserved entry.**
+A round is a direct child of the task directory and shares its namespace with the task's own `task.md`, so
+`--run task.md` is refused: that round would be read as the task's metadata, and the next `revmux new` on
+the same task scaffolds over it. The name is `metaFile` in `app/task`, spelled once.
 
 **`task.Scaffold` writes through nested `os.Root`s anchored at the tasks root, never by path.**
 A check on a resolved path and the write that follows it are two operations, and the directory can be
@@ -516,9 +491,6 @@ left nothing else in it. Both call `task.CheckReclaim` and both classify the mar
 so `new` never hands back a round the review path would refuse — the divergence to watch for is one side
 reading the marker its own way, which is how a symlinked `manifest.json` came to be accepted by `new` and
 refused by the review at the same time.
-It refuses a task written for the old layout for the same reason and through the same shared check,
-`task.CheckOldLayout`, before it writes `task.md` — that one was the last gate left with an implementation
-per caller and none in `app/task`, so `new` scaffolded happily into a task every review of it rejected.
 The `task.md` it writes ships fully commented out, the same way `--init` writes the config template: a task
 nobody described carries no metadata rather than a placeholder anchor matching the wrong task.
 Anything already occupying a layout path as something other than a directory — a file named `input`, a

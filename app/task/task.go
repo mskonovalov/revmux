@@ -36,9 +36,6 @@ const (
 
 	// metaFile describes the task rather than any one round, so it is the only entry at task level.
 	metaFile = "task.md"
-
-	// oldRunsDir is what the layout before rounds kept its run directories in.
-	oldRunsDir = "runs"
 )
 
 // metaTemplate is the task.md a fresh task is scaffolded with. It ships fully commented out, so a task
@@ -173,54 +170,6 @@ func CheckReclaim(dir string, entries []os.DirEntry) error {
 		"wrote copies across, and revmux deletes nothing", dir, strings.Join(leftovers, ", "), ManifestFile, InputDir)
 }
 
-// OldLayout names the task-level entries that identify a task written for the layout before rounds: one
-// scope.md describing N rounds at once, kept beside a runs/ directory. Both `archive.New` and the review
-// path refuse such a task, and CheckRoundName keeps a round from being named after either.
-func OldLayout() []string { return []string{ScopeFile, oldRunsDir} }
-
-// OldLayoutEntry names which OldLayout entry marks the task directory as written for that layout, or "" when
-// none does. dir names the directory for the message; lstat reads one entry of it through whatever the caller
-// holds — os.Root.Lstat where the walk goes down as nested roots, os.Lstat in the review path, which has only
-// a resolved path. Scaffold, archive.New and a review all judge the shape with this one loop, so `revmux new`
-// never scaffolds a round into a task the review then refuses.
-//
-// An entry that cannot be stat'd is an error rather than an absence: this is the gate between a task written
-// for the previous shape and a review that reads half of it, so a stat nobody could answer must never pass as
-// "the entry is not there".
-func OldLayoutEntry(dir string, lstat func(name string) (fs.FileInfo, error)) (string, error) {
-	for _, entry := range OldLayout() {
-		_, err := lstat(entry)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return "", fmt.Errorf("stat %s: %w", filepath.Join(dir, entry), err)
-		}
-		return entry, nil
-	}
-	return "", nil
-}
-
-// CheckOldLayout refuses a task written for the layout that kept one scope.md beside a runs/ directory. That
-// scope described N rounds at once, so there is no round to assign it to and no correct migration to make —
-// reading such a task half-way would review round 2 against round 1's recorded scope.
-//
-// input is the round's own input/, which is where review context is read from now, so the message names what
-// the caller writes instead of what he wrote. Scaffold and the review path both return this one: `revmux new`
-// refusing where the review refuses is what keeps a caller from filling an input/ nothing will ever read.
-func CheckOldLayout(dir, input string, lstat func(name string) (fs.FileInfo, error)) error {
-	entry, err := OldLayoutEntry(dir, lstat)
-	if err != nil {
-		return err
-	}
-	if entry == "" {
-		return nil
-	}
-	return fmt.Errorf("task directory %s uses the old layout: %s sits beside the rounds rather than inside "+
-		"%s, which is where this round's review context is read from. Remove %s to review this task",
-		dir, entry, input, filepath.Join(dir, entry))
-}
-
 // Round addresses one round: the tasks root, the task under it, and the round's own name. Scaffold
 // creates the round it names and archive.New opens it, so both take this rather than a joined path —
 // the archive anchors its whole chain at the tasks root instead of reopening a path string by name.
@@ -322,12 +271,6 @@ func (p *Paths) build(tasksRoot *os.Root, opts Round) error {
 		return err
 	}
 	defer taskRoot.Close()
-
-	// before anything is written: a task written for the old layout is refused by every review of it, so
-	// scaffolding into one costs the caller the input/ he then fills for a round that can never run
-	if layoutErr := CheckOldLayout(p.TaskDir, p.InputDir, taskRoot.Lstat); layoutErr != nil {
-		return layoutErr
-	}
 
 	if metaErr := p.writeMeta(taskRoot); metaErr != nil {
 		return metaErr
@@ -560,20 +503,16 @@ func CheckName(what, name string) error {
 	return nil
 }
 
-// CheckRoundName is CheckName plus the entries a round may not be named after, since a round is a direct
-// child of the task directory and shares its namespace. A round called `runs` or `scope.md` is where the
-// old-layout marker is looked for, so creating one makes every later review of that task — including of
-// its legitimate rounds — fail as an old-layout task until the directory is removed by hand.
+// CheckRoundName is CheckName plus the one entry a round may not be named after, since a round is a direct
+// child of the task directory and shares its namespace with the task's own task.md. A round carrying that
+// name is read as the task's metadata and scaffolded over by the next `revmux new` on the same task.
 func CheckRoundName(what, name string) error {
 	if err := CheckName(what, name); err != nil {
 		return err
 	}
-	for _, r := range append(OldLayout(), metaFile) {
-		if name != r {
-			continue
-		}
+	if name == metaFile {
 		return fmt.Errorf("%s %q is reserved: the task directory keeps %s beside its rounds, and a round "+
-			"named after it makes every review of this task fail", what, name, r)
+			"named after it is read as the task's own metadata", what, name, metaFile)
 	}
 	return nil
 }

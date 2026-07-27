@@ -71,10 +71,6 @@ func New(opts task.Round) (*Archive, error) {
 	}
 	defer taskRoot.Close() // same, it only carries the walk down to the round
 
-	if layoutErr := checkOldLayout(taskRoot, taskPath); layoutErr != nil {
-		return nil, layoutErr
-	}
-
 	dir := filepath.Join(taskPath, opts.Run)
 	if entryErr := checkRoundEntry(taskRoot, opts.Run, dir); entryErr != nil {
 		return nil, entryErr
@@ -155,25 +151,6 @@ func (a *Archive) resolve(name string) (string, error) {
 		return "", fmt.Errorf("artifact %q escapes the round directory", name)
 	}
 	return clean, nil
-}
-
-// checkOldLayout refuses a task written for the layout that kept one scope.md beside a runs/ directory.
-// That scope described N rounds at once, so there is no round to assign it to and no correct migration
-// to make — reading such a task half-way would review round 2 against round 1's recorded scope.
-//
-// What identifies that shape is task.OldLayoutEntry, judged through this archive's own handle on the task —
-// the review path and `revmux new` ask it the same question, so an archive is never opened on a task either
-// of them would turn away.
-func checkOldLayout(taskRoot *os.Root, path string) error {
-	entry, err := task.OldLayoutEntry(path, taskRoot.Lstat)
-	if err != nil {
-		return err //nolint:wrapcheck // it is the stat that failed, and it already names the entry's full path
-	}
-	if entry == "" {
-		return nil
-	}
-	return fmt.Errorf("task directory %s uses the old layout: %s sits beside the rounds rather than inside one",
-		path, entry)
 }
 
 // checkRoundEntry reads the round entry under the task directory and refuses a symlink: every artifact

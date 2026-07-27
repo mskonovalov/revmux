@@ -297,12 +297,6 @@ func TestResolveContext_shapes(t *testing.T) {
 	noRound := filepath.Join(root, "no-round")
 	require.NoError(t, os.MkdirAll(noRound, 0o750))
 
-	roundInput(t, root, "old-scope", task.ScopeFile)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "old-scope", task.ScopeFile), []byte("one scope"), 0o600))
-
-	roundInput(t, root, "old-runs", task.ScopeFile)
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "old-runs", "runs", "round-1"), 0o750))
-
 	tests := []struct {
 		name    string
 		task    string
@@ -332,8 +326,6 @@ func TestResolveContext_shapes(t *testing.T) {
 		{name: "context is a file", task: "file-context", wantErr: "is a file, want a directory"},
 		{name: "missing task directory", task: "nope", wantErr: "task directory"},
 		{name: "round the caller never prepared", task: "no-round", wantErr: filepath.Join(noRound, testRun, task.InputDir)},
-		{name: "old layout, scope beside the rounds", task: "old-scope", wantErr: "old layout"},
-		{name: "old layout, a runs directory", task: "old-runs", wantErr: "runs"},
 	}
 
 	for _, tt := range tests {
@@ -350,9 +342,9 @@ func TestResolveContext_shapes(t *testing.T) {
 		})
 	}
 
-	// the old-layout gate is what stands between a task written for the previous shape and a review that
-	// reads half of it, so a stat it could not answer must fail rather than read as "the entry is absent"
-	t.Run("an unstattable task-level entry is an error, never a pass", func(t *testing.T) {
+	// a round is stat'd before its input/ is read, and a stat nobody could answer must fail rather than
+	// read as "the round is not there" and send the caller to `revmux new` for a round he already has
+	t.Run("an unstattable round is an error, never a pass", func(t *testing.T) {
 		if os.Geteuid() == 0 {
 			t.Skip("root reads inside a directory with no execute bit")
 		}
@@ -363,7 +355,8 @@ func TestResolveContext_shapes(t *testing.T) {
 
 		_, err := options{Task: "blocked", Run: testRun, TasksDir: root}.resolveContext()
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "stat "+filepath.Join(taskDir, task.ScopeFile))
+		assert.Contains(t, err.Error(), "stat "+filepath.Join(taskDir, testRun))
+		assert.NotContains(t, err.Error(), "revmux new", "it is unreadable, not absent")
 	})
 
 	// a round nobody prepared has no input/ either, so reporting it as an empty scope names a path two
@@ -382,16 +375,6 @@ func TestResolveContext_shapes(t *testing.T) {
 		_, err := options{Task: "file-round", Run: testRun, TasksDir: root}.resolveContext()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "is not a directory")
-	})
-
-	t.Run("the old layout names both shapes", func(t *testing.T) {
-		_, err := options{Task: "old-scope", Run: testRun, TasksDir: root}.resolveContext()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), task.ScopeFile, "the entry that identifies the old shape")
-		assert.Contains(t, err.Error(), filepath.Join(root, "old-scope", testRun, task.InputDir),
-			"and the path the context is read from now")
-		assert.Equal(t, "one scope", readFile(t, filepath.Join(root, "old-scope", task.ScopeFile)),
-			"a refused task is left exactly as it was")
 	})
 
 	t.Run("tasks dir outside the working directory", func(t *testing.T) {
@@ -527,10 +510,9 @@ func TestOptions_checkNames(t *testing.T) {
 			{name: "task separator", opts: options{Task: "a/b", Run: "round-1"}, want: "--task"},
 			{name: "run parent", opts: options{Task: "pr-1", Run: ".."}, want: "--run"},
 			{name: "run hidden", opts: options{Task: "pr-1", Run: ".hidden"}, want: "starts with a dot"},
-			// a round carrying one of these names is where the old-layout marker is looked for, so it
-			// makes every later review of the task fail — including of its legitimate rounds
-			{name: "run named runs", opts: options{Task: "pr-1", Run: "runs"}, want: "is reserved"},
-			{name: "run named scope.md", opts: options{Task: "pr-1", Run: task.ScopeFile}, want: "is reserved"},
+			// a round is a direct child of the task directory, so one carrying the task's own file name
+			// is read as its metadata
+			{name: "run named task.md", opts: options{Task: "pr-1", Run: "task.md"}, want: "is reserved"},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {

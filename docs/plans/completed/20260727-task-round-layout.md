@@ -568,7 +568,14 @@ Exports (justification per item: who outside the package calls this?):
 **External system updates:**
 - the 13 existing tasks under `.revmux/tasks/` use the old layout. That directory is gitignored working
   data, so wiping is acceptable. No automatic migration: the old layout has one scope for N rounds and
-  there is no correct way to assign it, so revmux refuses it with a message naming both shapes.
+  there is no correct way to assign it.
+
+  The detection this plan built for that case (`task.CheckOldLayout` and the two gates reaching it) was
+  removed after the plan completed. Nothing was ever released on the old layout, so the only tasks that
+  can carry it are these 13 local ones — the check was unreachable the moment they were wiped. Without
+  it an old-layout task no longer errors: `revmux new` scaffolds a round beside the stale `runs/` and the
+  review runs normally, seeing the old `runs/` as neither a round nor prior history. Wipe them rather
+  than reviewing one.
 
 ---
 

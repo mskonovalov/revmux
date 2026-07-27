@@ -216,7 +216,7 @@ Do not mix vocabularies inside one task — `round-1` next to `after-fix` shares
 round whose review never finished is not one of those: re-run it under the same name, with the same
 `input/`, as long as that review had not already written artifacts into the round — if it had, revmux
 refuses the name and names what it found, and the answer is a new round with the `input/` copied
-across. `task.md`, `scope.md` and `runs` are reserved and cannot name a round.
+across. `task.md` is reserved and cannot name a round.
 
 ## Rounds
 

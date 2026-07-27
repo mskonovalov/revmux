@@ -27,6 +27,7 @@ const (
 	manifestFile = "manifest.json"
 	findingsFile = "findings.json"
 	scopeFile    = "scope.md"
+	metaFile     = "task.md"
 )
 
 func TestNew(t *testing.T) {
@@ -339,15 +340,11 @@ func TestNew_roundLayout(t *testing.T) {
 		assert.NoFileExists(t, filepath.Join(round, manifestFile), "the round was never claimed")
 	})
 
-	t.Run("a round named after an old-layout marker is refused by name", func(t *testing.T) {
-		for _, run := range []string{"runs", scopeFile} {
-			t.Run(run, func(t *testing.T) {
-				root, _ := roundUnder(t, run)
-				_, err := New(task.Round{TasksDir: root, Task: taskName, Run: run})
-				require.Error(t, err, "such a round makes every later review of this task read as the old layout")
-				assert.Contains(t, err.Error(), "is reserved")
-			})
-		}
+	t.Run("a round named after the task's own metadata is refused by name", func(t *testing.T) {
+		root, _ := roundUnder(t, metaFile)
+		_, err := New(task.Round{TasksDir: root, Task: taskName, Run: metaFile})
+		require.Error(t, err, "a round carrying that name is read as the task's metadata")
+		assert.Contains(t, err.Error(), "is reserved")
 	})
 
 	t.Run("a round the caller has not created names the round to create", func(t *testing.T) {
@@ -370,32 +367,14 @@ func TestNew_roundLayout(t *testing.T) {
 		assert.Contains(t, err.Error(), filepath.Join(round, inputDir))
 	})
 
-	t.Run("the old layout is refused rather than half-read", func(t *testing.T) {
-		tests := []struct {
-			name  string
-			entry string
-			plant func(t *testing.T, taskPath string)
-		}{
-			{name: "scope.md at task level", entry: scopeFile, plant: func(t *testing.T, taskPath string) {
-				require.NoError(t, os.WriteFile(filepath.Join(taskPath, scopeFile), []byte("the old scope"), 0o600))
-			}},
-			{name: "runs at task level", entry: "runs", plant: func(t *testing.T, taskPath string) {
-				require.NoError(t, os.MkdirAll(filepath.Join(taskPath, "runs", "round-1"), 0o750))
-			}},
-		}
+	// a task directory holds its rounds and its task.md, and anything else a caller left there is his
+	t.Run("a stray file at task level is ignored", func(t *testing.T) {
+		root, round := roundUnder(t, "01-initial")
+		require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(round), "notes.md"), []byte("mine"), 0o600))
 
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				root, round := roundUnder(t, "01-initial")
-				tt.plant(t, filepath.Dir(round))
-
-				_, err := New(task.Round{TasksDir: root, Task: taskName, Run: "01-initial"})
-				require.Error(t, err, "one scope for N rounds cannot be assigned to a round, so it is refused")
-				assert.Contains(t, err.Error(), "old layout")
-				assert.Contains(t, err.Error(), tt.entry)
-				assert.NoFileExists(t, filepath.Join(round, manifestFile), "the round was never claimed")
-			})
-		}
+		a, err := New(task.Round{TasksDir: root, Task: taskName, Run: "01-initial"})
+		require.NoError(t, err, "revmux reads the round it was given and judges nothing else in the task")
+		require.NoError(t, a.Close())
 	})
 }
 

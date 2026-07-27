@@ -189,10 +189,10 @@ no separators, no `..`, not absolute, and containment re-checked on the resolved
 defeats the lexical test.
 `task.CheckName` is the single definition of that rule — `package main`, `app/archive` and `revmux new` all
 delegate to it rather than carrying a copy.
-A round name additionally passes `task.CheckRoundName`, which refuses the entries the task directory keeps
-beside its rounds: `task.md`, and the `scope.md` and `runs/` that identify the layout before rounds.
-A round named after one of those makes every later review of the task — including of its legitimate rounds
-— fail as an old-layout task.
+A round name additionally passes `task.CheckRoundName`, which refuses the one entry the task directory keeps
+beside its rounds: `task.md`.
+A round carrying that name is read as the task's own metadata, and the next `revmux new` on the task
+scaffolds over it.
 Roster agent names carry the same rule, applied at load in `prompt.AgentSpec.checkName` — but not the paths
 `Archive.Writer` takes, which are relative and must allow a separator because `agents/`, `stages/` and
 `prompts/` all need one.

@@ -310,10 +310,6 @@ func (o options) resolveContext() (reviewContext, error) {
 	if err != nil {
 		return reviewContext{}, err
 	}
-	if layoutErr := o.checkOldLayout(dir); layoutErr != nil {
-		return reviewContext{}, layoutErr
-	}
-
 	if roundErr := o.checkRound(filepath.Join(dir, o.Run)); roundErr != nil {
 		return reviewContext{}, roundErr
 	}
@@ -339,19 +335,6 @@ func (o options) resolveContext() (reviewContext, error) {
 		return reviewContext{}, err
 	}
 	return rc, nil
-}
-
-// checkOldLayout refuses a task written for the layout that kept one scope.md beside a runs/ directory.
-// That scope described N rounds at once, so there is no round to assign it to and no correct migration.
-//
-// The refusal is task.CheckOldLayout, which `revmux new` returns as well, and this is where a review reaches
-// it: resolveContext runs before archive.New, so a check only in the archive is never reached from a review.
-// Here the task is a resolved path rather than an open root, so the entries are read with os.Lstat.
-func (o options) checkOldLayout(dir string) error {
-	//nolint:wrapcheck // the refusal already opens with the task directory, so a prefix here repeats it
-	return task.CheckOldLayout(dir, filepath.Join(dir, o.Run, task.InputDir), func(name string) (fs.FileInfo, error) {
-		return os.Lstat(filepath.Join(dir, name))
-	})
 }
 
 // taskDir joins the task name onto the tasks root and verifies the result stays inside it. Containment is
