@@ -1,12 +1,16 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"time"
 
 	"github.com/umputun/revmux/app/prompt"
+	"github.com/umputun/revmux/app/task"
 )
 
 // catalogStages are the stage prompts the catalog reports, in pipeline order.
@@ -64,12 +68,34 @@ type vocabulary struct {
 
 // pathInfo is where this invocation resolved its directories, plus the tasks that already exist —
 // a --run name collides with an existing round and a caller cannot avoid that blind.
+//
+// TasksError and WorkDirError carry why a field is the raw flag rather than a resolved path. An
+// unreadable tasks root reported as no tasks at all is the same wrong advice an unreported meta_error
+// gives one level down: it reads as "nothing is there" and mints a duplicate id.
 type pathInfo struct {
-	TasksDir   string   `json:"tasks_dir"`
-	ConfigDir  string   `json:"config_dir"`
-	ProjectDir string   `json:"project_dir,omitempty"`
-	WorkDir    string   `json:"workdir"`
-	Tasks      []string `json:"tasks"`
+	TasksDir     string     `json:"tasks_dir"`
+	TasksError   string     `json:"tasks_error,omitempty"`
+	ConfigDir    string     `json:"config_dir"`
+	ProjectDir   string     `json:"project_dir,omitempty"`
+	WorkDir      string     `json:"workdir"`
+	WorkDirError string     `json:"workdir_error,omitempty"`
+	Tasks        []taskInfo `json:"tasks"`
+}
+
+// taskInfo is one existing task: its id, what its task.md says about it, and the rounds already
+// recorded under it. This is what a caller model matches an in-flight review against, so an id alone
+// is not enough — without the anchors it cannot tell pr-123 from a near-duplicate it is about to mint.
+//
+// MetaError carries why the anchors are empty when task.md would not parse, and RoundsError why the
+// rounds are empty when the task directory could not be read. The task is still listed either way — one
+// omitted here is one a caller gives a second id to — but an empty field on its own reads as "there is
+// nothing here", which is the opposite advice.
+type taskInfo struct {
+	ID string `json:"id"`
+	task.Meta
+	MetaError   string   `json:"meta_error,omitempty"`
+	Rounds      []string `json:"rounds"`
+	RoundsError string   `json:"rounds_error,omitempty"`
 }
 
 // Execute records that the config command was selected. Writing the catalog here would bypass the
@@ -133,26 +159,79 @@ func (o options) knobs() []knob {
 	return out
 }
 
-// paths resolves the two roots and the working directory, and lists the tasks already under the
-// tasks root. An absent tasks root is a clean install, not an error.
+// paths resolves the two roots and the working directory, and lists the tasks already under the tasks
+// root. Each part reports its own failure instead of a plausible-looking value: a workdir that would not
+// resolve is a review that dies later, and an unreadable tasks root is not an empty one. An absent tasks
+// root is a clean install and neither.
 func (o options) paths() pathInfo {
-	p := pathInfo{TasksDir: o.TasksDir, ConfigDir: o.layers.user, ProjectDir: o.layers.project, WorkDir: o.WorkDir}
-	if abs, err := filepath.Abs(o.TasksDir); err == nil {
-		p.TasksDir = abs
-	}
-	if dir, err := o.workDir(); err == nil {
+	p := pathInfo{TasksDir: o.TasksDir, ConfigDir: o.layers.user, ProjectDir: o.layers.project,
+		WorkDir: o.WorkDir, Tasks: []taskInfo{}}
+	if dir, err := o.workDir(); err != nil {
+		p.WorkDirError = err.Error()
+	} else {
 		p.WorkDir = dir
 	}
 
-	p.Tasks = []string{}
-	entries, err := os.ReadDir(p.TasksDir)
+	abs, err := filepath.Abs(o.TasksDir)
 	if err != nil {
+		p.TasksError = fmt.Sprintf("resolve tasks dir %q: %s", o.TasksDir, err)
 		return p
 	}
-	for _, e := range entries {
-		if e.IsDir() {
-			p.Tasks = append(p.Tasks, e.Name())
-		}
+	p.TasksDir = abs
+
+	tasks, err := o.tasks(abs)
+	if err != nil {
+		p.TasksError = err.Error()
 	}
+	p.Tasks = tasks
 	return p
+}
+
+// tasks reports every task under the tasks root with the metadata a caller matches on. A task.md that
+// is absent or will not parse leaves the anchors empty rather than hiding the task: the directory is
+// there either way, and a task omitted from this list is one a caller mints a second id for.
+//
+// A parse failure is reported on the entry rather than dropped. Silently empty anchors are how a typo'd
+// key becomes a duplicate task id — the exact failure task.md exists to prevent. Rounds come from
+// task.Rounds, the same enumeration the prior-round inventory is built from.
+//
+// Which entries are tasks is decided through an os.Root on the tasks root, so this lists exactly what
+// archive.New can open: a task reached through a relative symlink to a sibling is a task a review runs
+// under, and omitting that id is how a caller mints a second one for a task already in flight. A link
+// the archive cannot walk — absolute, or pointing out of the root — is left out for the same reason
+// reversed, since listing it advertises a review that cannot run.
+func (o options) tasks(root string) ([]taskInfo, error) {
+	out := []taskInfo{}
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, fs.ErrNotExist) {
+		return out, nil
+	}
+	if err != nil {
+		return out, fmt.Errorf("read tasks root %s: %w", root, err)
+	}
+	tasksRoot, err := os.OpenRoot(root)
+	if err != nil {
+		return out, fmt.Errorf("open tasks root %s: %w", root, err)
+	}
+	defer tasksRoot.Close()
+
+	for _, e := range entries {
+		if fi, statErr := tasksRoot.Stat(e.Name()); statErr != nil || !fi.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, e.Name())
+		meta, loadErr := task.Load(dir)
+		info := taskInfo{ID: e.Name(), Meta: meta, Rounds: []string{}}
+		if loadErr != nil {
+			info.MetaError = loadErr.Error()
+		}
+		rounds, roundsErr := task.Rounds(dir)
+		if roundsErr != nil {
+			info.RoundsError = roundsErr.Error()
+		} else {
+			info.Rounds = rounds
+		}
+		out = append(out, info)
+	}
+	return out, nil
 }
