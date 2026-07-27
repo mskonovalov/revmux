@@ -25,9 +25,14 @@ const minWrapCols = 20
 // finding's body. A pane is where a reader went looking for detail, so it is the last place to throw
 // the end of it away.
 func Wrap(head, text string, width int) []string {
+	// **the narrow branch clips rather than passing the row through.** Every row this returns has to
+	// fit the width, whoever called it: the TUI's panes happen to run their rows through clipAll
+	// afterwards, but the plain renderer writes them straight to stderr, so a bound that lives in the
+	// caller is a bound one caller does not have. Below the floor a wrapped entry is more rows of
+	// indent than of text, so that case clips instead of wrapping — but it still fits.
 	avail := width - lipgloss.Width(head)
 	if avail < minWrapCols || lipgloss.Width(text) <= avail {
-		return []string{head + text}
+		return []string{lipgloss.NewStyle().MaxWidth(width).Render(head + text)}
 	}
 
 	indent := strings.Repeat(" ", lipgloss.Width(head))

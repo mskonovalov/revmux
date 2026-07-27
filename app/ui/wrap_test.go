@@ -2,6 +2,7 @@ package ui
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -76,5 +77,28 @@ func TestWrap_ansiAndRunes(t *testing.T) {
 		// takeCols directly: Wrap's floor short-circuits before a column this narrow is reached, and
 		// what must not happen here is a cut that can never fit looping forever
 		assert.Equal(t, "🙂", takeCols(strings.Repeat("🙂", 4), 1), "it overflows by a cell rather than hanging")
+	})
+}
+
+func TestWrap_alwaysFitsTheWidth(t *testing.T) {
+	// **every row must fit whoever called.** The TUI's panes run their rows through clipAll afterwards
+	// and would hide a miss here; the plain renderer writes them straight to stderr and would not.
+	long := "checking whether the stagger gate can still be opened by something other than model output"
+	for _, width := range []int{200, 80, 40, 25, 19, 10, 3, 1} {
+		t.Run(strconv.Itoa(width)+" columns", func(t *testing.T) {
+			for _, head := range []string{"", "12:00:00 ", strings.Repeat("x", 30)} {
+				for _, row := range Wrap(head, long, width) {
+					assert.LessOrEqual(t, lipgloss.Width(row), width,
+						"head %q at %d columns produced %q", head, width, row)
+				}
+			}
+		})
+	}
+
+	t.Run("below the wrap floor it clips rather than passing the row through", func(t *testing.T) {
+		// this is the branch the plain renderer used to clip itself, before that clip was deleted
+		out := Wrap(strings.Repeat("x", 70), long, 80)
+		require.Len(t, out, 1, "too narrow to wrap into")
+		assert.LessOrEqual(t, lipgloss.Width(out[0]), 80, "but still bounded")
 	})
 }

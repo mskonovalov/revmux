@@ -139,3 +139,33 @@ func TestModel_header_degradesInsteadOfClipping(t *testing.T) {
 		assert.Contains(t, narrow.header(), "3 findings", "but the total stays")
 	})
 }
+
+func TestModel_header_ladderOrder(t *testing.T) {
+	// the order is stated in .claude/rules/tui.md and was wrong once: the total outlives the stage,
+	// because a reader who has lost the stage still learns whether anything was found, while a stage
+	// name with no count says only that something is happening. Reverting that rung left every other
+	// test green, so this is what holds it.
+	m := feed(t, New(ModelConfig{Roster: roster()}),
+		pipeline.Event{Kind: pipeline.EventStage, Stage: "verify", At: at},
+		pipeline.Event{Kind: pipeline.EventFindings, Agent: "bugs+impl", At: at, Findings: []finding.Finding{
+			{Severity: finding.Critical}, {Severity: finding.Major}, {Severity: finding.Minor}}},
+	)
+
+	// widths chosen to land on each rung in turn
+	at120 := feed(t, m, tea.WindowSizeMsg{Width: 120, Height: 24}).header()
+	assert.Contains(t, at120, "2 agents")
+	assert.Contains(t, at120, "verify")
+	assert.Contains(t, at120, "(1 critical, 1 major, 1 minor)", "everything fits")
+
+	at40 := feed(t, m, tea.WindowSizeMsg{Width: 40, Height: 24}).header()
+	assert.NotContains(t, at40, "critical", "the breakdown went first")
+	assert.Contains(t, at40, "3 findings", "the total is still here")
+
+	at28 := feed(t, m, tea.WindowSizeMsg{Width: 28, Height: 24}).header()
+	assert.NotContains(t, at28, "agents", "then the agent count")
+	assert.Contains(t, at28, "3 findings")
+
+	at20 := feed(t, m, tea.WindowSizeMsg{Width: 20, Height: 24}).header()
+	assert.NotContains(t, at20, "verify", "then the stage")
+	assert.Contains(t, at20, "3 findings", "and the total is the last thing to go")
+}

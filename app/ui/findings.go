@@ -93,7 +93,7 @@ func (f *findingsState) render(width int) []string {
 		if i == 0 || v.Severity != vis[i-1].Severity {
 			lines = append(lines, f.heading(v.Severity))
 		}
-		lines = append(lines, Wrap("", f.row(v), width)...)
+		lines = append(lines, f.rowLines(v, width)...)
 		lines = append(lines, f.detail(v, width)...)
 	}
 	return lines
@@ -122,10 +122,21 @@ func (f *findingsState) heading(s finding.Severity) string {
 	return heading(2, s.Heading())
 }
 
-// row is one finding's headline: the report's own "### title" line, carrying the confidence the report
-// prints at the foot of the entry.
-func (f *findingsState) row(v finding.Finding) string {
-	return heading(3, v.Title) + "  [" + strconv.Itoa(v.Confidence) + "]"
+// rowLines is one finding's headline — the report's own "### title" line carrying the confidence the
+// report prints at the foot of the entry — wrapped, with each row styled in its own right.
+//
+// **A style opened on one row and closed on another does not survive the break.** heading() puts its
+// opener at the very start and its closer at the very end, so wrapping the rendered string leaves the
+// first row opening a style it never closes and the rows after it carrying no opener at all — the
+// title would paint its first line and render the rest plain. Wrapping the plain text and styling each
+// row is what keeps every row self-contained.
+func (f *findingsState) rowLines(v finding.Finding, width int) []string {
+	plain := "### " + v.Title + "  [" + strconv.Itoa(v.Confidence) + "]"
+	rows := Wrap("", plain, width)
+	for i, r := range rows {
+		rows[i] = ansiHeadOn + markdownWithin(r, ansiHeadOn) + ansiHeadOff
+	}
+	return rows
 }
 
 // detail is the rest of the report's entry, in the report's own order: where it is, the body, the fix,

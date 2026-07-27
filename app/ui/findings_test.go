@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -85,9 +86,9 @@ func TestModel_findingsPane(t *testing.T) {
 	assert.Contains(t, pane, "\x1b[1m\x1b[36m## Minor\x1b[39m\x1b[22m")
 	// the report's own shape: the title is the heading and the location sits under it, as "### title"
 	// followed by its `file:line` does on stdout
-	assert.Contains(t, pane, "\x1b[1m\x1b[36m### unchecked error\x1b[39m\x1b[22m  [95]", "the worst finding is first")
+	assert.Contains(t, pane, "\x1b[1m\x1b[36m### unchecked error  [95]\x1b[39m\x1b[22m", "the worst finding is first")
 	assert.Contains(t, pane, "    app/main.go:42-48", "with where it is on the line under it")
-	assert.Contains(t, pane, heading(3, "pane clipping")+"  [80]")
+	assert.Contains(t, pane, "\x1b[1m\x1b[36m### pane clipping  [80]\x1b[39m\x1b[22m")
 	assert.Contains(t, pane, "    app/ui/view.go", "a file-level finding renders as the bare path")
 	assert.Contains(t, pane, "    the write error is dropped", "a finding opens showing its body, not just its summary")
 	assert.NotContains(t, pane, "is the retry budget right", "open questions are the report's, not the browser's")
@@ -99,8 +100,8 @@ func TestModel_findingsPane(t *testing.T) {
 		}}
 		lines := browsed(t, rep).findingsPane()
 		assert.Equal(t, []string{
-			heading(2, "Critical"), heading(3, "bad") + "  [0]", "    b.go:2", "",
-			heading(2, "Invented"), heading(3, "odd") + "  [0]", "    a.go:1", "",
+			heading(2, "Critical"), "\x1b[1m\x1b[36m### bad  [0]\x1b[39m\x1b[22m", "    b.go:2", "",
+			heading(2, "Invented"), "\x1b[1m\x1b[36m### odd  [0]\x1b[39m\x1b[22m", "    a.go:1", "",
 		}, lines)
 	})
 
@@ -148,7 +149,7 @@ func TestFindingsState_rendersTheWholeReport(t *testing.T) {
 	// per finding and needed state kept in step with the pane.
 	pane := strings.Join(browsed(t, report()).findingsPane(), "\n")
 
-	assert.Contains(t, pane, heading(3, "unchecked error"), "the title, as the report's ### heading")
+	assert.Contains(t, pane, "\x1b[1m\x1b[36m### unchecked error  [95]\x1b[39m\x1b[22m", "the title, as the report's ### heading")
 	assert.Contains(t, pane, "    app/main.go:42-48", "where it is, on the line under it")
 	assert.Contains(t, pane, "    the write error is dropped", "the body, indented under that")
 	assert.Contains(t, pane, "    so a short write reads as success", "keeping its own line breaks")
@@ -163,7 +164,7 @@ func TestFindingsState_rendersTheWholeReport(t *testing.T) {
 	t.Run("a finding with no body still shows where it is", func(t *testing.T) {
 		terse := finding.Report{Findings: []finding.Finding{
 			{File: "a.go", Line: 1, Severity: finding.Minor, Title: "terse"}}}
-		assert.Equal(t, []string{heading(2, "Minor"), heading(3, "terse") + "  [0]", "    a.go:1", ""},
+		assert.Equal(t, []string{heading(2, "Minor"), "\x1b[1m\x1b[36m### terse  [0]\x1b[39m\x1b[22m", "    a.go:1", ""},
 			browsed(t, terse).findingsPane())
 	})
 
@@ -283,4 +284,33 @@ func TestModel_findingsScrollWindow(t *testing.T) {
 		assert.Equal(t, up.maxScroll(), up.view.scroll, "it stops at the top rather than running past it")
 		assert.Contains(t, strings.Join(up.detailPane(), "\n"), "issue a")
 	})
+}
+
+func TestFindingsState_titleWrapsWithEveryRowStyled(t *testing.T) {
+	// **a style opened on one row and closed on another does not survive the break.** Styling the whole
+	// rendered string and then wrapping it leaves the first row opening a style it never closes and the
+	// rows after it carrying no opener — the title paints its first line and renders the rest plain.
+	long := finding.Report{Findings: []finding.Finding{{
+		File: "app/ui/wrap.go", Line: 29, Severity: finding.Major, Confidence: 97,
+		Title: "Wrap's narrow branch returns an unclipped row, so the plain renderer lost its output bound",
+	}}}
+	m := feed(t, browsed(t, long), tea.WindowSizeMsg{Width: 60, Height: 40})
+
+	var rows []string
+	for _, l := range m.findingsPane() {
+		if strings.Contains(l, "###") || strings.Contains(l, "output bound") {
+			rows = append(rows, l)
+		}
+	}
+	require.Greater(t, len(rows), 1, "the title is longer than the pane, so it wraps")
+
+	for _, r := range rows {
+		assert.True(t, strings.HasPrefix(r, ansiHeadOn), "every row opens the heading style, got %q", r)
+		assert.True(t, strings.HasSuffix(r, ansiHeadOff), "and closes it, got %q", r)
+		assert.LessOrEqual(t, lipgloss.Width(r), 60)
+	}
+
+	joined := strings.Join(strings.Fields(strings.Join(rows, " ")), " ")
+	assert.Contains(t, joined, "lost its output bound", "and the tail of the title survives")
+	assert.Contains(t, joined, "[97]", "with the confidence marker still on it")
 }
