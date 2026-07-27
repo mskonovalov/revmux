@@ -240,6 +240,12 @@ Stamping happens in `find`, not synthesis, or `--no-synthesis` runs carry invent
   directory layout — needs the same edit in **both** skill trees, since they hold duplicate copies of
   `references/` and `scripts/`. A `diff -r` of the two `references/` and `scripts/` directories must
   come back empty; only `SKILL.md` differs.
+- **The skill is documentation of this binary, so a change to the binary updates it in the same commit.**
+  It states revmux's flags, profiles, JSON field names, exit codes and archive layout as fact, and an
+  agent executes what it says without checking. A skill describing a flag that no longer behaves that way
+  is worse than one that omits it: the caller acts on it confidently and has to recover afterwards.
+  Treat `.claude-plugin/skills/` and `plugins/codex/` as consumers of `app/config.go`, `app/finding/`
+  and `app/archive/` the way `README.md` is.
 - A new prompt input — a variable, an injected block, a per-agent knob — needs a matching record in
   `manifest.json` or the archived prompt, or a reflection agent cannot tell what shaped the review.
 - Changing any of the three stage schemas means changing the embedded JSON under `app/finding/`

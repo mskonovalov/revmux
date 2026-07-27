@@ -1,17 +1,17 @@
 # Reading what revmux returns
 
-The report goes to **stdout**, as JSON by default or markdown with `--markdown`. Nothing else is ever
-written to stdout — the TUI renders to the tty, progress lines go to stderr — so
-`revmux --task pr-123 > findings.json` is safe with the display running.
+The report goes to **stdout**, JSON by default or markdown with `--markdown`. Nothing else is written
+to stdout, so `revmux --task pr-123 > findings.json` is safe with the TUI running.
 
-Prefer JSON when a model is consuming the result. Use `--markdown` only when the output is going
-straight to a human without being parsed.
+Prefer JSON when a model consumes it. Use `--markdown` only for output going straight to a human.
+
+**Never `2>&1` into the report file** — stderr is the progress renderer and makes the JSON unparseable.
 
 ## The JSON shape
 
 ```json
 {
-  "scope": {"task": "pr-123", "run": "after-fix", "scope_path": "/abs/.revmux/tasks/pr-123/scope.md"},
+  "scope": {"task": "pr-123", "run": "02-after-fix", "scope_path": "/abs/.revmux/tasks/pr-123/scope.md"},
   "sources": {
     "expected": 4, "reported": 3, "degraded": ["docs+tests"],
     "agents": [
@@ -36,141 +36,123 @@ straight to a human without being parsed.
 }
 ```
 
-Empty lists are emitted as arrays rather than `null`, so indexing into them needs no nil check.
+Empty lists are arrays, never `null`.
 
 ## Check `sources` before reading `findings`
 
-**A degraded run can look like a clean one.** If two of four sources died, the findings list is
-genuinely shorter — and nothing about the list itself says why.
+A degraded run looks like a clean one: the findings list is genuinely shorter and nothing in it says why.
 
 ```
 sources.expected    how many sources the roster called for
-sources.reported    how many actually returned findings
+sources.reported    how many returned findings
 sources.degraded    names of the ones that did not
 ```
 
-`expected != reported` means the review is partial. Say so when reporting to the user, name the
-degraded sources, and treat "no findings" from a half-degraded run as "inconclusive", never as "the
-code is clean". Offer to re-run rather than presenting a thin result as a verdict.
+`expected != reported` means partial. Lead with it, name the degraded sources, and treat "no findings"
+as inconclusive rather than clean. Offer to re-run.
 
-A run where *every* source degraded exits `2` — that is a tool error, not a clean empty report.
+Every source degrading exits `2` — a tool error, not a clean empty report.
 
-`agents[].requested_model` versus `agents[].actual_model` is worth a glance: `claude --model` can be
-silently ignored, so a roster's model pin is a claim until it is read back. A mismatch does not
-invalidate the review, but it explains a review that reads shallower than expected.
+`requested_model` vs `actual_model`: `claude --model` can be silently ignored, so a model pin is a
+claim until read back. A mismatch does not invalidate the review but explains a shallow one.
 
 ## Findings
 
 | field | meaning |
 |---|---|
-| `id` | stable within this report; use it when referring to a finding |
-| `file`, `line`, `end_line` | `line` is the anchor. `end_line` `0` means a single line; `line` `0` means a file-level finding that renders as the bare path |
+| `id` | stable within this report |
+| `file`, `line`, `end_line` | `end_line` `0` = single line; `line` `0` = file-level |
 | `severity` | `critical`, `major`, `minor` |
-| `confidence` | 0-100. `--min-confidence` has already filtered on this |
-| `title` | one line, the claim |
-| `body` | the argument — why this is a defect, with the trigger and the consequence |
+| `confidence` | 0-100, already filtered by `--min-confidence` |
+| `title` | the claim, one line |
+| `body` | the argument — trigger and consequence |
 | `fix` | the suggested change |
 | `sources` | **agent names** that raised it |
 | `lenses` | **lens names** it was raised under |
-| `verdict` | the verify stage's judgment |
+| `verdict` | verify's judgment |
 
 ### `sources` and `lenses` are not interchangeable
 
-`sources` holds agent names — `["bugs+impl", "codex"]` — and is the only input to the cross-source
-confidence boost. **A source is a process.** An agent carrying two lenses that flags the same issue
-under both is still one source; it cannot corroborate itself.
+`sources` holds agent names and is the only input to the cross-source confidence boost. **A source is
+a process** — an agent carrying two lenses that flags the same issue under both is still one source.
 
-`lenses` holds the lens names that raised it — `["bugs", "adversarial"]` — and is informational. It
-answers "why was this reported", never "how many independently agreed".
+`lenses` is informational: why it was reported, never how many independently agreed.
 
-Two entries in `sources` means two separate processes found the same thing, which is the strongest
-signal in the report. Two entries in `lenses` with one entry in `sources` means one agent noticed it
-twice, which is not.
+Two entries in `sources` is the strongest signal in the report. Two in `lenses` with one in `sources`
+is not.
 
-Go stamps `sources` after parsing and no schema exposes it to the model, so it cannot be inflated by
-an agent naming itself twice.
+Go stamps `sources` after parsing; no schema exposes it to the model.
 
 ### Verdicts
 
-| verdict | meaning | how to treat it |
-|---|---|---|
-| `confirmed` | checked against the code and stands as written | act on it |
-| `refined` | real, but the description was adjusted | act on it; the body is the corrected version |
-| `rejected` | checked and found not to be a defect | do not act on it |
-| `immaterial` | technically true, no real consequence | mention only if asked for everything |
-| `pre_existing` | real but not introduced by this change | report separately, do not fold into the change's findings |
-| `unverified` | the verify stage was skipped (`--no-verify`) | every finding is a claim nobody checked; say so |
+| verdict | how to treat it |
+|---|---|
+| `confirmed` | act on it |
+| `refined` | act on it; the body is the corrected version |
+| `rejected` | do not act on it |
+| `immaterial` | mention only if asked for everything |
+| `pre_existing` | report separately, not this change's responsibility |
+| `unverified` | verify was skipped; every finding is unchecked, say so |
 
-`rejected`, `immaterial` and `pre_existing` findings are moved out of `findings` into their own
-top-level lists, so `findings` holds what survived.
+`rejected`, `immaterial` and `pre_existing` move out of `findings` into their own top-level lists.
 
 ## The other lists
 
-- `open_questions` — things a reviewer could not resolve from the code alone. These are questions for
-  the author, not defects. Surfacing them is usually valuable; they are often where the real problem
-  turns out to be.
-- `pre_existing` — real issues the change did not introduce. Worth reporting as a separate section so
-  the author is not asked to fix unrelated things as a condition of this change.
-- `immaterial` — true but inconsequential. Usually noise; keep them out of a summary unless asked.
+- `open_questions` — questions for the author, not defects. Often where the real problem is.
+- `pre_existing` — report as a separate section so the author is not asked to fix unrelated things.
+- `immaterial` — usually noise; keep out of a summary unless asked.
 
 ## Reporting to a human
 
-A useful summary, in order:
-
-1. **Whether the run was complete** — if `sources.degraded` is non-empty, lead with it.
-2. **Counts by severity**, from `findings`.
+1. **Whether the run was complete** — lead with `sources.degraded` if non-empty
+2. **Counts by severity**
 3. **Each finding**: `file:line`, severity, title, then the body's argument and the fix. Group by
-   severity, not by file — a reader triages on severity.
-4. **Cross-source corroboration** where `len(sources) > 1`; it is the strongest signal available.
-5. **Open questions**, separately.
-6. **Pre-existing issues**, separately and explicitly flagged as out of scope for this change.
+   severity, not by file.
+4. **Cross-source corroboration** where `len(sources) > 1`
+5. **Open questions**, separately
+6. **Pre-existing issues**, separately and flagged out of scope
 
-Do not paraphrase a finding's body down to its title. The body carries the trigger and the
-consequence, which is what makes it actionable.
+Do not paraphrase a body down to its title — the body carries the trigger and consequence.
 
 ## The run archive
 
-Every run writes artifacts under `<task-dir>/runs/<run>/`. They exist so a review can be audited
-without re-running it.
+Under `<task-dir>/runs/<run>/`:
 
 ```
-runs/after-fix/
-├── manifest.json             roster, prompt provenance + content hashes, requested vs actual model, timings
+runs/02-after-fix/
+├── manifest.json             roster, prompt provenance + hashes, requested vs actual model, timings
 ├── prompts/
-│   ├── agents/               composed prompt per agent, post-substitution — the bytes the model saw
+│   ├── agents/               composed prompt per agent, post-substitution
 │   └── stages/               synthesis.md, verify-<group>.md
 ├── stages/
-│   ├── 1-found.json          findings as the find stage left them
+│   ├── 1-found.json
 │   ├── 2-synthesized.json
 │   └── 3-verified.json       absent when the stage was skipped
-├── events.jsonl              revmux's own decisions: stalls, retries, degrades, stage transitions
-├── agents/                   verbatim tees
+├── events.jsonl              stalls, retries, degrades, stage transitions
+├── agents/
 │   ├── bugs+impl.jsonl       claude stream-json
-│   ├── bugs+impl.retry.jsonl a retried agent keeps both attempts
+│   ├── bugs+impl.retry.jsonl second attempt when one was retried
 │   └── codex.log             codex prose
-├── report.md                 the filtered report, byte for byte what the caller was shown
+├── report.md
 └── findings.json
 ```
 
-Reach for these when a review looks wrong:
+Both `report.md` and `findings.json` are always written, whichever renderer went to stdout. This is
+the recovery path when a run's stdout was lost.
 
 | question | file |
 |---|---|
-| why did this agent report nothing? | `agents/<name>.jsonl` — the verbatim stream |
-| did an agent stall or get retried? | `events.jsonl`, and the presence of `<name>.retry.jsonl` |
-| did synthesis drop something real? | diff `stages/1-found.json` against `stages/2-synthesized.json` |
-| did verify reject something it should not have? | `stages/2-synthesized.json` against `3-verified.json` |
-| what exactly was this agent asked? | `prompts/agents/<name>.md` — post-substitution, the real bytes |
-| which lens text was used, and from which layer? | `manifest.json` prompt provenance and content hashes |
-| did the model pin actually take? | `manifest.json` requested versus actual model |
+| why did this agent report nothing? | `agents/<name>.jsonl` |
+| did an agent stall or get retried? | `events.jsonl`, plus a `<name>.retry.jsonl` |
+| did synthesis drop something real? | `stages/1-found.json` vs `2-synthesized.json` |
+| did verify reject wrongly? | `stages/2-synthesized.json` vs `3-verified.json` |
+| what was this agent asked? | `prompts/agents/<name>.md` |
+| which lens text, from which layer? | `manifest.json` |
 
-`manifest.json` records which of the three precedence layers supplied each prompt file and its content
-hash, because two rounds of one task can use different lens text.
+A failed archive write fails the run. The exception is a per-agent tee, which degrades that source.
 
-A failed archive write fails the run — a report emitted next to a half-written archive reads as
-complete, and the gap only surfaces when someone tries to audit it. The one exception is a per-agent
-tee under `agents/`, which degrades that single source instead and is reported like any other agent
-failure.
+`--keep-runs` (default 10) prunes old rounds by mtime, so archived reports are not permanent. Pruning
+only reads `runs/`; the caller-owned files are never candidates.
 
 ## The plain progress renderer
 
@@ -184,5 +166,5 @@ With `--no-tui`, events render as timestamped lines on **stderr**:
 16:05:40 stage synthesis
 ```
 
-Worth reading after a run that produced a surprising result — `retrying:` and `degraded` lines here
-explain a thin report before the archive has to be opened.
+`tail -f` on this file is what a user watches during a headless run. Read its tail plus
+`events.jsonl` to answer a status request; do not guess.

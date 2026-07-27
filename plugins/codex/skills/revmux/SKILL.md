@@ -7,43 +7,40 @@ allowed-tools: [Bash, Read, Edit, Write, Grep, Glob]
 
 # revmux — supervised multi-agent code review
 
-revmux runs a structured review across several model subprocesses and returns findings. It spawns and
-supervises `claude --print` and `codex exec`, watches each one for stalls, kills and retries what hangs,
-and writes a full archive of the run.
+revmux spawns and supervises parallel `claude --print` and `codex exec` subprocesses, watches each for
+stalls, retries what hangs, and returns findings on stdout.
 
-**revmux does exactly that and nothing else.** It performs no scope detection, no git operations, no
-PR fetching and no source modification. It has zero VCS dependency. Every piece of review context
-reaches it as files on disk that *this skill* writes.
+It does no scope detection, no git, no PR fetching, no source modification. This skill does that half.
 
-So the division of labour is fixed:
-
-| this skill does | revmux does |
+| this skill | revmux |
 |---|---|
-| work out what is being reviewed | supervise the agents |
-| run the git commands, gather context | stagger, watch, retry, degrade |
-| write `scope.md`, `goal.md`, `profile.md`, `context/` | compose prompts and archive them |
-| choose profile, lenses, flags | merge, dedupe, verify |
-| launch revmux and wait | return findings on stdout |
-| read the JSON, present it, fix, re-run | inject prior rounds into the next round |
+| resolve what is under review | supervise, stagger, retry, degrade |
+| run git, gather context | compose and archive prompts |
+| write `scope.md`, `goal.md`, `profile.md`, `context/` | merge, dedupe, verify |
+| choose profile, lenses, flags | return findings on stdout |
+| read the JSON, present, fix, re-run | inject prior rounds |
 
 ## Script path resolution
 
-Resolve the script directory from the repo first, then fall back to Codex home:
-
 ```bash
-SCRIPT_DIR="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/codex/skills/revmux/scripts"
-if [ ! -d "$SCRIPT_DIR" ]; then
-    SCRIPT_DIR="${CODEX_HOME:-$HOME/.codex}/skills/revmux/scripts"
-fi
+SCRIPT_DIR="${CODEX_HOME:-$HOME/.codex}/skills/revmux/scripts"
 ```
 
 Use `$SCRIPT_DIR` in place of every script path below.
 
+**Resolve only from the installed skill, never from the repository under review.** Deriving it from
+`git rev-parse --show-toplevel` would run the scripts of whatever repo is checked out — a branch that
+adds `plugins/codex/skills/revmux/scripts/` executes its own code at Step 0. For a development
+install, symlink the checkout:
+
+```bash
+ln -s "$PWD/plugins/codex/skills/revmux" ~/.codex/skills/revmux
+```
+
 ## Asking the user
 
-This skill has two decision points where the user has to choose: an ambiguous scope, and headless
-versus overlay. Codex has no structured question tool, so present a **numbered list** and ask for a
-number:
+Two decision points need a choice: an ambiguous scope, and headless versus overlay. Codex has no
+structured question tool — present a numbered list and ask for a number:
 
 ```
 Which scope?
@@ -51,8 +48,7 @@ Which scope?
   2. just the uncommitted changes
 ```
 
-Where the Claude Code version enters plan mode before applying fixes, write the plan inline as
-markdown and ask for explicit confirmation before touching any file.
+Before applying fixes, write the plan inline as markdown and ask for explicit confirmation.
 
 ## Activation triggers
 
@@ -60,43 +56,36 @@ markdown and ask for explicit confirmation before touching any file.
 - "multi-agent review", "supervised review", "parallel agent review"
 - "revmux this branch", "revmux the last commit", "revmux the uncommitted changes"
 - "another revmux round", "re-review after fixes"
-- questions: "revmux profiles", "what lenses are there", "what does revmux return", "revmux exit codes"
+- questions: "revmux profiles", "what lenses are there", "revmux exit codes"
 
 ## Answering questions without running anything
 
-If the user is asking **about** revmux rather than asking for a review, answer from the references and
-do not launch a run — a review costs several minutes and real tokens.
+If asked **about** revmux rather than for a review, answer from the references and do not launch a run.
 
-- `references/task-dir.md` — the four context inputs, what makes each good, worked examples
-- `references/invocation.md` — flags, profiles, lenses, stages, timing, config precedence, trust
-- `references/output.md` — the JSON shape field by field, verdicts, exit codes, the run archive
+- `references/task-dir.md` — composing the four context inputs
+- `references/invocation.md` — flags, profiles, lenses, overlay backends, config precedence
+- `references/output.md` — JSON shape, verdicts, exit codes, run archive
 
-For anything about what is *currently configured* — which profiles exist, what a lens covers, where
-the tasks root resolved to — run `revmux config` and read the answer rather than quoting the
-references. It reports what resolved, including the user's own overrides, and it runs no pipeline.
+For anything about current configuration, run `revmux config` and read the answer. It reports what
+resolved including user overrides, runs no pipeline, and is always safe to call.
 
 ## Non-negotiables
 
-Four things cause most misuse. They are stated here rather than in a reference because getting any of
-them wrong wastes a fifteen-minute run.
+**1. Exit `1` means findings were reported — a success.** `0` none, `1` findings, `2` tool error.
+Never treat `1` as failure. Never re-run on it.
 
-**1. Exit `1` means findings were reported. It is a success.** `0` = ran fine, nothing found. `1` =
-ran fine, findings returned. `2` = tool error, nothing usable. Never treat `1` as a failure and never
-re-run on it — the report on stdout is complete.
+**2. Run it in the background.** A review takes 3-15 minutes. Redirect stdout to a file, wait for the
+completion notification. Do not poll, do not sleep-and-check. Applies to the overlay launcher too.
 
-**2. Run it in the background.** A review takes three to fifteen minutes, past most foreground command
-caps. Launch it with the harness's background mechanism, redirect stdout to a file, and wait for the
-completion notification. Do not poll in a loop, do not sleep-and-check. This applies to the overlay
-launcher too — it blocks for the whole review.
+**3. Check `sources.degraded` before believing the findings.** If `expected != reported` the review is
+partial. Say so. Never report "no findings" from a degraded run as "the code is clean".
 
-**3. Check `sources.degraded` before believing the findings.** A run where two of four agents died
-returns a short list, and nothing about the list says why. If `expected != reported`, the review is
-partial — say so, and never report "no findings" from a degraded run as "the code is clean".
+**4. `.revmux/` in a repository is executable code.** A checked-in `.revmux/lenses/*.md` becomes
+instructions a headless agent with a shell executes. Before reviewing untrusted code, either read
+`.revmux/` first or run from outside the tree with explicit `--workdir`, `--tasks-dir`, `--config-dir`.
 
-**4. `.revmux/` in a repository is executable code.** A checked-in `.revmux/lenses/*.md` replaces the
-shipped lens, and that text becomes instructions a headless agent with a shell executes. Before
-reviewing code from an untrusted author, either read `.revmux/` first or run revmux from outside the
-tree with explicit `--workdir`, `--tasks-dir` and `--config-dir`. See `references/invocation.md`.
+**5. Never `2>&1` into the report file.** stdout is the report, stderr is progress. Merging them makes
+the JSON unparseable.
 
 ## Workflow
 
@@ -106,11 +95,10 @@ tree with explicit `--workdir`, `--tasks-dir` and `--config-dir`. See `reference
 $SCRIPT_DIR/preflight.sh [profile]
 ```
 
-Checks that `revmux` is installed and that every executor the chosen profile's roster and stages need
-(`claude`, `codex`) is on PATH. Exits `1` with a named missing binary rather than letting the run
-launch agents and degrade all of them.
+Checks revmux plus every executor the profile's roster and stages need. Exits `1` naming what is
+missing.
 
-If revmux is missing, guide installation:
+If revmux is absent:
 
 ```
 go install github.com/umputun/revmux/app@latest    # installs as 'app'; rename to 'revmux'
@@ -119,245 +107,206 @@ git clone https://github.com/umputun/revmux.git && cd revmux && make install
 
 ### Step 1: Resolve what is being reviewed
 
-revmux does no scope detection, so this is entirely this skill's job. Work it out from the user's
-words, the session so far, and the repository state.
-
-Common shapes, and what each resolves to:
-
-| the user says | scope resolves to |
+| the user says | scope |
 |---|---|
-| nothing, on a feature branch | branch versus its base — `git diff <base>...HEAD` |
-| nothing, on master with uncommitted work | the working tree — `git diff` and `git diff --staged` |
-| nothing, on master and clean | the last commit — `git diff HEAD~1` |
+| nothing, on a feature branch | `git diff <base>...HEAD` |
+| nothing, on master with uncommitted work | `git diff` and `git diff --staged` |
+| nothing, on master and clean | `git diff HEAD~1` |
 | "the last N commits" | `git diff HEAD~N` |
 | "since <ref>" | `git diff <ref>..HEAD` |
-| "this PR" | fetch it first, then a ref range; revmux will not fetch it |
-| a path | that subtree, still expressed as a diff plus a read list |
+| "this PR" | fetch it first, then a ref range — revmux will not fetch |
+| a path | that subtree, as a diff plus a read list |
 
-Run the git commands **here** to learn scale and file list — that is what makes a good `scope.md`.
-When the change is one this session just produced, the intent is already known and Step 2 costs
-nothing.
+Run the git commands here to learn scale and file list.
 
-Ask the user only when genuinely ambiguous — a feature branch with uncommitted work is the standard
-case where "branch diff" and "just my uncommitted changes" are both plausible.
+Ask only when genuinely ambiguous — a feature branch with uncommitted work is the standard case.
 
 ### Step 2: Compose the task directory
 
-Read `references/task-dir.md` before writing these. It has worked examples and the rules that matter.
+Read `references/task-dir.md` first.
 
-Pick a semantic task id (`pr-123`, `tui-rework`, `since-c06c558`) and check what already exists:
+**List existing tasks before creating one.** A task accumulates rounds; every round after the first
+depends on landing in the same directory, and nothing enforces it.
+
+```bash
+revmux config | jq -r '.paths.tasks[]'
+```
+
+Reuse a match verbatim. Only mint a new id when none matches.
+
+**Derive the id:**
+
+| reviewing | task id |
+|---|---|
+| a pull request | `pr-<number>` |
+| an issue | `issue-<number>` |
+| a branch | branch name with `/` replaced by `-` |
+| a commit range | `since-<short-sha>` |
+| working-tree changes | `wip-<branch>` |
+
+No path separators, no `..`, no leading dot, not absolute — revmux rejects those at load.
 
 ```bash
 $SCRIPT_DIR/task-state.sh <task-id>
 ```
 
-It resolves the tasks root from `revmux config` — do not hardcode `./.revmux/tasks`, since a config
-can move it — and lists which context files are present and which run names are taken.
+Resolves the tasks root from `revmux config` — never hardcode `./.revmux/tasks` — validates the id,
+and lists which context files and run names exist.
+
+**Name runs `NN-label`:** `01-initial`, `02-after-fix`, `03-final`. Take `NN` from the `runs:` count.
+Do not mix vocabularies across rounds of one task.
 
 Then write, under the reported `task_dir`:
 
 - **`scope.md`** — required. What changed, the commands to see it, its scale, which files to read in
-  full, what to ignore. Write commands in their plainest form: `git diff master...HEAD`, never
-  `git -c core.pager=cat diff ...`, because a leading option defeats the child's permission prefix
-  matching and the agent silently loses access to the diff.
-- **`goal.md`** — optional, high value. What the change is for, and a short "this is correct only
-  if…" list. This is what lets agents review for fitness rather than only for internal consistency.
-- **`profile.md`** — optional, reusable across every task in the repo. What kind of software this is,
-  what a real failure looks like here, where the project's documented rules live, which conventions
-  are deliberate. Without it the review is calibrated to a generic production service.
-- **`context/`** — optional. Ticket text, design notes, a commit list, anything else worth reading.
+  full, what to ignore. Write commands in plainest form: `git diff master...HEAD`, never
+  `git -c core.pager=cat diff ...` — a leading option defeats the child's permission prefix matching.
+- **`goal.md`** — optional. What the change is for, plus a "this is correct only if…" list.
+- **`profile.md`** — optional, reusable across the repo. What the software is, what a real failure
+  looks like, where the project's rules live, which conventions are deliberate.
+- **`context/`** — optional. Ticket text, design notes, commit list.
 
-If `scope.md` already exists and this is a re-review, leave it alone unless the scope genuinely moved.
-Never overwrite caller-owned files without saying so.
+If `scope.md` exists and this is a re-review, leave it unless the scope moved. Never overwrite
+caller-owned files silently.
 
 ### Step 3: Choose profile and flags
 
 | profile | roster | when |
 |---|---|---|
-| `comprehensive` (default) | `bugs+impl`, `arch+quality`, `docs+tests` on claude, plus an adversarial codex peer | a real change with real risk |
-| `focused` | one `bugs` agent plus the codex peer | small or time-boxed, correctness is the concern |
-| `final` | `bugs+impl` plus the codex peer, nothing below major | last look before merging |
+| `comprehensive` (default) | `bugs+impl`, `arch+quality`, `docs+tests`, codex peer | real change, real risk |
+| `focused` | one `bugs` agent plus codex peer | small or time-boxed |
+| `final` | `bugs+impl` plus codex peer, nothing below major | pre-merge |
 
-`--lenses a,b` narrows to a specific viewpoint, but produces **one** agent carrying both lenses and
-drops the codex peer — so it also drops every cross-source confidence boost. Prefer a profile unless
-there is a specific reason, such as a documentation-only change (`--lenses docs`).
+`--lenses a,b` produces **one** agent carrying both lenses and drops the codex peer, losing every
+cross-source confidence boost. Prefer a profile unless narrowing is specifically wanted.
 
-Worth setting: `--min-confidence=70` when the user wants only actionable findings, `--no-verify` when
-a human will read every finding anyway and speed matters.
+Also useful: `--min-confidence=70` for actionable-only, `--no-verify` when a human reads everything.
 
-### Step 4: Run it — headless or in an overlay
+### Step 4: Run it — headless or overlay
 
-Two ways to run the same review. Both return the same report on stdout and the same exit code; they
-differ only in whether the TUI is on screen while it happens.
+Both return the same report on stdout and the same exit code.
 
-**Headless — the default.** No terminal needed, nothing on screen:
+**Headless — the default:**
 
 ```bash
 revmux --task <id> --run <name> --no-tui > /tmp/revmux-<id>-<run>.json 2> /tmp/revmux-<id>-<run>.log
 ```
 
-Launch in the background and wait for the completion notification. Do not poll. The stderr log carries
-timestamped progress lines if anything needs diagnosing afterwards.
+Launch in the background, wait for the notification.
 
-**Overlay — when the user wants to watch.** revmux has a live TUI: a status table with one row per
-agent showing state, elapsed and last activity, per-agent scrollback tabs, and a findings browser at
-the end. It needs a terminal, which an agent's own shell does not have, so a launcher opens it in a
-terminal overlay:
+**Before yielding, tell the user three things** — otherwise they sit for 10+ minutes with no signal:
 
-```bash
-$SCRIPT_DIR/launch-revmux.sh --task <id> --run <name> [any other revmux flag]
-```
+1. what is running (task, profile, roster size) and the rough duration
+2. the stderr log path, and that `tail -f <path>` shows live per-agent progress
+3. that they can ask for status any time
 
-It detects the terminal (agterm, tmux, zellij, herdr, kitty, wezterm/kaku, cmux, ghostty, iTerm2,
-Emacs vterm), runs revmux with its TUI in an overlay, and returns **the report on stdout and revmux's
-own exit code** — so it drops into the same Step 5 as headless mode:
+On a status request, read the tail of the stderr log and `<task-dir>/runs/<run>/events.jsonl`. Report
+the stage, which agents are active, and elapsed. Never guess.
+
+**Overlay — when the user wants to watch:**
 
 ```bash
-$SCRIPT_DIR/launch-revmux.sh --task pr-123 --run round-1 > /tmp/revmux-pr-123.json
+$SCRIPT_DIR/launch-revmux.sh --task <id> --run <name> [any revmux flag]
 ```
 
-Under agterm it opens as a floating panel at 80% of the pane, so the session stays visible around it.
-Do not pass `--no-tui` to the launcher; that is what headless mode is for and the script rejects it.
+Detects the terminal (agterm, tmux, zellij, herdr, kitty, wezterm/kaku, cmux, ghostty, iTerm2, Emacs
+vterm), runs revmux with its TUI in an overlay, returns the report on stdout. Under agterm: floating
+panel at 80% of the pane. Do not pass `--no-tui`; the script rejects it.
 
-Notes that matter for the overlay path:
+- it blocks for the whole review — background it exactly like the headless form
+- **its exit codes: `0`/`1`/`2` are revmux's, `3` is a launcher failure, `127` is revmux not
+  installed.** A `3` means no review happened — that is the one to retry.
+- overrides: `REVMUX_AGTERM_PERCENT` (80), `REVMUX_POPUP_WIDTH`/`HEIGHT` (90%), `REVMUX_AUTO_EXIT`
+  (30s; `0` waits for a keypress), `REVMUX_TMUX_WINDOW=1` for a disconnect-resilient tmux window
 
-- **It blocks for the whole review**, which is longer than most foreground command caps. Run it in the
-  background exactly like the headless form, or raise the timeout to the maximum the harness allows.
-- The launcher forwards `PATH` into the overlay. This is not optional plumbing: revmux spawns `claude`
-  and `codex` itself, and an overlay shell inherits a server-process environment that predates the
-  user's shell rc files, so without it every agent degrades on a binary that is plainly installed.
-- It gives the TUI `--auto-exit=30s` unless a value was passed, so the overlay closes itself rather
-  than blocking on a keypress nobody is there to press. `REVMUX_AUTO_EXIT=0` restores waiting.
-- `ANTHROPIC_API_KEY` is deliberately not forwarded — an `env KEY=VAL` prefix would put it in the
-  process argv where any `ps` can read it. Overlay runs use interactive subscription auth; use
-  headless mode for key-based auth.
-- Sizes are overridable: `REVMUX_AGTERM_PERCENT` (default `80`), `REVMUX_POPUP_WIDTH` /
-  `REVMUX_POPUP_HEIGHT` (default `90%`) for tmux, zellij and wezterm.
-- Under tmux, `REVMUX_TMUX_WINDOW=1` uses a server-owned window instead of a popup, so the review
-  survives a dropped SSH or tmux client. Worth suggesting for a long review over a flaky link. Under
-  agent-deck this is automatic — its control-mode client cannot render a popup at all.
+**Choose headless** unless the user asked to watch or is clearly at the terminal.
 
-**Which to use:** headless unless the user asked to watch, said "show me", or is clearly sitting at
-the terminal. When unsure and the choice matters, ask.
+**If the launcher dies the report is not lost** — it is at `<task-dir>/runs/<run>/findings.json` and
+`report.md`. Read from there rather than re-running.
 
-**If the launcher dies, the report is not lost.** revmux archives every run, so the report is on disk
-at `<task-dir>/runs/<run>/findings.json` and `report.md` regardless of what happened to the launcher.
-Read from there rather than re-running a review that already completed.
-
-`--run` names this round and defaults to a UTC timestamp. A name that already exists is an error
-rather than an overwrite, deliberately — a round that went badly is the one worth keeping. Use
-semantic names across rounds: `round-1`, `after-fix`, `final`.
-
-Tell the user it is running and roughly how long it will take.
+`--run` defaults to a UTC timestamp. A name that already exists is an error, not an overwrite.
 
 ### Step 5: Read the result
 
-Read the JSON file. Read `references/output.md` for the full field-by-field shape.
+Read `references/output.md` for the full shape.
 
-In order:
+1. **Exit code.** `2` means nothing usable — read the stderr log, which names the cause. `0` and `1`
+   both completed.
+2. **`sources`.** Non-empty `degraded` means partial; lead with that.
+3. **`findings`.** Group by severity.
+4. **`open_questions`** and **`pre_existing`** — report separately.
 
-1. **Exit code.** `2` means nothing usable — read the stderr log, which names the cause, and fix it
-   rather than re-running blind. `0` and `1` both mean the review completed.
-2. **`sources`.** If `degraded` is non-empty, the review is partial. Lead with that when reporting.
-3. **`findings`.** Group by severity. Each carries `file`, `line`, `title`, `body`, `fix`, `sources`,
-   `lenses` and a `verdict`.
-4. **`open_questions`** and **`pre_existing`** — report separately; the second is explicitly not this
-   change's responsibility.
-
-Two fields are routinely confused and must not be: `sources` holds **agent names** and is the only
-evidence of independent corroboration; `lenses` holds the lens names that raised it and is
-informational. One agent flagging something under two lenses is still one source.
+`sources` holds **agent names** and is the only evidence of independent corroboration. `lenses` holds
+lens names and is informational. One agent flagging under two lenses is still one source.
 
 ### Step 6: Present
 
-Report to the user. Lead with completeness, then severity counts, then each finding with its location,
-its argument and its suggested fix. Call out findings with more than one entry in `sources` — two
-separate processes agreeing is the strongest signal in the report.
+Lead with completeness, then severity counts, then each finding with location, argument and fix. Call
+out findings with more than one entry in `sources`.
 
-Do not compress a finding to its title. The body carries the trigger and the consequence.
+Do not compress a finding to its title — the body carries the trigger and consequence.
 
-Stop here unless fixing was requested. A review produces findings; turning them into edits is a
-separate decision that belongs to the user.
+Stop here unless fixing was requested.
 
 ### Step 7: Fix and re-run, if asked
 
-The fix-and-re-review loop lives here, in the caller — revmux has no loop mode.
-
-1. Agree with the user which findings to act on. Present them as a list; a `rejected` or `immaterial`
-   verdict means revmux already checked and dismissed it.
+1. Agree which findings to act on. A `rejected` or `immaterial` verdict means revmux already dismissed it.
 2. Make the fixes.
-3. Re-run the **same task** under a **new run name**:
+3. Re-run the same task under the next run name:
 
 ```bash
-revmux --task <id> --run after-fix --no-tui \
-    > /tmp/revmux-<id>-after-fix.json 2> /tmp/revmux-<id>-after-fix.log
+revmux --task <id> --run 02-after-fix --no-tui \
+    > /tmp/revmux-<id>-02-after-fix.json 2> /tmp/revmux-<id>-02-after-fix.log
 ```
 
-**Never `2>&1` into the report file.** stdout is the report and stderr is the progress renderer;
-merging them puts timestamped lines inside the JSON and nothing can parse it.
+revmux injects the prior rounds itself. **Do not paste prior findings into `scope.md`** — it
+duplicates the injection and anchors agents on conclusions they should re-derive.
 
-revmux injects the prior rounds into every composed prompt itself — the `runs/` path plus a one-line
-inventory per round, carrying its own instruction to re-evaluate independently. **Do not paste prior
-findings into `scope.md`**: it duplicates what revmux already injects and anchors the agents on
-conclusions they are supposed to re-derive.
-
-Repeat until the findings that matter are gone. `--profile final` is a good last round.
+`--profile final` is a good last round.
 
 ## Debugging a review that looks wrong
 
-Every run archives itself under `<task-dir>/runs/<run>/`. Reach for it rather than re-running:
+Archive is at `<task-dir>/runs/<run>/`:
 
 | question | where |
 |---|---|
-| why did this agent report nothing? | `agents/<name>.jsonl` — the verbatim stream |
+| why did this agent report nothing? | `agents/<name>.jsonl` |
 | did an agent stall or get retried? | `events.jsonl`; a `<name>.retry.jsonl` means it did |
-| did synthesis drop something real? | `stages/1-found.json` versus `stages/2-synthesized.json` |
-| did verify reject something wrongly? | `stages/2-synthesized.json` versus `3-verified.json` |
-| what was this agent actually asked? | `prompts/agents/<name>.md` — post-substitution |
-| which lens text was used, from which layer? | `manifest.json` |
+| did synthesis drop something? | `stages/1-found.json` vs `2-synthesized.json` |
+| did verify reject wrongly? | `stages/2-synthesized.json` vs `3-verified.json` |
+| what was this agent asked? | `prompts/agents/<name>.md` |
+| which lens text, from which layer? | `manifest.json` |
 
 ## Example sessions
 
 ```
 User: "revmux this branch"
-→ preflight.sh → revmux, claude, codex all present
+→ preflight.sh → all present
 → git: on tui-rework, 7 commits vs master, 22 files, +840/-310
-→ task-state.sh tui-rework → does not exist yet
-→ write scope.md (diff commands, file list, scale), goal.md (from this session), profile.md
-→ revmux --task tui-rework --run round-1 --no-tui > /tmp/…json  (background)
-→ ~9 minutes, exit 1
-→ sources: expected 4, reported 4, degraded []
+→ revmux config → no matching task; derive `tui-rework`
+→ task-state.sh tui-rework → does not exist
+→ write scope.md, goal.md, profile.md
+→ revmux --task tui-rework --run 01-initial --no-tui > /tmp/…json  (background)
+→ tell user: ~9 min, tail -f /tmp/…log for live progress
+→ exit 1, sources 4/4, degraded []
 → 6 findings: 1 major, 5 minor; 2 corroborated across bugs+impl and codex
-→ present grouped by severity, with each body and fix
 ```
 
 ```
 User: "fix the major one and run it again"
 → fix applied
-→ revmux --task tui-rework --run after-fix --no-tui  (same task, new run)
-→ revmux injects round-1's inventory into every prompt
-→ exit 0, no findings above threshold
-→ "clean; round-1's major is gone and nothing new was raised"
-```
-
-```
-User: "review the last commit, quick"
-→ --profile focused: one bugs agent plus the codex peer
-→ revmux --task last-commit --run round-1 --profile focused --no-tui
-→ ~4 minutes, exit 1, 2 minor findings
+→ revmux --task tui-rework --run 02-after-fix --no-tui
+→ exit 0, nothing above threshold
 ```
 
 ```
 User: "revmux the branch, I want to watch it"
-→ same Steps 0-3 as any other review
-→ $SCRIPT_DIR/launch-revmux.sh --task tui-rework --run round-1 > /tmp/…json   (background)
-→ agterm detected: floating overlay at 80%, TUI renders the status table live
-→ user watches agents work, findings browser opens at the end, overlay self-closes after 30s
-→ the launcher returns the same JSON on stdout and the same exit code
-→ Step 5 onward is identical
+→ $SCRIPT_DIR/launch-revmux.sh --task tui-rework --run 01-initial > /tmp/…json  (background)
+→ agterm: floating overlay at 80%, TUI live, self-closes 30s after the report
+→ same JSON, same exit code, Step 5 onward identical
 ```
 
 ```
 User: "what lenses does revmux have?"
-→ no run; `revmux config` and report .lenses[] with each description
+→ no run; `revmux config`, report .lenses[] with descriptions
 ```

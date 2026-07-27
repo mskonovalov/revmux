@@ -19,7 +19,7 @@ Most agent harnesses cap a foreground shell command well below that, so a foregr
 off partway through. Launching it in the background is the only reliable pattern:
 
 ```bash
-revmux --task pr-123 --run round-1 --no-tui > /tmp/revmux-pr-123.json 2> /tmp/revmux-pr-123.log
+revmux --task pr-123 --run 01-initial --no-tui > /tmp/revmux-pr-123.json 2> /tmp/revmux-pr-123.log
 ```
 
 - run it with the harness's background flag, then wait for the completion notification
@@ -45,7 +45,7 @@ An agent's own shell has no tty, so the TUI never appears there. `scripts/launch
 revmux in a terminal overlay instead:
 
 ```bash
-scripts/launch-revmux.sh --task pr-123 --run round-1 > findings.json
+scripts/launch-revmux.sh --task pr-123 --run 01-initial > findings.json
 ```
 
 It takes every revmux flag, forwards them unchanged, and returns the report on stdout with revmux's
@@ -83,10 +83,9 @@ Order matters where environments overlap: herdr is checked before kitty because 
 
 ### Why the launcher forwards PATH
 
-revmux does not just need to be found itself — **it spawns `claude` and `codex`**. Overlay backends
-start children from a server or app process whose environment predates the user's shell rc files, so
-a Homebrew or `~/.local/bin` claude is simply absent from `PATH` there. Without forwarding, every
-agent degrades on a binary that is plainly installed, and the run exits `2` with every source dead.
+revmux spawns `claude` and `codex` itself, and overlay backends start children from a server process
+whose environment predates the user's shell rc files. Without forwarding, every agent degrades on a
+binary that is plainly installed and the run exits `2`.
 
 `HOME`, `XDG_CONFIG_HOME`, `CODEX_HOME` and `TMPDIR` are forwarded for the same reason — they decide
 where the CLIs and revmux look for configuration and auth.
@@ -115,6 +114,16 @@ a killed process, a closed terminal. Read from there rather than re-running a co
 | `0` | ran fine, no findings above `--min-confidence` |
 | `1` | ran fine, **findings were reported** |
 | `2` | tool error — nothing usable was produced |
+
+`launch-revmux.sh` passes those through and adds two of its own, outside revmux's vocabulary:
+
+| Code | Meaning |
+|---|---|
+| `3` | launcher failure — revmux never ran, or the overlay died before it finished |
+| `127` | revmux not installed |
+
+`3` is the one to retry: no review happened. A launcher must never exit `0`, `1` or `2`, since a
+caller is told not to re-run on `1`.
 
 **Exit `1` is success with findings. It is not a failure and must never be retried as one.** This is
 the most common way to misuse revmux: a caller treats nonzero as an error, discards a complete report,
