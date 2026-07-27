@@ -314,9 +314,12 @@ Stamping happens in `find`, not synthesis, or `--no-synthesis` runs carry invent
 - A new `task.md` front-matter key needs: the `Meta` field with both a `yaml` and a `json` tag, the
   commented-out line in `app/task`'s scaffolded template, and the README description of the file.
   `revmux config` reports it for free, since `taskInfo` embeds `Meta` rather than copying its fields.
-  Four places enumerate the keys literally and do not: the README and `.claude/rules/prompts.md`
-  descriptions of the file, the `SKILL.md` step that writes it, and the hardcoded
-  `for key in description url branch base` loop in `scripts/task-state.sh` — in **both** skill trees.
+  Five files enumerate the keys literally and do not: the README and `.claude/rules/prompts.md`
+  descriptions of the file, the `SKILL.md` step that writes it, `references/task-dir.md` — in both its
+  `task.md` example and its description of what a `paths.tasks` entry carries — and
+  `scripts/task-state.sh`, in both its usage header and the hardcoded
+  `for key in description url branch base meta_error rounds_error` loop.
+  The last three are in **both** skill trees.
 - Anything the shipped skill documents — a flag, a profile, the JSON shape, an exit code, the task
   directory layout — needs the same edit in **both** skill trees, since they hold duplicate copies of
   `references/` and `scripts/`. A `diff -r` of the two `references/` and `scripts/` directories must

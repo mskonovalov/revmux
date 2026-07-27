@@ -173,8 +173,8 @@ round that has already run is an error rather than an overwrite — a round that
 worth keeping.
 
 Neither name may contain a path separator or `..`, be absolute, or begin with a dot. A round additionally
-may not be called `task.md`, `scope.md` or `runs`: those are the entries the task directory keeps beside its
-rounds, and a round named after one makes every later review of that task fail.
+may not be called `task.md`: that is the one entry the task directory keeps beside its rounds, and a round
+named after it is read as the task's own metadata and scaffolded over by the next `revmux new`.
 
 ### `revmux new`
 

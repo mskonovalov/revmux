@@ -332,7 +332,7 @@ func (p *Paths) openRound(taskRoot *os.Root, name string) (*os.Root, error) {
 	case !errors.Is(err, fs.ErrExist):
 		return nil, fmt.Errorf("create %s: %w", p.RoundDir, err)
 	}
-	if dirErr := checkRealDir(taskRoot, name, p.RoundDir); dirErr != nil {
+	if dirErr := p.checkRealDir(taskRoot, name, p.RoundDir); dirErr != nil {
 		return nil, dirErr
 	}
 
@@ -369,12 +369,12 @@ func (p *Paths) makeInput(roundRoot *os.Root) error {
 	if !errors.Is(err, fs.ErrExist) {
 		return fmt.Errorf("create %s: %w", p.InputDir, err)
 	}
-	return checkRealDir(roundRoot, InputDir, p.InputDir)
+	return p.checkRealDir(roundRoot, InputDir, p.InputDir)
 }
 
 // checkRealDir refuses anything holding a layout name that is not a directory revmux may write into: a
 // symlink, however contained, and a plain file. path names the entry for the message.
-func checkRealDir(parent *os.Root, name, path string) error {
+func (p *Paths) checkRealDir(parent *os.Root, name, path string) error {
 	fi, err := parent.Lstat(name)
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", path, err)

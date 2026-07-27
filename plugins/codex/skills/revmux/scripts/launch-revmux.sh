@@ -49,7 +49,7 @@ fi
 
 if [ "$#" -eq 0 ]; then
     echo "error: no arguments - revmux needs --task <id> and --run <name>" >&2
-    exit 2
+    exit "$RC_LAUNCH_FAIL"
 fi
 
 TMPBASE="${TMPDIR:-/tmp}"
@@ -67,7 +67,7 @@ for arg in "$@"; do
         --auto-exit|--auto-exit=*) HAS_AUTO_EXIT=1 ;;
         --no-tui)
             echo "error: --no-tui defeats the purpose of an overlay - run revmux directly for headless mode" >&2
-            exit 2
+            exit "$RC_LAUNCH_FAIL"
             ;;
     esac
     REVMUX_CMD="$REVMUX_CMD $(sq "$arg")"

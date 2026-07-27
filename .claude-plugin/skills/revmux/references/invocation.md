@@ -109,13 +109,19 @@ A run that **completed** archives itself before anything reaches stdout, so its 
 `report.md` are in the round directory whatever happened to the launcher afterwards — a timeout on the
 launcher, a closed terminal, a lost pipe. Read from there rather than re-running a completed review.
 
-A run that was **killed or failed** wrote no report at all: archiving happens after the pipeline
-returns, so there is nothing on disk to recover. Re-run it under the **same** `--run` name only while
-nothing else was written into that round — interrupted before an agent reported, it is still yours,
-with the `input/` you wrote in it. One that had already written stage snapshots, agent tees or composed
-prompts is refused under its own name, because a second run there would leave one round holding two
-runs' artifacts under a manifest describing only the second. The error names what it found; nothing is
-deleted to make the round usable. Open the next round and copy the `input/` across.
+A run that was **killed** wrote no report at all: archiving happens after the pipeline returns, so there
+is nothing on disk to recover. A `2` is usually the same, with one exception — the report reaches
+stdout only after the round is archived, so a `2` whose stderr names a failure writing it (a full disk
+on the redirect target, say) leaves a complete round behind. Check the round's `manifest.json` for
+content before re-running.
+
+Re-run under the **same** `--run` name only while nothing else was written into that round. That is
+narrower than it sounds: the pipeline opens `events.jsonl` as its first act, before any agent launches,
+so a run interrupted at any point after it started is refused. One holding `events.jsonl`, stage
+snapshots, agent tees or composed prompts is refused under its own name, because a second run there
+would leave one round holding two runs' artifacts under a manifest describing only the second. The
+error names what it found; nothing is deleted to make the round usable. Open the next round and copy
+the `input/` across.
 
 ## Exit codes — `1` is a normal outcome
 

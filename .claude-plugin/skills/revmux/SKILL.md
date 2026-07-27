@@ -216,22 +216,27 @@ panel at 80% of the pane. Do not pass `--no-tui`; the script rejects it.
 **Choose headless** unless the user asked to watch or is clearly at the terminal.
 
 **If the launcher dies after a run completed, the report is not lost** — it is in the round directory
-as `findings.json` and `report.md`. Read from there rather than re-running. A run that was killed or
-exited `2` wrote no report, so there is nothing to read: re-run it instead.
+as `findings.json` and `report.md`. Read from there rather than re-running. A killed run wrote no
+report, and most `2`s wrote none either — but the report reaches stdout only after the round is
+archived, so a `2` whose stderr names a failure writing it leaves a complete round. Check the round's
+`manifest.json` for content before re-running.
 
 `--run` is required. A round that has already run is an error, not an overwrite — but a round whose
 review never finished is not one of those, so a retry after exit `2` reuses the same name and the same
-`input/`. That holds only while the dead review wrote nothing into the round; one that had already
-written stages, tees or prompts is refused under its own name, and the answer is a new round with the
-`input/` copied across. It may not be named `task.md`, `scope.md` or `runs`.
+`input/`. That holds only while the dead review wrote nothing into the round, which is narrower than it
+sounds: the pipeline opens `events.jsonl` as its first act, so anything interrupted after it started is
+refused under its own name, and the answer is a new round with the `input/` copied across. It may not
+be named `task.md`.
 
 ### Step 5: Read the result
 
 Read `references/output.md` for the full shape.
 
-1. **Exit code.** `2` means nothing usable and no report — read the stderr log, which names the cause,
-   fix it and re-run: the same `--run` while that round holds nothing but its `input/`, a new round
-   with the `input/` copied across once revmux refuses the name. `0` and `1` both completed.
+1. **Exit code.** `2` means nothing usable — read the stderr log, which names the cause. If that cause
+   is a failure writing the report to stdout, the round is complete and its `findings.json` is on disk;
+   read it. Otherwise fix the cause and re-run: the same `--run` while that round holds nothing but its
+   `input/`, a new round with the `input/` copied across once revmux refuses the name. `0` and `1` both
+   completed.
 2. **`sources`.** Non-empty `degraded` means partial; lead with that.
 3. **`findings`.** Group by severity.
 4. **`open_questions`** and **`pre_existing`** — report separately.
