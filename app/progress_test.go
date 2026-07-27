@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/umputun/revmux/app/finding"
 	"github.com/umputun/revmux/app/pipeline"
@@ -28,7 +29,7 @@ func TestProgress_line(t *testing.T) {
 		ev   pipeline.Event
 		want string
 	}{
-		{name: "stage", ev: pipeline.Event{Kind: pipeline.EventStage, Stage: "find"}, want: "16:02:11 find"},
+		{name: "stage", ev: pipeline.Event{Kind: pipeline.EventStage, Stage: "find"}, want: "16:02:11 ── find ──"},
 		{
 			name: "agent started names its lenses",
 			ev:   pipeline.Event{Kind: pipeline.EventAgentStarted, Agent: "bugs+impl", Text: "bugs, impl"},
@@ -109,7 +110,7 @@ func TestProgress_paint(t *testing.T) {
 		{
 			"a stage change belongs to no agent and is indented to the same column",
 			pipeline.Event{Kind: pipeline.EventStage, Stage: "find", At: progressAt},
-			"16:02:11            find",
+			"16:02:11            ── find ──",
 		},
 	}
 
@@ -155,7 +156,7 @@ func TestProgress_run(t *testing.T) {
 		pr.run(events)
 
 		assert.Equal(t, []string{
-			"16:02:11 find",
+			"16:02:11 ── find ──",
 			"16:02:11 " + painted("bugs") + "  started [bugs]",
 			"16:02:11 " + painted("bugs") + "  done, 1 findings",
 		}, strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n"))
@@ -229,17 +230,32 @@ func TestProgress_clipsToTerminalWidth(t *testing.T) {
 	long := strings.Repeat("wide ", 60)
 	ev := pipeline.Event{Kind: pipeline.EventAgentActivity, Agent: "bugs", Text: long, At: progressAt}
 
-	t.Run("COLUMNS is honored, so a caller can pin it", func(t *testing.T) {
+	rows := func(t *testing.T, out string) []string {
+		t.Helper()
+		got := strings.Split(out, "\n")
+		for _, r := range got {
+			assert.LessOrEqual(t, lipgloss.Width(r), 60, "no row may run past the terminal")
+		}
+		return got
+	}
+
+	t.Run("a long entry wraps rather than losing its tail", func(t *testing.T) {
 		t.Setenv("COLUMNS", "60")
-		out := (&progress{roster: progRoster}).line(ev)
-		assert.Equal(t, 60, lipgloss.Width(out), "the line is cut to the terminal, not to a constant")
-		assert.Contains(t, out, "bugs", "and the agent column survives the cut")
+		got := rows(t, (&progress{roster: progRoster}).line(ev))
+		require.Greater(t, len(got), 1, "one row could not hold it")
+		assert.Contains(t, got[0], "bugs", "the first row carries the timestamp and the agent")
+		assert.NotContains(t, got[1], "16:02:11", "and the rest carry neither, so the entry reads as one thing")
+		assert.True(t, strings.HasPrefix(got[1], "  "), "continuing under the text column, not the timestamp")
+
+		joined := strings.Join(strings.Fields(strings.Join(got, " ")), " ")
+		assert.Contains(t, joined, strings.TrimSpace(long), "every word survives the wrap")
 	})
 
 	t.Run("a width below the floor is ignored rather than obeyed", func(t *testing.T) {
 		t.Setenv("COLUMNS", "3")
 		out := (&progress{roster: progRoster}).line(ev)
-		assert.Greater(t, lipgloss.Width(out), 3, "a 3-column line would be all prefix and no content")
+		assert.Greater(t, lipgloss.Width(strings.Split(out, "\n")[0]), 3,
+			"a 3-column line would be all prefix and no content")
 	})
 
 	t.Run("an unmeasurable writer falls back rather than failing", func(t *testing.T) {
@@ -247,14 +263,16 @@ func TestProgress_clipsToTerminalWidth(t *testing.T) {
 		// a bytes.Buffer is not a terminal and has no width to ask for, which is what a redirected
 		// stderr or a CI log looks like
 		out := (&progress{w: &bytes.Buffer{}, roster: progRoster}).line(ev)
-		assert.Equal(t, fallbackCols, lipgloss.Width(out))
+		for r := range strings.SplitSeq(out, "\n") {
+			assert.LessOrEqual(t, lipgloss.Width(r), fallbackCols)
+		}
 	})
 
 	t.Run("a short line is left alone", func(t *testing.T) {
 		t.Setenv("COLUMNS", "200")
 		short := pipeline.Event{Kind: pipeline.EventAgentActivity, Agent: "bugs", Text: "reading proc.go", At: progressAt}
 		out := (&progress{roster: progRoster}).line(short)
-		assert.Less(t, lipgloss.Width(out), 200, "clipping is a ceiling, never padding")
+		assert.NotContains(t, out, "\n", "one row is enough, so it stays one row")
 		assert.Contains(t, out, "reading proc.go")
 	})
 }

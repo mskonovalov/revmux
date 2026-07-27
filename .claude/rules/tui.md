@@ -76,6 +76,10 @@ cover both.
   `prompt.DerivedSpec`, which both renderers call. It hashes the name rather than counting arrivals,
   because the two renderers build their rows independently and a derived agent is created on first
   sight, so an index would have to be threaded through and could disagree.
+  Long entries wrap with a hanging indent rather than being clipped: a narrated step or a command is
+  the informative part of the log and the part most likely to run long, and continuation rows carry no
+  timestamp and no agent name so the entry still reads as one thing. The plain renderer wraps the same
+  way, for the same reason both renderers do everything else the same way.
   It must stay that compact — four concurrent agents scrolling their full reasoning would run faster
   than anyone can read, and it would stop being the situational-awareness view it exists to be.
 - The tabs after it are per-agent full-detail scrollback. Those are the forensic views.
@@ -100,6 +104,14 @@ cover both.
   spelling out every directory stays as the archived prompt's filename, where the space exists.
 - On completion the model switches to the findings browser; agent tabs stay reachable
   so a reader can check *why* a finding was raised.
+- **The browser renders the report and nothing more.** It lays out what the markdown on stdout carries
+  — a severity heading, then each finding as its title, where it is, its body, its fix and its
+  attribution — wrapped to the pane rather than clipped at its edge, since a body is prose several
+  sentences long and the tail is not the disposable half.
+  A cursor, per-row folding and expand-on-demand were all built here and all removed: each put part of
+  the review behind a keystroke and added state that had to be kept in step with the pane's own
+  scrolling. What is left is the pane's scrolling and a filter. It opens at the top, not at the newest
+  line — that is right for a log and wrong for a report.
 - **A finding opens showing its body, fix and attribution — folding is what the key does, not opening.**
   The summary line is an index entry, and a browser that lists nothing else puts the whole review behind
   one keypress per row. The fold is keyed on the finding rather than on its row, so narrowing the filter
@@ -134,9 +146,22 @@ cover both.
   Ordering across concurrent agents is not guaranteed.
 - Never block on the event channel inside `Update` — a slow render must not stall the pipeline.
 - **Elapsed time is measured between event timestamps, so this package takes no clock.**
-  `Event.At` is stamped by the pipeline off the injected clock; an agent's elapsed is the span between the
-  events it produced. Reading a clock here would be OS work by the definition above, and it would make the
-  displayed elapsed disagree with the timings the archive recorded.
+  `Event.At` is stamped by the pipeline off the injected clock. Reading a clock here would be OS work by
+  the definition above, and it would make the displayed elapsed disagree with the timings the archive
+  recorded.
+  **Which two timestamps depends on whether the agent has finished, and both halves are load-bearing.**
+  A running agent is measured to `Model.now`, the newest event time anywhere in the run, so any agent
+  speaking advances every row — measured to its own last event instead, a row freezes the moment it goes
+  quiet, which is exactly when a reader wants to know how long it has been quiet for. A finished one is
+  measured to its own last event, because measuring it to the run makes every completed row climb toward
+  the run's age until a reader can no longer tell the finder that took forty seconds from the one that
+  took four minutes. Getting either half wrong is invisible: nothing fails, a reader is just shown a
+  number that is not true.
+- **An agent's clock starts when it starts running, not when the run announces it.**
+  `EventAgentStarted` is emitted after the stagger slot is acquired, so a row counts the time it spent
+  working rather than the time it spent queued. Emitted on entry instead, every agent's clock starts at
+  once and every row reads the same elapsed early on — which is the opposite of what the stagger exists
+  to make visible. The roster shows an agent as `waiting` until then.
 
 ### Receivers
 

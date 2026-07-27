@@ -265,7 +265,7 @@ func TestRun_review(t *testing.T) {
 		assert.Contains(t, out, "claude-opus-5")
 		assert.Contains(t, out, "4210")
 
-		assert.Contains(t, r.stderr.String(), "find")
+		assert.Contains(t, r.stderr.String(), "── find ──", "the stage line, not the word inside \"1 findings\"")
 		// the plain renderer prefixes the agent in its own resolved color, the same one the ui uses
 		assert.Contains(t, r.stderr.String(), prompt.AgentSpec{Color: "6"}.Paint("lenses")+"  done, 1 findings")
 	})
@@ -368,7 +368,7 @@ func TestRun_review(t *testing.T) {
 		assert.Contains(t, out, "merged", "the merged finding replaces the passthrough")
 		assert.NotContains(t, out, "raw")
 		assert.Contains(t, out, "sources: lenses", "attribution survives the merge")
-		assert.Contains(t, r.stderr.String(), "synthesis")
+		assert.Contains(t, r.stderr.String(), "── synthesis ──", "the stage line, not the agent of the same name")
 	})
 
 	t.Run("nothing found exits 0", func(t *testing.T) {
@@ -636,7 +636,7 @@ func TestRunOpts_render(t *testing.T) {
 	t.Run("with no tty the plain renderer takes the events", func(t *testing.T) {
 		r := newRunOpts(t, options{})
 		finished(t, r.opts(), finding.Report{}, nil)
-		assert.Contains(t, r.stderr.String(), "find")
+		assert.Contains(t, r.stderr.String(), "── find ──", "the stage line, not the word inside \"1 findings\"")
 		assert.Empty(t, r.stdout.String(), "stdout belongs to the report alone")
 	})
 
@@ -703,7 +703,7 @@ func TestRun_reportWrittenOnce(t *testing.T) {
 		out := r.stdout.String()
 		assert.Equal(t, 1, strings.Count(out, "# Review: pr-1 / round-1"))
 		assert.Equal(t, 1, strings.Count(out, "unchecked error"))
-		assert.Contains(t, r.stderr.String(), "find", "and the plain renderer took the events")
+		assert.Contains(t, r.stderr.String(), "── find ──", "and the plain renderer took the events")
 	})
 }
 
@@ -804,7 +804,7 @@ func TestRun_ttyGate(t *testing.T) {
 
 		var rep finding.Report
 		require.NoError(t, json.Unmarshal([]byte(out), &rep))
-		assert.Contains(t, r.stderr.String(), "find")
+		assert.Contains(t, r.stderr.String(), "── find ──", "the stage line, not the word inside \"1 findings\"")
 	})
 }
 

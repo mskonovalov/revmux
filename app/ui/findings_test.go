@@ -80,8 +80,12 @@ func TestModel_findingsPane(t *testing.T) {
 	assert.Contains(t, pane, "── CRITICAL ──")
 	assert.Contains(t, pane, "── MAJOR ──")
 	assert.Contains(t, pane, "── MINOR ──")
-	assert.Contains(t, pane, "> app/main.go:42-48  unchecked error  [95]", "the cursor starts on the worst finding")
-	assert.Contains(t, pane, "  app/ui/view.go  pane clipping  [80]", "a file-level finding renders as the bare path")
+	// the report's own shape: the title is the heading and the location sits under it, as "### title"
+	// followed by its `file:line` does on stdout
+	assert.Contains(t, pane, "  unchecked error  [95]", "the worst finding is first")
+	assert.Contains(t, pane, "    app/main.go:42-48", "with where it is on the line under it")
+	assert.Contains(t, pane, "  pane clipping  [80]")
+	assert.Contains(t, pane, "    app/ui/view.go", "a file-level finding renders as the bare path")
 	assert.Contains(t, pane, "    the write error is dropped", "a finding opens showing its body, not just its summary")
 	assert.NotContains(t, pane, "is the retry budget right", "open questions are the report's, not the browser's")
 
@@ -91,7 +95,10 @@ func TestModel_findingsPane(t *testing.T) {
 			{File: "b.go", Line: 2, Severity: finding.Critical, Title: "bad"},
 		}}
 		lines := browsed(t, rep).findingsPane()
-		assert.Equal(t, []string{"── CRITICAL ──", "> b.go:2  bad  [0]", "── INVENTED ──", "  a.go:1  odd  [0]"}, lines)
+		assert.Equal(t, []string{
+			"── CRITICAL ──", "  bad  [0]", "    b.go:2", "",
+			"── INVENTED ──", "  odd  [0]", "    a.go:1", "",
+		}, lines)
 	})
 
 	t.Run("a finding with no severity at all still has a heading", func(t *testing.T) {
@@ -104,80 +111,60 @@ func TestModel_findingsPane(t *testing.T) {
 	})
 }
 
-func TestFindingsState_move(t *testing.T) {
-	tests := []struct {
-		name string
-		keys []string
-		want int
-	}{
-		{"j moves down", []string{"j"}, 1},
-		{"and down arrow does the same", []string{"down", "down"}, 2},
-		{"k comes back", []string{"j", "j", "k"}, 1},
-		{"it stops at the last finding", []string{"j", "j", "j", "j"}, 2},
-		{"and at the first", []string{"k"}, 0},
-	}
+func TestFindingsState_scroll(t *testing.T) {
+	// the browser has no cursor: it renders the report and the pane's own scrolling reads it, which is
+	// the same scrolling every other pane has
+	t.Run("the arrow and vi keys scroll it like any other pane", func(t *testing.T) {
+		m := browsed(t, report())
+		require.Positive(t, m.maxScroll(), "the report is longer than the pane, or there is nothing to test")
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := browsed(t, report())
-			for _, k := range tt.keys {
-				m = feed(t, m, press(k))
-			}
-			assert.Equal(t, tt.want, m.findings.cursor)
-			assert.Contains(t, strings.Join(m.findingsPane(), "\n"), "> "+m.findings.visible()[tt.want].Location())
-		})
-	}
+		// it opens at the top, so forward is the only way to go and j is what goes there
+		down := feed(t, m, press("j"))
+		assert.Equal(t, m.view.scroll-1, down.view.scroll, "j reads forward through the report")
 
-	t.Run("an empty browser has nowhere to move", func(t *testing.T) {
-		m := feed(t, browsed(t, finding.Report{}), press("j"), press("k"))
-		assert.Equal(t, 0, m.findings.cursor)
+		back := feed(t, down, press("k"))
+		assert.Equal(t, m.view.scroll, back.view.scroll, "and k comes back")
 	})
 
-	t.Run("outside the browser the same keys still scroll", func(t *testing.T) {
+	t.Run("it opens on the worst finding rather than at the end of the last one", func(t *testing.T) {
+		m := browsed(t, report())
+		assert.Equal(t, m.maxScroll(), m.view.scroll, "a report is read from its top, unlike a live log")
+		assert.Contains(t, strings.Join(m.detailPane(), "\n"), "CRITICAL",
+			"so the first thing on screen is the worst finding")
+	})
+
+	t.Run("outside the browser the same keys still scroll their own pane", func(t *testing.T) {
 		m := feed(t, filled(t, 20), CompletedMsg{Report: report()}, press("2"), press("k"))
-		assert.Equal(t, 1, m.view.scroll, "a pane is scrolled, not a cursor")
-		assert.Equal(t, 0, m.findings.cursor)
+		assert.Equal(t, 1, m.view.scroll, "the agent pane scrolled, not the report")
 	})
 }
 
-func TestFindingsState_toggle(t *testing.T) {
-	// every case builds its own model: Model copies share one findingsState pointer, so a subtest
-	// reusing another's would inherit its cursor and its folds
-	folded := func(t *testing.T) Model {
-		t.Helper()
-		return feed(t, browsed(t, report()), press("enter"))
-	}
+func TestFindingsState_rendersTheWholeReport(t *testing.T) {
+	// the browser shows the report, not an index of it: every part the markdown on stdout carries is on
+	// screen without a keystroke. Folding was tried and removed — it put the review behind a keypress
+	// per finding and needed state kept in step with the pane.
+	pane := strings.Join(browsed(t, report()).findingsPane(), "\n")
 
-	open := strings.Join(browsed(t, report()).findingsPane(), "\n")
-	assert.Contains(t, open, "    the write error is dropped", "the body is indented under its row")
-	assert.Contains(t, open, "    so a short write reads as success", "and keeps its own line breaks")
-	assert.Contains(t, open, "    fix: check it")
-	assert.Contains(t, open, "    sources: bugs+impl, codex | lenses: bugs | verdict: confirmed")
+	assert.Contains(t, pane, "unchecked error", "the title, as the report's ### heading")
+	assert.Contains(t, pane, "    app/main.go:42-48", "where it is, on the line under it")
+	assert.Contains(t, pane, "    the write error is dropped", "the body, indented under that")
+	assert.Contains(t, pane, "    so a short write reads as success", "keeping its own line breaks")
+	assert.Contains(t, pane, "    fix: check it")
+	assert.Contains(t, pane, "    sources: bugs+impl, codex | lenses: bugs | verdict: confirmed")
 
-	assert.NotContains(t, strings.Join(folded(t).findingsPane(), "\n"), "the write error is dropped",
-		"enter folds the finding under the cursor down to its summary")
-
-	t.Run("enter again opens it back up", func(t *testing.T) {
-		back := feed(t, folded(t), press("enter"))
-		assert.Contains(t, strings.Join(back.findingsPane(), "\n"), "the write error is dropped")
+	t.Run("enter is not a fold and does nothing here", func(t *testing.T) {
+		after := feed(t, browsed(t, report()), press("enter"))
+		assert.Equal(t, browsed(t, report()).findingsPane(), after.findingsPane())
 	})
 
-	t.Run("the fold follows the finding, not the row it sat on", func(t *testing.T) {
-		filtered := feed(t, folded(t), press("/"), press("s"), press("t"), press("a"), press("enter"))
-		require.Len(t, filtered.findings.matches, 1, "only the stale comment matches")
-		assert.Contains(t, strings.Join(filtered.findingsPane(), "\n"), "the comment names the old field",
-			"the folded critical finding is filtered out, and its row does not fold a stranger")
-	})
-
-	t.Run("a row with nothing to show is one line either way", func(t *testing.T) {
+	t.Run("a finding with no body still shows where it is", func(t *testing.T) {
 		terse := finding.Report{Findings: []finding.Finding{
 			{File: "a.go", Line: 1, Severity: finding.Minor, Title: "terse"}}}
-		want := []string{"── MINOR ──", "> a.go:1  terse  [0]"}
-		assert.Equal(t, want, browsed(t, terse).findingsPane())
-		assert.Equal(t, want, feed(t, browsed(t, terse), press("enter")).findingsPane())
+		assert.Equal(t, []string{"── MINOR ──", "  terse  [0]", "    a.go:1", ""},
+			browsed(t, terse).findingsPane())
 	})
 
-	t.Run("an empty browser tolerates the key", func(t *testing.T) {
+	t.Run("an empty report says so", func(t *testing.T) {
 		empty := feed(t, browsed(t, finding.Report{}), press("enter"))
 		assert.Equal(t, []string{"no findings."}, empty.findingsPane())
 	})
@@ -233,7 +220,8 @@ func TestFindingsState_filter(t *testing.T) {
 	t.Run("keys that act on the browser are text while the query is open", func(t *testing.T) {
 		typed := feed(t, browsed(t, report()), press("/"), press("j"), press("q"))
 		assert.Equal(t, "jq", typed.findings.query)
-		assert.Equal(t, 0, typed.findings.cursor, "j typed a letter rather than moving the cursor")
+		assert.Equal(t, typed.maxScroll(), typed.view.scroll,
+			"j went into the query rather than scrolling, so the narrowed report is still at its top")
 	})
 
 	t.Run("ctrl+c is never text: a half-typed query must not be a trap", func(t *testing.T) {
@@ -261,47 +249,35 @@ func TestFindingsState_filter(t *testing.T) {
 	})
 }
 
-func TestModel_showCursor(t *testing.T) {
-	// twelve findings in a pane showing five: the cursor has to drag the window with it
+func TestModel_findingsScrollWindow(t *testing.T) {
+	// twelve findings in a five-line pane: the report is far longer than the window, and reading it is
+	// the pane's own scrolling rather than anything the browser tracks
 	many := finding.Report{}
 	for i := range 12 {
 		many.Findings = append(many.Findings, finding.Finding{
-			File: "app/f" + string(rune('a'+i)) + ".go", Line: i + 1, Severity: finding.Major, Title: "issue"})
+			File: "app/f" + string(rune('a'+i)) + ".go", Line: i + 1, Severity: finding.Major,
+			Title: "issue " + string(rune('a'+i))})
 	}
 
-	require.Equal(t, 5, browsed(t, many).paneHeight())
-	require.Positive(t, browsed(t, many).maxScroll(), "the list is longer than the pane")
+	m := browsed(t, many)
+	require.Equal(t, 5, m.paneHeight())
+	require.Positive(t, m.maxScroll(), "the report is longer than the pane")
+	assert.Contains(t, strings.Join(m.detailPane(), "\n"), "issue a", "it opens on the first finding")
 
-	t.Run("walking down keeps the cursor in the window", func(t *testing.T) {
-		down := browsed(t, many)
-		for range 11 {
+	t.Run("reading forward reaches the last one", func(t *testing.T) {
+		down := m
+		for down.view.scroll > 0 {
 			down = feed(t, down, press("j"))
 		}
-		assert.Equal(t, 0, down.view.scroll, "the last finding sits at the bottom of the log")
-		assert.Contains(t, strings.Join(down.detailPane(), "\n"), "> app/fl.go:12")
+		assert.Contains(t, strings.Join(down.detailPane(), "\n"), "issue l")
 	})
 
-	t.Run("and walking back up brings it back into view", func(t *testing.T) {
-		up := browsed(t, many)
-		for range 11 {
-			up = feed(t, up, press("j"))
-		}
-		for range 11 {
+	t.Run("and reading back returns to the first", func(t *testing.T) {
+		up := m
+		for range 40 {
 			up = feed(t, up, press("k"))
 		}
-		assert.Equal(t, up.maxScroll()-1, up.view.scroll, "the window stops with the first finding on its top line")
-		assert.Contains(t, strings.Join(up.detailPane(), "\n"), "> app/fa.go:1")
-	})
-
-	t.Run("expanding a row scrolls its detail into view", func(t *testing.T) {
-		long := finding.Report{Findings: []finding.Finding{{File: "a.go", Line: 1, Severity: finding.Critical,
-			Title: "long", Body: strings.Repeat("a line\n", 10)}}}
-		exp := feed(t, browsed(t, long), press("enter"))
-		assert.Contains(t, strings.Join(exp.detailPane(), "\n"), "> a.go:1", "the row stays visible above its body")
-	})
-
-	t.Run("a list that fits needs no scrolling at all", func(t *testing.T) {
-		short := feed(t, browsed(t, report()), press("j"), press("j"))
-		assert.Equal(t, 0, short.view.scroll)
+		assert.Equal(t, up.maxScroll(), up.view.scroll, "it stops at the top rather than running past it")
+		assert.Contains(t, strings.Join(up.detailPane(), "\n"), "issue a")
 	})
 }

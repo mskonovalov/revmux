@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/umputun/revmux/app/finding"
 )
@@ -18,19 +19,18 @@ type CompletedMsg struct {
 	Report finding.Report
 }
 
-// findingsState is the findings browser: the run's findings ordered by severity, which of them the
-// filter admits, where the cursor sits and which rows the reader has folded away.
+// findingsState is the report as the browser holds it: the run's findings ordered by severity, and
+// which of them the filter admits.
 //
-// Folded rather than expanded, so the zero value shows a finding in full. A finding is a body, a fix
-// and its attribution; the one-line summary is an index entry, and a browser opening on nothing but
-// index entries hides the review behind a keypress per row.
+// **It renders the report and nothing more.** Folding, a cursor and per-row expansion were all tried
+// and removed: a reader wants to read the review, and every one of those put part of it behind a
+// keystroke while adding state to keep in step with the pane. Scrolling is the pane's own, the filter
+// narrows what is rendered, and that is the whole surface.
 type findingsState struct {
-	rows      []finding.Finding
-	matches   []int
-	collapsed map[int]bool
-	cursor    int
-	query     string
-	typing    bool
+	rows    []finding.Finding
+	matches []int
+	query   string
+	typing  bool
 }
 
 // severityRank orders the browser's groups; anything unrecognized sorts last rather than being
@@ -41,31 +41,16 @@ var severityRank = map[finding.Severity]int{finding.Critical: 0, finding.Major: 
 // pre-existing and immaterial findings are deliberately not listed: the report on stdout carries
 // them, and mixing them in would put unranked material above a critical bug.
 func newFindings(rep finding.Report) *findingsState {
-	f := &findingsState{rows: slices.Clone(rep.Findings), collapsed: map[int]bool{}}
+	f := &findingsState{rows: slices.Clone(rep.Findings)}
 	slices.SortStableFunc(f.rows, func(a, b finding.Finding) int { return f.rank(a.Severity) - f.rank(b.Severity) })
 	f.filter("")
 	return f
 }
 
-// move walks the cursor through the filtered list, clamped at both ends.
-func (f *findingsState) move(delta int) {
-	f.cursor = min(max(f.cursor+delta, 0), max(len(f.matches)-1, 0))
-}
-
-// toggle folds the finding under the cursor away, or opens it back up. The fold is keyed on the
-// finding rather than on its position, so narrowing the filter cannot leave a different row folded.
-func (f *findingsState) toggle() {
-	if f.cursor >= len(f.matches) {
-		return
-	}
-	row := f.matches[f.cursor]
-	f.collapsed[row] = !f.collapsed[row]
-}
-
 // filter narrows the list to findings whose title, file or body carry q, case-insensitively. The
 // cursor returns to the top, since the row it sat on may no longer be listed.
 func (f *findingsState) filter(q string) {
-	f.query, f.cursor = q, 0
+	f.query = q
 	needle := strings.ToLower(q)
 	f.matches = make([]int, 0, len(f.rows))
 	for i, r := range f.rows {
@@ -89,44 +74,29 @@ func (m Model) findingsPane() []string {
 	if m.findings == nil {
 		return []string{"the review is still running..."}
 	}
-	lines, _ := m.findings.render()
-	return lines
+	return m.findings.render(m.view.width())
 }
 
-// cursorLine is where the cursor's row landed in the rendered pane, which is what keeps it in view
-// once headings and expanded rows have pushed it down.
-func (f *findingsState) cursorLine() int {
-	_, rows := f.render()
-	if f.cursor < len(rows) {
-		return rows[f.cursor]
-	}
-	return 0
-}
-
-// render walks the browser once and returns both the pane's lines and the line each listed finding
-// landed on. Both come from one walk because the cursor has to be kept in view, and locating it
-// separately would be this loop written twice.
-func (f *findingsState) render() (lines []string, rows []int) {
-	lines, rows = []string{}, make([]int, 0, len(f.matches))
+// render lays the report out the way the markdown on stdout does: a severity heading, then each
+// finding as its title, where it is, its body, its fix and its attribution.
+func (f *findingsState) render(width int) []string {
+	lines := []string{}
 	if f.typing || f.query != "" {
 		lines = append(lines, f.prompt())
 	}
 
 	vis := f.visible()
 	if len(vis) == 0 {
-		return append(lines, f.empty()), rows
+		return append(lines, f.empty())
 	}
 	for i, v := range vis {
 		if i == 0 || v.Severity != vis[i-1].Severity {
 			lines = append(lines, f.heading(v.Severity))
 		}
-		rows = append(rows, len(lines))
-		lines = append(lines, f.row(i, v))
-		if !f.collapsed[f.matches[i]] {
-			lines = append(lines, f.detail(v)...)
-		}
+		lines = append(lines, f.row(v))
+		lines = append(lines, f.detail(v, width)...)
 	}
-	return lines, rows
+	return lines
 }
 
 // prompt is the filter line, showing the caret while the query is being typed and what it kept once
@@ -152,29 +122,30 @@ func (f *findingsState) heading(s finding.Severity) string {
 	return "── " + strings.ToUpper(string(s)) + " ──"
 }
 
-// row is one finding on one line: the cursor mark, where it is, what it says and how sure the panel
-// was.
-func (f *findingsState) row(i int, v finding.Finding) string {
-	mark := "  "
-	if i == f.cursor {
-		mark = "> "
-	}
-	return mark + v.Location() + "  " + markdown(v.Title) + "  [" + strconv.Itoa(v.Confidence) + "]"
+// row is one finding's headline: the report's own "### title" line, carrying the confidence the report
+// prints at the foot of the entry.
+func (f *findingsState) row(v finding.Finding) string {
+	return "  " + markdown(v.Title) + "  [" + strconv.Itoa(v.Confidence) + "]"
 }
 
-// detail is everything the summary line has no room for: the body, the fix, and the attribution.
-func (f *findingsState) detail(v finding.Finding) []string {
-	out := []string{}
+// detail is the rest of the report's entry, in the report's own order: where it is, the body, the fix,
+// then the attribution. It is what the reader came for, so it is shown by default and folded away on
+// request rather than the other way round.
+func (f *findingsState) detail(v finding.Finding, width int) []string {
+	out := f.indent(v.Location(), width)
 	if v.Body != "" {
-		out = append(out, f.indent(v.Body)...)
+		out = append(out, "")
+		out = append(out, f.indent(v.Body, width)...)
 	}
 	if v.Fix != "" {
-		out = append(out, f.indent("fix: "+v.Fix)...)
+		out = append(out, "")
+		out = append(out, f.indent("fix: "+v.Fix, width)...)
 	}
 	if meta := f.meta(v); meta != "" {
-		out = append(out, f.indent(meta)...)
+		out = append(out, "")
+		out = append(out, f.indent(meta, width)...)
 	}
-	return out
+	return append(out, "")
 }
 
 func (f *findingsState) meta(v finding.Finding) string {
@@ -191,12 +162,38 @@ func (f *findingsState) meta(v finding.Finding) string {
 	return strings.Join(parts, " | ")
 }
 
-func (f *findingsState) indent(text string) []string {
+// indent lays a paragraph under its heading, wrapped to the pane rather than clipped at its edge. A
+// finding's body is prose several sentences long — the part a reader is actually here to read — and
+// cutting it at the terminal's width leaves the half that says least.
+func (f *findingsState) indent(text string, width int) []string {
+	const pad = "    "
+	avail := max(width-len(pad), minWrapCols)
 	out := []string{}
-	for l := range strings.SplitSeq(text, "\n") {
-		out = append(out, "    "+markdown(l))
+	for para := range strings.SplitSeq(text, "\n") {
+		if strings.TrimSpace(para) == "" {
+			out = append(out, "")
+			continue
+		}
+		for rest := para; rest != ""; {
+			take := f.take(rest, avail)
+			out = append(out, pad+markdown(take))
+			rest = strings.TrimLeft(strings.TrimPrefix(rest, take), " ")
+		}
 	}
 	return out
+}
+
+// take is the longest leading run of text that fits in cols, broken at a word when one is reachable.
+// Runes rather than bytes, since a body carries arbitrary prose.
+func (f *findingsState) take(text string, cols int) string {
+	if utf8.RuneCountInString(text) <= cols {
+		return text
+	}
+	cut := string([]rune(text)[:cols])
+	if sp := strings.LastIndex(cut, " "); sp > 0 && utf8.RuneCountInString(cut[:sp]) >= cols/2 {
+		return cut[:sp]
+	}
+	return cut
 }
 
 func (f *findingsState) rank(s finding.Severity) int {

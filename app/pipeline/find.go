@@ -90,8 +90,6 @@ func (f *finder) runAgent(ctx context.Context, spec prompt.AgentSpec, index int)
 		Name: spec.Name, Lenses: spec.Lenses, Executor: spec.Executor,
 		RequestedModel: spec.Model, Effort: spec.Effort,
 	}}
-	f.emit(Event{Kind: EventAgentStarted, Agent: spec.Name, Text: strings.Join(spec.Lenses, ", ")})
-
 	text, err := f.cfg.Profile.Compose(f.cfg.Set, spec, prompt.ComposeOpts{Vars: f.cfg.Vars, History: f.cfg.History})
 	if err != nil {
 		return f.degrade(res, err)
@@ -105,6 +103,13 @@ func (f *finder) runAgent(ctx context.Context, spec prompt.AgentSpec, index int)
 		return f.degrade(res, slotErr)
 	}
 	defer f.stagger.release()
+
+	// **started means running, and is emitted here rather than on entry for that reason.** Announcing
+	// it before the stagger slot is acquired starts every agent's clock at once, so a row counts the
+	// time it spent queued as time it spent working and every row reads the same elapsed early on —
+	// which is the opposite of what the stagger exists to make visible. The roster already shows an
+	// agent as waiting until this lands.
+	f.emit(Event{Kind: EventAgentStarted, Agent: spec.Name, Text: strings.Join(spec.Lenses, ", ")})
 
 	opts := attemptOpts{spec: spec, prompt: text, leader: index == 0}
 	var fault error

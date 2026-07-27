@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -133,4 +135,53 @@ func TestModel_paint(t *testing.T) {
 
 	assert.Equal(t, "\x1b[36mbugs+impl\x1b[39m", m.paint("bugs+impl"))
 	assert.Equal(t, "stranger", m.paint("stranger"), "an agent with no spec keeps the default foreground")
+}
+
+func TestModel_combinedLines_wrap(t *testing.T) {
+	// **clipping loses the end of exactly the lines worth reading.** A narrated step or a Bash command
+	// is the informative part of the log and the part most likely to run long.
+	long := "Bash git diff master..HEAD -- app/pipeline/ app/config.go app/main.go ':!vendor'"
+	m := feed(t, New(ModelConfig{Roster: roster()}), tea.WindowSizeMsg{Width: 76, Height: 24})
+	m = feed(t, m, event(pipeline.EventAgentProgress, "bugs+impl", long))
+
+	lines := m.combinedLines()
+	require.Len(t, lines, 2, "one row could not hold it")
+	assert.Contains(t, lines[0], "16:02:11", "the first row carries the timestamp and the agent")
+	assert.NotContains(t, lines[1], "16:02:11", "the rest carry neither, so the entry reads as one thing")
+
+	// continuing under the text column, not under the timestamp. Measured in display columns, because
+	// the painted agent name carries ANSI and a byte index would count the escapes
+	at := strings.Index(lines[0], "Bash")
+	require.Positive(t, at)
+	assert.Equal(t, lipgloss.Width(lines[0][:at]), lipgloss.Width(lines[1])-lipgloss.Width(strings.TrimLeft(lines[1], " ")),
+		"the continuation starts in the same column the text does")
+
+	joined := strings.Join(strings.Fields(strings.Join(lines, " ")), " ")
+	assert.Contains(t, joined, long, "every word survives the wrap")
+	for _, l := range lines {
+		assert.LessOrEqual(t, lipgloss.Width(l), 76, "no row runs past the terminal")
+	}
+
+	t.Run("a line that fits stays one row", func(t *testing.T) {
+		short := feed(t, New(ModelConfig{Roster: roster()}), tea.WindowSizeMsg{Width: 76, Height: 24})
+		short = feed(t, short, event(pipeline.EventAgentActivity, "bugs+impl", "reading proc.go"))
+		assert.Len(t, short.combinedLines(), 1)
+	})
+
+	t.Run("a terminal too narrow to wrap into clips instead", func(t *testing.T) {
+		// below the floor a wrapped entry is more rows of indent than of text
+		narrow := feed(t, New(ModelConfig{Roster: roster()}), tea.WindowSizeMsg{Width: 24, Height: 24})
+		narrow = feed(t, narrow, event(pipeline.EventAgentProgress, "bugs+impl", long))
+		assert.Len(t, narrow.combinedLines(), 1)
+	})
+
+	t.Run("a word longer than the column is broken rather than dropped", func(t *testing.T) {
+		unbroken := strings.Repeat("x", 200)
+		m := feed(t, New(ModelConfig{Roster: roster()}), tea.WindowSizeMsg{Width: 76, Height: 24})
+		m = feed(t, m, event(pipeline.EventAgentProgress, "bugs+impl", unbroken))
+		lines := m.combinedLines()
+		require.Greater(t, len(lines), 1)
+		assert.Contains(t, strings.Join(strings.Fields(strings.Join(lines, "")), ""), unbroken,
+			"it has no space to break on, so it is cut at the column and continues")
+	})
 }

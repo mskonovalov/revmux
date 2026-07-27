@@ -355,3 +355,46 @@ func TestAgentState_runtime_advancesWithTheRun(t *testing.T) {
 		assert.Contains(t, row, "1m0s", "the quiet agent's row advanced because another one spoke")
 	})
 }
+
+func TestAgentState_runtime_freezesWhenFinished(t *testing.T) {
+	// **a finished agent's elapsed must stop.** Measuring against the run's newest event makes every
+	// completed row climb toward the run's age, so a reader can no longer tell the finder that took
+	// forty seconds from the one that took four minutes — they converge.
+	for _, state := range []string{stateDone, stateDegraded} {
+		t.Run(state+" stops counting", func(t *testing.T) {
+			a := &agentState{state: state, started: at, updated: at.Add(40 * time.Second)}
+			assert.Equal(t, "40s", a.runtime(at.Add(40*time.Second)))
+			assert.Equal(t, "40s", a.runtime(at.Add(4*time.Minute)),
+				"the rest of the run went on without it, and its own elapsed is what it took")
+		})
+	}
+
+	for _, state := range []string{stateRunning, stateRetrying, stateLimited, stateWaiting} {
+		t.Run(state+" keeps counting", func(t *testing.T) {
+			a := &agentState{state: state, started: at, updated: at.Add(40 * time.Second)}
+			assert.Equal(t, "4m0s", a.runtime(at.Add(4*time.Minute)),
+				"it has not finished, so how long it has been quiet is the number worth showing")
+		})
+	}
+
+	t.Run("through a whole run, in the table", func(t *testing.T) {
+		m := feed(t, New(ModelConfig{Roster: roster()}),
+			event(pipeline.EventAgentStarted, "bugs+impl", "bugs"),
+			event(pipeline.EventAgentStarted, "codex", "adversarial"),
+			pipeline.Event{Kind: pipeline.EventAgentDone, Agent: "bugs+impl", At: at.Add(40 * time.Second)},
+			pipeline.Event{Kind: pipeline.EventAgentActivity, Agent: "codex", Text: "still going",
+				At: at.Add(4 * time.Minute)},
+		)
+
+		rows := map[string]string{}
+		for l := range strings.SplitSeq(m.statusTable(), "\n") {
+			for _, name := range []string{"bugs+impl", "codex"} {
+				if strings.Contains(l, name) && !strings.Contains(l, "AGENT") {
+					rows[name] = l
+				}
+			}
+		}
+		assert.Contains(t, rows["bugs+impl"], "40s", "the finished row holds the time it actually took")
+		assert.Contains(t, rows["codex"], "4m0s", "while the one still going keeps counting")
+	})
+}

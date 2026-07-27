@@ -28,6 +28,10 @@ const (
 	// header, the rule under it, the column heading, the rule closing the table, the tab bar, and the
 	// rule under that. Miscount it and the pane runs past the bottom of the terminal.
 	chromeLines = 6
+
+	// minWrapCols is the narrowest text column worth wrapping into: below it a wrapped entry is more
+	// rows of indent than of text, and clipping reads better.
+	minWrapCols = 20
 )
 
 // ProgressInterval is how often a tool call earns a line of its own in a log.
@@ -182,6 +186,9 @@ func (m *Model) complete(rep finding.Report) {
 	m.done = true
 	m.exitIn = m.cfg.AutoExit
 	m.focus(m.findingsTab())
+	// focus opens a pane at its newest line, which is right for a log and wrong for a report: a reader
+	// starts at the worst finding, not at the tail of the last one's body
+	m.view.scroll = m.maxScroll()
 }
 
 // findingsTab is the browser's tab, one past the last agent, or -1 while there is no report to
@@ -377,20 +384,25 @@ func (a *agentState) push(line string) {
 
 // runtime is the agent's elapsed time as the status table shows it, measured between event timestamps
 // rather than off a clock so the table renders the same in a test as in a terminal.
-// runtime is how long this agent has been going, measured against the newest event time in the whole
-// run rather than against this agent's own last one.
+// finished reports whether this agent has reached a state it will not leave.
+func (a *agentState) finished() bool { return a.state == stateDone || a.state == stateDegraded }
+
+// runtime is how long this agent ran: from its own first event to its own last one once it has
+// finished, and to the newest event time anywhere in the run while it is still going.
 //
-// **Its own last event freezes the clock the moment it goes quiet**, which is exactly when a reader
-// wants to know how long it has been quiet for — a stalled agent showed the elapsed it had when it
-// last spoke while every busy row kept counting. Any event from any agent now advances them all,
-// which for a run with four agents talking is every render.
+// **Both halves matter and the obvious implementation gets one of them wrong.** Measuring against the
+// agent's own last event freezes a running agent's clock the moment it goes quiet — exactly when a
+// reader wants to know how long it has been quiet for. Measuring against the run instead makes a
+// finished agent's elapsed climb for the rest of the run, until every completed row converges on the
+// run's age and a reader can no longer tell the finder that took forty seconds from the one that took
+// four minutes.
 //
 // This still takes no clock. `.claude/rules/tui.md` forbids one here, and the reason holds: the
 // elapsed a reader sees has to be the elapsed the archive recorded, and a clock read in this package
 // would drift from the timestamps the pipeline stamped.
 func (a *agentState) runtime(now time.Time) string {
 	end := a.updated
-	if now.After(end) {
+	if !a.finished() && now.After(end) {
 		end = now
 	}
 	if a.started.IsZero() || !end.After(a.started) {

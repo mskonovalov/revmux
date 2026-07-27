@@ -99,22 +99,14 @@ func (m *Model) browseKey(msg tea.KeyMsg) bool {
 		return true
 	}
 
-	switch {
-	case key.Matches(msg, keys.startFilter):
+	// only the filter. **The browser renders the report and nothing more**: scrolling it is the same
+	// scrolling every other pane has, so the arrow and page keys fall through rather than being
+	// reimplemented here against a cursor the pane does not need.
+	if key.Matches(msg, keys.startFilter) {
 		m.findings.typing = true
-	case key.Matches(msg, keys.expand):
-		m.findings.toggle()
-		m.showCursor()
-	case key.Matches(msg, keys.up):
-		m.findings.move(-1)
-		m.showCursor()
-	case key.Matches(msg, keys.down):
-		m.findings.move(1)
-		m.showCursor()
-	default:
-		return false
+		return true
 	}
-	return true
+	return false
 }
 
 // editFilter feeds one keystroke to the filter query. Esc abandons it and enter accepts it; every
@@ -135,28 +127,7 @@ func (m *Model) editFilter(msg tea.KeyMsg) {
 		f.filter(f.query + string(msg.Runes))
 	default: // a named key carries no text, so it edits nothing
 	}
-	m.showCursor()
-}
-
-// showCursor scrolls the browser so the cursor row stays on screen. The pane window is measured back
-// from the newest line, so an offset is how far above the end the window sits.
-func (m *Model) showCursor() {
-	lines, height := m.paneLines(), m.paneHeight()
-	if len(lines) <= height {
-		m.view.scroll = 0
-		return
-	}
-
-	line, start := m.findings.cursorLine(), len(lines)-height-m.view.scroll
-	switch {
-	case line < start:
-		m.view.scroll = len(lines) - height - line
-	case line >= start+height:
-		m.view.scroll = len(lines) - line - 1
-	default:
-		return
-	}
-	m.view.scroll = min(max(m.view.scroll, 0), len(lines)-height)
+	m.view.scroll = m.maxScroll() // a narrowed report is read from its top, like the whole one
 }
 
 // scroll moves the window back through the log by n lines, clamped to what the pane actually holds.
