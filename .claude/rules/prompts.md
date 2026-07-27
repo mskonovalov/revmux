@@ -130,16 +130,23 @@ Variables: `{{SCOPE}}`, `{{GOAL}}`, `{{PROFILE}}`, `{{CONTEXT}}`, `{{WORKDIR}}`,
 plus `{{FINDINGS}}` and `{{SOURCES}}` for the synthesis and verify stages.
 
 **Context variables expand to absolute paths, never to file contents.**
-`{{SCOPE}}`, `{{GOAL}}` and `{{PROFILE}}` become paths to files in the task directory,
+`{{SCOPE}}`, `{{GOAL}}` and `{{PROFILE}}` become paths to files in the round's `input/`,
 `{{CONTEXT}}` becomes the path to its `context/` directory, and the profile body instructs agents to read them.
 revmux therefore only ever stats those files — it never opens one, so there is no size guard,
 no encoding handling and no way for a large scope to bloat a prompt.
 
 ### Prior rounds are injected, not a variable
 
-revmux already wrote the task's earlier rounds under `runs/`, so it hands them to every process rather than
-making each caller copy them forward. This does not weaken "revmux never derives context":
+revmux already wrote the task's earlier rounds, so it hands them to every process rather than making each
+caller copy them forward. This does not weaken "revmux never derives context":
 it surfaces what revmux itself produced, under a path it owns, and never reads a repository to do it.
+
+The rounds are the task directory's own children, and a round is a directory whose `manifest.json` carries
+a run's record of itself — `task.HasRun`. `archive.New` creates that file empty as it claims the round and
+the finished run fills it in, so an empty one is a claim rather than a round. Anything else under the task,
+`task.md` included, is not one either, and neither is the round being written, which is why the inventory is
+resolved before `archive.New` rather than after it — and why gating on the file's mere presence would put a
+re-run of an interrupted round into its own inventory.
 
 **This is an injection, not a `{{VAR}}`.**
 A variable is opt-in per file — any lens or profile omitting it silently loses the history, including
@@ -153,9 +160,9 @@ the path plus a generated one-line inventory per round — name, when it ran, fi
 which sources degraded:
 
 ```
-Prior rounds for this task: /abs/.revmux/tasks/pr-123/runs/
-  round-1    2026-07-26T14:30Z   8 findings (1 critical, 3 major, 4 minor)   sources 4/4
-  after-fix  2026-07-26T16:02Z   2 findings (0 critical, 1 major, 1 minor)   sources 3/4, docs+tests degraded
+Prior rounds for this task: /abs/.revmux/tasks/pr-123/
+  01-initial    2026-07-26T14:30Z  8 findings (1 critical, 3 major, 4 minor)  sources 4/4
+  02-after-fix  2026-07-26T16:02Z  2 findings (0 critical, 1 major, 1 minor)  sources 3/4, docs+tests degraded
 Each round holds report.md (rendered) and findings.json (machine shape). Read the rounds you judge relevant.
 
 Re-evaluate everything independently. A prior round reporting an issue is not evidence that it is real,
@@ -209,6 +216,45 @@ It is optional at load, so overriding a lens does not require re-authoring metad
 but every **shipped** file has one and a test asserts it.
 A description is never inherited from the embedded default when an override wins:
 an override is different text, and the default's summary would describe something else.
+
+### `task.md` is a fourth front-matter kind, and it does not live here
+
+Profiles, stages and lenses are the three kinds `app/prompt` parses. `task.md` is the fourth, and it is
+parsed by `app/task` instead: it describes the task being reviewed rather than shaping a review, so
+importing `app/prompt` for it would widen that package's contract to non-prompt files.
+What it shares is the convention — a leading `---` block, `yaml` with `dec.KnownFields(true)` so an unknown
+key is rejected, and a body below it that is prose nothing parses.
+It shares the **scanner** too, `app/frontmatter`: the CRLF pre-pass and the empty-block case are subtle
+enough that a second copy is a second thing to get wrong, and `app/task` importing a scanner is not
+`app/task` importing the prompt tree.
+
+Where the two kinds differ is what a rejected key costs. A bad prompt file fails the load and the run
+stops. `task.md` is read by `revmux config`, which lists the task either way and reports the parse failure
+as `meta_error` on that entry — a task dropped from the list is one a caller mints a second id for, and
+anchors that are silently empty are the same shape as a task nobody described.
+
+```yaml
+---
+description: OAuth token exchange rework
+url: https://github.com/umputun/revmux/pull/123
+branch: feature/oauth
+base: 4ed3259
+---
+```
+
+Every key is optional, the body is optional, and the file itself is optional — an absent one is a task with
+no metadata, not an error.
+The keys exist so a caller can match an existing task exactly instead of deriving an id and forking the
+history on a near-miss, and `revmux config` reports them back under `paths.tasks`.
+
+**revmux stores and reports these and never resolves one.**
+No `git` runs against `branch` or `base`, nothing is fetched from `url`, and nothing is checked out.
+They are strings the caller wrote and strings the caller reads back.
+This is where the zero-VCS-dependency rule would erode first, because resolving a ref looks like a small
+convenience right up to the point revmux needs a repository.
+
+`Meta` therefore carries **both** `yaml` and `json` tags: it is parsed from front matter and marshaled into
+the `revmux config` payload, where an untagged field would emit `URL` rather than `url`.
 
 ### Validation at load
 

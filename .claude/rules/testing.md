@@ -63,9 +63,10 @@ cryptic and appear in unrelated runs later.
 Config precedence tests are the sharpest edge here — they exist to walk exactly those directories,
 so they must be pointed at temp dirs explicitly rather than relying on the default lookup.
 
-The same applies to `./.revmux/tasks/`, and one hazard there is worse:
-archive tests exercise pruning, so a test run against the default tasks root would delete real review
-history that cannot be regenerated.
+The same applies to `./.revmux/tasks/`.
+Nothing in revmux deletes, so the hazard is not lost history but a claimed round: a test that ran against
+the default tasks root would leave `manifest.json` in a real round, and `revmux config` would report a
+round that never ran while the caller's own `input/` sat beside it.
 Point `--tasks-dir` at a temp dir in every test that constructs an `Archive` or resolves a task.
 
 A cheap audit: checksum the real config directory before and after a full `go test ./...` and confirm it is unchanged.

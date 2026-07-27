@@ -38,14 +38,15 @@ config's other keys.
 ### What belongs in the config file
 
 Runtime knobs only: `idle-timeout`, `hard-timeout`, `stagger-delay`, `max-parallel`, `verify-groups`,
-`tasks-dir`, `keep-runs`, `auto-exit`, `profile`.
+`tasks-dir`, `auto-exit`, `profile`.
 The key is the long flag name verbatim, hyphens included — that is what `ini-name` is set to, and it is what
 makes the key guessable from `--help`.
 
 `tasks-dir` is a location, not review content, so it belongs here — a user who wants task directories on `/tmp`
 sets it once rather than passing it on every invocation.
-`keep-runs` prunes `runs/` subdirectories **within** a task directory and never the task directory itself,
-because everything above `runs/` was written by the caller.
+
+`--task` and `--run` are not in this list and must not be added: a config file naming the round to write
+would make the same invocation review different context in different directories.
 
 Everything that shapes a review — rosters, models, effort, prompt text, lenses — lives in markdown.
 See `.claude/rules/prompts.md`. Do not add a roster or a model to the INI file.
@@ -68,13 +69,19 @@ In documentation use the `--flag=value` form for long flags that take a value, n
 ### Context resolution
 
 revmux never derives context — the caller writes it to disk and names it.
-`--task <id>` selects a directory under `--tasks-dir` (default `./.revmux/tasks`), and that directory is the
-only channel review context travels through.
+`--task <id>` selects a directory under `--tasks-dir` (default `./.revmux/tasks`), `--run <name>` selects one
+round inside it, and `<task>/<run>/input/` is the only channel review context travels through.
 There are no `--goal`, `--goal-file`, `--profile-file` or `--context-file` flags:
 variables resolve to **paths**, so a flag carrying inline text could not be substituted without revmux
 first writing it to a file, which would make revmux an author of context rather than a consumer of it.
 
-`options.resolveContext` stats the task directory and returns the resolved absolute paths:
+**Context is per-round, so it is read from the round.**
+Round 2 reviews the fixes for what round 1 found: a different scope, usually a different goal, sometimes a
+different project profile. One set of files at task level is overwritten by whoever composes the next round,
+and the record of what the previous round reviewed goes with it — the archive cannot recover it, since an
+archived prompt carries the path and not the text.
+
+`options.resolveContext` stats `<task>/<run>/input/` and returns the resolved absolute paths:
 
 1. `scope.md` — required, and a missing or empty one is a load-time error, since a review with no scope is a caller bug
 2. `goal.md`, `profile.md` — optional, absent resolves to the "none provided" placeholder
@@ -86,8 +93,46 @@ instruct the agent to read as generic severity calibration.
 That guarantee lives in the prompt text, not in Go — the report header carries the title, the scope path
 and the degraded banner, and says nothing about calibration.
 
-The struct also carries `TaskDir`, the resolved root itself — `app/archive` needs it for both the run
-directory and the prior-round history, and re-deriving it with `filepath.Dir(Scope)` elsewhere means two
+**An omitted `--run` is a load-time error, not a name revmux invents.**
+The round holds the caller's own `input/`, so a round revmux named is a round nobody filled; the error names
+the `revmux new` call that creates one.
+
+**A `--run` naming a round that is not there gets that same message, and `resolveContext` is where it has to
+come from.**
+The round is stat'd before its `input/` is read, because the three files below it are all optional-or-empty
+shaped: without the check a round nobody created is reported as `scope.md is required and must not be empty`,
+which names a path two levels inside a directory that does not exist and reads as a scope the caller wrote
+wrong. `archive.New` says it properly and never runs — `resolveContext` fails first.
+
+**The old task-level layout is refused, and the refusal lives here as well as in `archive.New` and
+`task.Scaffold`.**
+`resolveContext` runs first, so a check only in the archive is never reached from a review — a task with
+`scope.md` or `runs/` beside its rounds would fail on a missing round `input/` instead, naming a path the
+caller has no reason to expect.
+There is no migration: one task-level scope describes N rounds at once and there is no correct round to
+assign it to, so the error names both shapes and stops.
+
+**`revmux new` refuses it too, and that is not redundancy — it is the same invariant every other gate has.**
+Scaffolding a round into such a task hands the caller a round the review path always rejects, after he has
+written `scope.md`, `goal.md`, `profile.md` and `context/` into it, and revmux has mutated caller-owned state
+on a path it will not accept. `Paths.build` therefore asks right after the task directory is opened and
+**before `task.md` is written**, so a refusal leaves the task exactly as it was.
+The judgment is `task.OldLayoutEntry` and the refusal `resolveContext` and `Scaffold` share is
+`task.CheckOldLayout`, both in `app/task` beside `CheckName`, `CheckMarker` and `CheckReclaim` — the entries
+are read by the caller through what it holds on the task (`os.Root.Lstat` for the two paths that walk down as
+nested roots, `os.Lstat` here, where a resolved path is all there is) and the shared function judges them,
+exactly as `CheckReclaim` takes the entries its caller read.
+An entry that cannot be stat'd is an error there, never an absence: this gate is what stands between a task
+written for the previous shape and a review that reads half of it.
+
+The struct also carries `TaskDir`, and it is the **task** directory even though every context file sits two
+levels below it.
+`archive.History` enumerates the task's rounds from it, and the rounds are its children.
+Pointing it at the round is the one mistake here with a silent failure mode: `History` finds no rounds,
+returns an empty string, and the prior-round block is omitted from every composed prompt with no error
+anywhere — a hard rule broken invisibly. A regression test asserts the block is non-empty when a prior round
+exists, and it is there for exactly that.
+Re-deriving the directory with `filepath.Dir(Scope)` elsewhere is the other way to get this wrong: two
 resolutions that can disagree.
 
 And it carries `WorkDir`, from `--workdir` and defaulting to the process working directory.
@@ -105,27 +150,78 @@ compiles clean and silently feeds the project profile into `{{GOAL}}`.
 
 Both names come from the caller and are joined into filesystem paths, so they are validated before use,
 not after. A name containing `..` or a path separator escapes the tasks root and lets revmux write over
-caller-authored context — the exact thing "revmux writes only under `runs/`" forbids.
+caller-authored context — the exact thing "revmux writes only inside a round" forbids.
 
 Reject any name that is empty, contains a path separator or `..`, is absolute, or begins with `.`.
 Then verify containment on the resolved path rather than trusting the lexical check alone,
 since a symlink inside the tasks root can still point outside it.
 
+**`task.CheckName` is the single definition of that rule.**
+`options.checkNames`, `archive.New` and `task.Scaffold` all delegate to it, and they pass the flag the name
+came from — `--task` and `--run` — so one rule speaks with one vocabulary wherever it is applied.
+Three copies of one security-relevant rule are three chances for one of them to drift, and the one that
+drifts is the one nobody re-reads.
+
+**`task.CheckContained` is the single definition of the containment check, for exactly the same reason.**
+`options.taskDir` applies it to the task directory a review reads, which is the one place a path *string*
+is all there is.
+Two `EvalSymlinks`-plus-prefix implementations of one security-relevant rule are the same drift risk the
+name rule is consolidated against; do not inline a second one.
+**Nothing that writes uses it.** A resolve followed by a write is two operations, and the rename in
+between is the whole attack — `task.Scaffold` and `archive.New` both walk down as nested `os.Root`s
+instead, which contains every hop by construction.
+
+**A round name passes `task.CheckRoundName` on top of it, which refuses a reserved entry.**
+A round is a direct child of the task directory and shares its namespace, so `--run runs` and
+`--run scope.md` land exactly where the old-layout markers are looked for: creating one makes every later
+review of that task — including of a legitimate `01-initial` beside it — fail as an old-layout task until
+the directory is removed by hand. `task.md` is reserved for the same reason, it being the task's own file.
+The reserved set is `task.OldLayout()` plus `task.md`, defined once in `app/task`; `archive.checkOldLayout`
+and `options.checkOldLayout` reach it through `task.OldLayoutEntry` rather than spelling `runs` a second and
+third time.
+
+**`task.Scaffold` writes through nested `os.Root`s anchored at the tasks root, never by path.**
+A check on a resolved path and the write that follows it are two operations, and the directory can be
+swapped for a symlink in between — so `<tasks-root>/pr-1` replaced mid-scaffold put `task.md` outside the
+root while `revmux new` reported success. `EvalSymlinks`-checking each entry closed nothing, because the
+window is *after* the check.
+`Scaffold` therefore `MkdirAll`s the tasks root, opens it as a root, and takes the task directory and then
+the round as nested roots, creating what is missing through the handle above it. A swap after any hop
+leaves the handle on the directory that hop accepted.
+
+That also makes `revmux new` and the review path agree by construction rather than by two implementations
+of one rule: both walk the same chain, so a task symlink with an **absolute** target is refused by both,
+and a relative one to a sibling task is followed by both.
+
+**The round and its `input/` must additionally not be symlinks at all, and that is not containment.**
+A link landing back *inside* the tasks root passes every containment check and still points this round's
+reported paths at another round, whose caller-written `input/` the next `scope.md` overwrites.
+Both `Scaffold` and `archive.New` `Lstat` the entry and refuse a link outright — the review path with
+`requireInput`, which must not go back to `os.Root.Stat`: that **follows** a link landing inside the round,
+so an `input -> real-input` would be usable for review while `Scaffold` refused it, and the archived
+context would be an alias rather than this round's own directory.
+The task directory above them is deliberately exempt: a relative link to a sibling task inside the root is
+what `options.taskDir` and `archive.New` both accept.
+
+**`task.md` is the one file `Scaffold` writes, and a check on directories does not cover it.**
+A plain `os.WriteFile` follows a symlink at its last component, so `<task>/task.md -> /elsewhere/anything`
+puts the template outside the tasks root while `revmux new` reports success. The entry is therefore read
+with `Lstat` — a dangling link is a link, not a missing file — and created with `O_CREATE|O_EXCL` **through
+the task's own handle**, which refuses one planted between the look and the write the same way the round's
+claim does. Do not put it back on `Stat` plus `os.WriteFile`.
+
 **`archive.New` re-establishes that containment structurally, and it starts at the tasks root.**
 `options.taskDir` validates the resolved task path, but what it returns is a path *string*, and reopening
-that by name is the check-then-open window this section exists to remove — one hop further up than `runs/`.
-`archive.Opts` therefore carries `TasksDir` and `Task` rather than a joined `TaskDir`, and `New` opens an
-`os.Root` on the tasks root and takes the task directory, then `runs/`, then the run directory as nested
-roots. An escaping symlink fails at open rather than passing a comparison, whenever it was planted.
-`runs/` is the one directory revmux owns, and a checked-in `runs` symlink would make this run's artifacts
-land somewhere else and `Prune` delete directories there — the one destructive primitive in the tool.
+that by name is the check-then-open window this section exists to remove.
+`archive.Opts` therefore carries `TasksDir`, `Task` and `Run` rather than a joined path, and `New` opens an
+`os.Root` on the tasks root and takes the task directory, then the round, as nested roots.
+An escaping symlink fails at open rather than passing a comparison, whenever it was planted.
 
-**Both roots above `runs/` are opened, never created.**
-The tasks root and the task directory are the caller's, and a missing task directory is his error rather
-than something for revmux to author — `options.resolveContext` already refuses it, since a task with no
-`scope.md` cannot be reviewed. `New` creating one behind that check would make the first directory revmux
-writes sit above `runs/`, which is the line the whole rule draws. `runs/` and the run directory are the
-only two `New` may create.
+**Nothing on the way down is created.**
+The tasks root, the task directory and the round with the `input/` the caller filled are all his, and
+`options.resolveContext` already refuses a round with no `scope.md`.
+Creation lives in `revmux new` alone, and `resolveContext` must never gain a create-on-missing fallback: a
+typo'd `--task` has to error rather than silently produce an empty task nobody filled.
 
 Anchoring at the tasks root is stricter than `filepath.EvalSymlinks` in one case, and deliberately so:
 `os.Root` resolves a symlink target *within* the root, so a task symlink with an **absolute** target is
@@ -133,39 +229,105 @@ refused even when that target sits inside the tasks root. A relative one landing
 works. Do not relax this back into a resolve-then-reopen — the exotic case is a task directory linked to a
 sibling task, and the window it would reopen is the one the roots exist to close.
 
-**Containment is necessary there but not sufficient, so `runs/` must additionally not be a symlink at all.**
-`os.Root` follows a link that lands back *inside* the root, so `runs -> context` satisfies every containment
-check and still hands `Prune` the caller's own directories to delete — the rule this whole section exists to
-enforce, broken without leaving the task directory. `New` therefore `Lstat`s `runs` through the task handle
-and refuses a symlink outright, before creating or opening anything.
-The run directory underneath is created rather than adopted — `Mkdir` fails on an existing name, so a
-symlink planted there beforehand is rejected as an already-used run name.
+**Containment is necessary at the round but not sufficient, so the round must additionally not be a symlink
+at all.**
+`os.Root` follows a link that lands back *inside* the root, so a round linked to a sibling round satisfies
+every containment check and still has every artifact of this run truncate one of that round's — destroying
+exactly the bad round a reflection agent wants to read, without ever leaving the task directory.
+`New` therefore `Lstat`s the round entry through the task handle and refuses a symlink outright, before
+opening anything.
 
-**Reading an entry and opening it are two operations, so the look is repeated against the open handle,
-and both hops below the task directory get it.**
-A symlink planted between them is followed by `os.Root` whenever it lands back inside the parent —
-the `runs -> context` case the `Lstat` exists to refuse, reached by racing it rather than by defeating it.
-The run directory has the same window on the other side of its `Mkdir`: renamed away and replaced with a
-link to an earlier round, the handle would pin that round and every artifact this run writes would truncate
-one of its artifacts — destroying exactly the bad round a reflection agent wants to read.
-`New` therefore re-reads each entry after `OpenRoot`, refuses a symlink, and matches the entry against the
-directory actually opened with `os.SameFile`. That is one `checkHandle`, used at both hops.
+**Reading an entry and opening it are two operations, so the look is repeated against the open handle.**
+A symlink planted between them is followed by `os.Root` whenever it lands back inside the parent — the case
+the `Lstat` exists to refuse, reached by racing it rather than by defeating it.
+`New` therefore re-reads the entry after `OpenRoot`, refuses a symlink, and matches it against the directory
+actually opened with `os.SameFile`. That is `checkHandle`.
 A swap after that point changes nothing: the handle stays on the directory the check accepted.
 
-**Those handles are then held for the whole run, and that is the point.**
+**The round is then claimed with an exclusive create, and that is what detects one that has already run.**
+`OpenFile("manifest.json", O_CREATE|O_EXCL)` through the round handle is atomic where a look followed by a
+write is not, and it leaves every artifact of the earlier round exactly as it was.
+`input/` is required first, and its absence errors with the path the caller must create — a round without one
+carries no scope and there is nothing to review.
+Do not replace the exclusive create with a `Stat` plus a write, and do not make a **finished** round
+reusable: a round that went badly is the one a reflection agent reads.
+
+**The one carve-out is an empty marker over an otherwise empty round, and it is what makes an interrupted
+round re-runnable.**
+The claim creates `manifest.json` with no content and the finished run writes the record into it, so a
+marker still empty is a claim its run never came back from — SIGINT on a long review, an unwritable
+artifact, every source degraded. `claimRound` re-claims that round instead of refusing it.
+Since the round now holds the caller's own `input/`, refusing it forever would cost him the scope, goal,
+profile and context he wrote for it, on the one path where nothing of the review survived to be protected.
+
+**An empty marker is also what a run starting right now leaves, and size cannot tell those two apart, so
+the claim is an OS-level lock held for the run's lifetime.**
+Left on size alone the carve-out was a hole: two `archive.New` calls on one prepared round both succeeded,
+and the two runs then wrote and truncated the same artifacts until the last manifest won.
+`claimRound` therefore takes a non-blocking exclusive lock on the marker — `flock` on unix, `LockFileEx` on
+a byte past the record on windows, both in `tryLock` — and `Archive.Close` releases it.
+A lock **refused** means a live run owns the round and this one is turned away; a lock **acquired** over an
+empty marker means the run that claimed it is gone, because the kernel drops the lock when a process dies.
+That is what makes an abandoned round distinguishable from a live one with nothing to clean up, no pid to
+trust and nothing to delete.
+The lock is taken on a marker this run just created as well: creating it and locking it are two operations,
+and a racer reading it in between finds it empty. Both sides lock, so exactly one wins and the other is
+refused whatever the interleaving.
+Everything the reclaim decision rested on is then re-read **under** the lock — the marker's size, that the
+entry is still the descriptor's own file, and the round's leftovers — since each was read before the lock
+was held.
+Do not swap `flock` for a pid file or a timestamp: both re-introduce the guess this replaces.
+What stays arbitrated regardless is the case that matters most — a round that ran is never re-claimed,
+however many callers ask for it at once.
+
+**What the marker means is `task.CheckMarker`, and it is one predicate read with `Lstat`.**
+`HasRun`, `task.Scaffold` and `archive.claimRound` all ask it, and it refuses anything that is not a regular
+file before it looks at the size. A marker that is a symlink is the case that makes this load-bearing rather
+than tidy: `os.Root.Stat` **follows** a link landing back inside the round, so `manifest.json -> input/goal.md`
+reads as the goal's size — non-empty looks like a round that ran, empty passes the claim outright — and the
+write that fills the marker in then truncates the caller's own context through the link.
+Reading the size without first refusing a non-regular entry is the bug this consolidation exists to prevent,
+and a copy of the predicate that omits the check is that bug reintroduced.
+
+**An empty marker says the run never finished, not that it never wrote, so the round must also be clean.**
+The marker is created first and filled last, while the stage snapshots, the composed prompts, the per-agent
+tees and `events.jsonl` all land during the run. Re-claiming such a round writes only what this run
+produces and then claims the lot with a manifest naming a roster that never wrote the leftovers beside it —
+one directory holding two runs, with nothing on disk saying so, which is precisely the un-auditable archive
+`CLAUDE.md` forbids.
+`task.CheckReclaim` therefore refuses a round holding anything but `input/` and the marker, naming what it
+found. Both `claimRound` and `task.Scaffold` call it on the entries they read through their own handle on
+the round, so `revmux new` and the review path agree about which rounds are still open.
+**The refusal must never become a delete.** revmux has no destructive primitive anywhere, and removing the
+leftovers would destroy the evidence of the run that wrote them; the caller opens a new round and copies
+his `input/` across. Nor may the check be narrowed to a list of names revmux happens to write today — an
+artifact added later would then be missed, and the two-runs-in-one-round case is exactly what it exists to
+catch.
+
+**Everything that counts rounds calls `task.Rounds`, never its own walk over the task directory.**
+It gates on `task.HasRun` rather than on the marker being there: `archive.History` is resolved before the
+round is claimed, so a re-run of a round whose first attempt was interrupted would otherwise find its own
+empty marker and list the round being written as one of its own prior rounds.
+`revmux config` reporting it is the same error in a different place — a caller reading `rounds` would treat
+a re-runnable round as one already spent and mint a name beside it.
+Both read the enumeration from one function so "what counts as a round" cannot be answered twice.
+
+**The round handle is then held for the whole run, and that is the point.**
 A path checked once and reopened by name on every write is a path another process can rename and replace
 with a symlink in between; a handle keeps referring to the directory it was opened on and refuses any name
 that leaves it, so containment holds for the run's lifetime rather than for the instant it was measured.
-`Archive.Close` releases both, deferred in `run` once every artifact is on disk.
-The tasks-root and task handles are closed inside `New`, since nothing is written through them — they only
-carry the walk down to `runs/`.
+`Archive.Close` releases it, deferred in `run` once every artifact is on disk, along with the locked marker
+that says the round is this run's — so releasing early is what lets a later run re-claim a round this one
+never finished.
+The tasks-root and task handles are closed inside `New`, since nothing is written through them and nothing
+below needs them — `archive.History` takes a path rather than the handle.
 Do not reintroduce a path-string `resolve` plus `filepath.EvalSymlinks` here — that is the check-then-open
 window the roots exist to remove, and it needs `/var` versus `/private/var` reasoning the handles do not.
 
 `options.taskDir` still runs, and still returns the joined path: `reviewContext.TaskDir` is what the prompt
 variables and the prior-round inventory read. What it must not be is the thing the archive opens — that
-takes `--tasks-dir` and `--task` and joins them itself, so the boundary is enforced by the open rather than
-inherited from a string.
+takes `--tasks-dir`, `--task` and `--run` and joins them itself, so the boundary is enforced by the open
+rather than inherited from a string.
 
 **Roster agent names get the same treatment, but at a different layer — do not conflate the two.**
 An agent name comes from the roster and becomes one path *component*, so the empty / separator / `..` /
@@ -179,8 +341,8 @@ still ahead of any filename, it is where every other roster-entry rule already l
 An invalid agent name is therefore a startup error, like every other bad front-matter value.
 
 `Archive.Writer` itself validates something else: it takes a clean **relative path** and rejects only what
-was never an artifact path — empty, absolute, or climbing out lexically. Anything that leaves the run root
-by following a symlink is refused by the run's own handle when it is traversed, so `Writer` does no
+was never an artifact path — empty, absolute, or climbing out lexically. Anything that leaves the round
+by following a symlink is refused by the round's own handle when it is traversed, so `Writer` does no
 symlink resolution of its own. A separator is legal there and must be, since
 `prompts/agents/`, `prompts/stages/`, `stages/` and `agents/` all need one.
 Making `Writer` reject separators would make "`Writer` accepts `prompts/agents/x.md`" and "a separator in
@@ -227,8 +389,9 @@ Both forms are archived regardless of the flag, so the choice affects stdout alo
 
 - `0` — no findings above the threshold
 - `1` — findings above the threshold
-- `2` — tool error: bad config, unreadable prompt tree, missing or empty `scope.md`, a `--run` name that
-  already exists, an unwritable run artifact, or **every source degraded**
+- `2` — tool error: bad config, unreadable prompt tree, an omitted `--run`, a round with no `input/` or an
+  empty `scope.md`, a round that has already run or is held by a live run, an unwritable run artifact, or
+  **every source degraded**
 
 `1` is a normal outcome, not a failure. Callers script against this, so do not repurpose these values.
 
@@ -250,53 +413,15 @@ is still loud — the banner names the source and `degraded` carries it.
 It does **not** route through `Pipeline.fail`, and widening it to do so would break the tested degrade path.
 Every whole-file artifact — manifest, composed prompts, stage snapshots, `events.jsonl`, report — does.
 
-**A failed `Prune` is not one of those either, and must not be.** It runs after the report has been written, and an
-old run directory that will not delete is housekeeping rather than a missing artifact of *this* run. It warns
-on stderr and leaves the review's own exit code alone; turning a finished review into exit `2` over it would
-tell a scripted caller the review failed.
-For the same reason `Prune` runs last: a failed run keeps its artifacts.
+### revmux deletes nothing
 
-`keep-runs` counts the run being written, so `10` leaves ten directories including the current one, and `0`
-or `1` leaves only the current one. The run being written is never a deletion candidate whatever the number
-says.
+There is no pruning, no `--keep-runs` and no destructive primitive anywhere in the tool.
+A round holds the caller's own `input/`, so anything that deleted an old round would delete the record of
+what that round reviewed — the one artifact the archive rule exists to preserve.
+Reclaiming space is `rm -rf <tasks-dir>/<task>/<round>`, run by the user, and it is safe because nothing
+links rounds together: the prior-round inventory is rebuilt from whatever directories are there.
 
-**Which entry that is comes from the run handle, never from the run name**, for the same reason every
-other check down there does.
-A rename between `New` and `Prune` leaves a name match excluding nothing, and this run's own archive then
-becomes an ordinary candidate — at `keep-runs` 0 or 1 the only one, deleted by the pass that was meant to
-make room for it.
-`os.SameFile` against `root.Stat(".")` settles it instead.
-
-**Enumerating by identity settles only half of it, because what deletes a candidate is its name.**
-A deletion takes a name and there is no unlink-by-handle to take instead, so a rename landing between the
-enumeration and the deletion carries the deletion to whatever now answers to that name — the run being
-written among them, which is the one directory the identity check exists to spare.
-Re-reading the entry and matching it against the `fs.FileInfo` it was enumerated as narrows that window but
-does not close it: `Lstat` and the deletion are still two syscalls, and a rename between them is not
-detectable from a name.
-
-**So the guarantee comes from what is left for the name to do, not from how close the check sits to it.**
-`Archive.clear` opens the candidate as an `os.Root` — after the same `Lstat` identity check, and matched
-again against `Stat(".")` so a redirect during the open is caught — and deletes everything under it through
-that handle, depth first. A handle keeps referring to the directory it was opened on however the name moves
-afterwards, so nothing the recursion touches can be redirected.
-Entries come off `ReadDir` as they are on disk, so a symlink is unlinked rather than followed and nothing
-outside the candidate is reachable.
-
-What the name is then left to do is a single **non-recursive** `Remove` of an empty directory, still gated
-on the identity match. An entry that changed hands in that last window is at worst an empty directory, and a
-live run directory refuses the unlink outright because it is not empty.
-Do not reduce the candidate back to a bare name, do not hoist the match up to the enumeration, and above all
-do not put `RemoveAll` back on the name — the whole point is that the recursion follows a handle and the name
-carries only an unlink that cannot take a populated tree with it.
-
-**None of this covers two revmux processes pruning one task at the same time**, and it is not meant to.
-`Prune` excludes the run *this* process is writing; another process's live run is an ordinary candidate,
-reachable only at `keep-runs` 0 or 1 since anything above that keeps the newest entries and a live run is
-the newest thing in `runs/`.
-The task directory is single-writer by design — the caller re-runs one task under successive `--run` names —
-and closing this properly needs cross-process locking, which buys nothing against the symlink planting the
-rest of this section is about.
+Do not reintroduce a delete to bound growth. Growth is bounded by the user.
 
 ### Config-management flags
 
@@ -328,5 +453,81 @@ Values a caller has to match exactly — the `executor` and `effort` vocabularie
 constants `validate` uses. A second hardcoded copy here means a new effort level ships working but
 undiscoverable.
 
-**This is the one carve-out in "stdout belongs to the report".** The command runs no pipeline, so there is
-no report to collide with and no TUI to gate; it prints and exits before either exists.
+**`paths.tasks` reports the task store, not just its location.** Each entry is a task's id, the `task.md`
+front matter describing it, and the rounds already recorded under it.
+A caller matches an in-flight review against that: with an id alone it cannot tell whether `pr-123` is the
+task it means, and it mints `pr123` beside it.
+`taskInfo` embeds `task.Meta` rather than copying its fields, so a new front-matter key surfaces here without
+a second edit.
+A task whose `task.md` is absent or will not parse is still listed with empty anchors — a task omitted from
+the list is one a caller gives a second id to.
+**A parse failure is reported on the entry as `meta_error`, never dropped.**
+`task.Load` builds four error paths — an unknown key, malformed YAML, an unterminated block, an unreadable
+file — and `revmux config` is their only production caller, so discarding the error makes every one of them
+unreachable by a user: a typo'd `titel:` leaves all four anchors empty with nothing said on stdout, stderr
+or the exit code, which reads as "this task was never described" and produces the duplicate id `task.md`
+exists to prevent. The task stays in the list either way; only the reason is added.
+Rounds come from `task.Rounds`, the same enumeration the prior-round inventory is built from, so neither a
+directory a caller left under the task nor a round claimed by a run that never came back is reported as one.
+
+**Which entries are tasks is decided through an `os.Root` on the tasks root, so this lists exactly what
+`archive.New` can open.**
+A task directory reached through a relative symlink to a sibling is accepted by `options.taskDir`,
+`archive.New` and `task.Scaffold` alike — the id is an alias for the same directory, and a review really
+does run under it. `os.ReadDir` alone reports such an entry as a non-directory and drops it, which is the
+same wrong advice as omitting a task whose `task.md` would not parse: the caller sees no `alias`, mints a
+second id for a task already in flight, and its history forks.
+The reverse holds too — a link the archive cannot walk, absolute or leaving the root, is left out, since
+listing it advertises a review that cannot run.
+Aliasing is supported, in other words, and every path that reads a task agrees on it; `archive.History`
+already followed the link, and this is what brings the catalog in line.
+
+**The same rule applies to every other failure this command can hit: an empty list must mean empty.**
+An unreadable tasks root reported as `"tasks": []` is the identical wrong advice one level up — it reads as
+"nothing is there" and mints a duplicate id — so it is `paths.tasks_error`, an unreadable task directory is
+`rounds_error` on that entry, and a `--workdir` that will not resolve is `paths.workdir_error` beside the
+raw value. An absent tasks root is the one clean case: it is a fresh install, not a failure to read one.
+
+**`configCmd.Execute` does not print.** go-flags calls it from inside `parseArgs`, before the injected
+writers and the loaded prompt tree exist, so it sets `opts.showConfig` and `runOpts.writeCatalog` does the
+writing. A subcommand that writes from `Execute` writes to the real `os.Stdout` and cannot be tested.
+
+### `revmux new`
+
+`revmux new --task <id> --run <name>` creates the round and prints, as JSON on stdout, every path the caller
+writes to — the task directory, `task.md`, the round, its `input/`, and the four context paths inside it —
+plus which of them this call created.
+
+**It exists so the layout stays revmux's own detail.** A caller that joins
+`<tasks-dir>/<task>/<run>/input/scope.md` itself has reimplemented the layout from a document, and the next
+change to it breaks that caller silently. One that writes to the paths it was handed does not.
+
+It creates whatever is missing down the chain, `--tasks-dir` included — a first `revmux new` on a clean
+checkout materializes `./.revmux/tasks/` as well, and the roots it makes are not in `created`, which names
+only the four layout fields the payload carries.
+
+It is the only place revmux creates review context, and the two constraints on it are not negotiable:
+`resolveContext` must never gain a create-on-missing fallback, and `new` must refuse to overwrite.
+It is idempotent at task level — a second round on an existing task creates only the round — it never
+rewrites an existing `task.md`, and it refuses a round that has run, which is `task.HasRun` and not the
+mere presence of the file: a round whose marker is still empty was claimed by a run that never came back
+and is scaffolded again, the same way `archive.New` re-claims it — and, the same way, only while that run
+left nothing else in it. Both call `task.CheckReclaim` and both classify the marker with `task.CheckMarker`,
+so `new` never hands back a round the review path would refuse — the divergence to watch for is one side
+reading the marker its own way, which is how a symlinked `manifest.json` came to be accepted by `new` and
+refused by the review at the same time.
+It refuses a task written for the old layout for the same reason and through the same shared check,
+`task.CheckOldLayout`, before it writes `task.md` — that one was the last gate left with an implementation
+per caller and none in `app/task`, so `new` scaffolded happily into a task every review of it rejected.
+The `task.md` it writes ships fully commented out, the same way `--init` writes the config template: a task
+nobody described carries no metadata rather than a placeholder anchor matching the wrong task.
+Anything already occupying a layout path as something other than a directory — a file named `input`, a
+directory named `task.md` — is an error rather than a path reported back, since a caller cannot write into
+one and only finds out when the review reads no scope.
+
+`newCmd.Execute` follows `configCmd.Execute` exactly — it records the selection and `runOpts.writeTaskPaths`
+does the scaffolding and the writing, through the injected stdout.
+
+**Those two subcommands are the only carve-outs in "stdout belongs to the report", along with
+`--version`.** None of them runs a pipeline, so there is no report to collide with and no TUI to gate; all
+three print and exit before either exists.

@@ -4,8 +4,8 @@ revmux runs a structured multi-agent code review. It spawns and supervises `clau
 subprocesses, then returns findings on stdout as markdown or JSON.
 
 revmux runs a review and returns findings, and does nothing else. It performs no scope detection, no git
-operations, no PR fetching and no source modification. All review context is written to a task directory by
-the caller and passed in with `--task`.
+operations, no PR fetching and no source modification. All review context is written to disk by the caller
+and passed in as a task round, named with `--task` and `--run`.
 
 ## Why
 
@@ -70,21 +70,42 @@ stripped, since a `claude` child refuses to start when it thinks it is a nested 
 
 ## Quick start
 
+`revmux new` creates the round and prints every path you write to, so nothing constructs a path by hand:
+
+```console
+$ revmux new --task pr-123 --run 01-initial
+{
+  "task_dir": "/abs/.revmux/tasks/pr-123",
+  "task_file": "/abs/.revmux/tasks/pr-123/task.md",
+  "round_dir": "/abs/.revmux/tasks/pr-123/01-initial",
+  "input_dir": "/abs/.revmux/tasks/pr-123/01-initial/input",
+  "scope": "/abs/.revmux/tasks/pr-123/01-initial/input/scope.md",
+  "goal": "/abs/.revmux/tasks/pr-123/01-initial/input/goal.md",
+  "profile": "/abs/.revmux/tasks/pr-123/01-initial/input/profile.md",
+  "context": "/abs/.revmux/tasks/pr-123/01-initial/input/context",
+  "created": ["task_dir", "task_file", "round_dir", "input_dir"]
+}
 ```
-mkdir -p .revmux/tasks/pr-123
-cat > .revmux/tasks/pr-123/scope.md <<'EOF'
+
+Take the `scope` path out of that payload rather than joining it yourself, write the scope into it, and run
+the review — the same call again, since a round already scaffolded is reported rather than recreated:
+
+```
+scope=$(revmux new --task pr-123 --run 01-initial | jq -r .scope)
+cat > "$scope" <<'EOF'
 Review the changes on this branch against master.
 Diff command: git diff master...HEAD
 EOF
 
-revmux --task pr-123
+revmux --task pr-123 --run 01-initial
 ```
 
-That runs the `comprehensive` profile, shows a live TUI, and writes the report to stdout as JSON. Re-run
-after fixing something, under a new round name, and revmux carries the earlier rounds into every prompt:
+That runs the `comprehensive` profile, shows a live TUI, and writes the report to stdout as JSON. After
+fixing something, open a new round on the same task and revmux carries the earlier rounds into every prompt:
 
 ```
-revmux --task pr-123 --run after-fix > findings.json
+revmux new --task pr-123 --run 02-after-fix     # then write its own input/scope.md
+revmux --task pr-123 --run 02-after-fix > findings.json
 ```
 
 ## How it works
@@ -119,19 +140,26 @@ source count. A run where *every* source degraded is a tool error, not a clean e
 
 ## Task directory
 
-Review context reaches revmux only as a task directory the caller has filled. `--task` names one under
-`--tasks-dir` (default `./.revmux/tasks`), and `--run` names the round inside it. Both names are
+Review context reaches revmux only as a task round the caller has filled. `--task` names a task under
+`--tasks-dir` (default `./.revmux/tasks`), and `--run` names one round inside it. Both names are
 caller-chosen and semantic; revmux allocates neither.
 
 ```
-<tasks-dir>/pr-123/           caller-owned, revmux never writes or prunes anything here
-├── scope.md                  → {{SCOPE}}    required; missing or empty is a load-time error
-├── goal.md                   → {{GOAL}}     optional
-├── profile.md                → {{PROFILE}}  optional, the project's own conventions
-├── context/                  → {{CONTEXT}}  optional directory: ticket text, design notes, spec excerpts
-└── runs/                     revmux-owned; the only thing it writes, and all --keep-runs prunes
-    └── after-fix/
+<tasks-dir>/pr-123/               a task: one subject, reviewed over as many rounds as it takes
+├── task.md                       optional; front matter identifying the task, see below
+├── 01-initial/                   a round
+│   ├── input/                    caller-written; the only channel review context travels through
+│   │   ├── scope.md              → {{SCOPE}}    required; missing or empty is a load-time error
+│   │   ├── goal.md               → {{GOAL}}     optional
+│   │   ├── profile.md            → {{PROFILE}}  optional, the project's own conventions
+│   │   └── context/              → {{CONTEXT}}  optional directory: ticket text, design notes, spec excerpts
+│   └── …                         revmux-written artifacts, see Run archive below
+└── 02-after-fix/                 the next round, with its own input/
 ```
+
+**Context belongs to the round, not to the task.** Round 2 reviews the fixes for what round 1 found: a
+different scope, usually a different goal. Kept at task level they would be overwritten by whoever composes
+the next round, taking the record of what the previous round reviewed with them.
 
 Variables expand to the **paths** of these files, never to their contents — the agent reads them itself.
 revmux stats them and never opens one, so no prompt can be bloated by a large scope. An absent optional file
@@ -140,22 +168,84 @@ expands to `none provided`, which is not an error: the run proceeds with generic
 There are no `--goal`, `--goal-file`, `--profile-file` or `--context-file` flags. One mechanism, no
 precedence rules, and nothing for revmux to author.
 
-`--run` defaults to a UTC timestamp. A name that already exists is an error rather than an overwrite: a round
-that went badly is exactly the one worth keeping.
+`--run` has no default: the round holds your own context, so revmux cannot name one you have not filled. A
+round that has already run is an error rather than an overwrite — a round that went badly is exactly the one
+worth keeping.
+
+Neither name may contain a path separator or `..`, be absolute, or begin with a dot. A round additionally
+may not be called `task.md`, `scope.md` or `runs`: those are the entries the task directory keeps beside its
+rounds, and a round named after one makes every later review of that task fail.
+
+### `revmux new`
+
+`revmux new --task <id> --run <name>` creates the task directory, a commented-out `task.md`, the round and
+its `input/`, then prints every path you write to as JSON along with a `created` list naming which of them
+this call made. It creates the tasks root itself too, so a first run on a clean checkout materializes
+`./.revmux/tasks/` as well — the roots are not in `created`, which names only the four layout paths in the
+payload. Everything else in revmux opens and never creates, so a typo'd `--task` on a review is an error
+rather than an empty task nobody filled.
+
+It never overwrites: an existing `task.md` is left alone, and a round that has already run is refused. Run it
+again on the same task with a new `--run` and it creates only the round. A round whose review was
+interrupted before it finished is not one that has run — it is scaffolded and reviewed again under the same
+name, with the `input/` you wrote still in it, provided that review had not already written artifacts into
+the round. If it had, `new` refuses the name and says what is in there, so it never hands back a round the
+review itself would reject.
+
+Callers should take the paths from its output rather than joining them from the tree above — the layout is
+revmux's own detail, and a caller that reimplements it breaks silently when it changes.
+
+### `task.md`
+
+Optional, at task level, and about the task rather than about any one round:
+
+```yaml
+---
+description: OAuth token exchange rework
+url: https://github.com/umputun/revmux/pull/123
+branch: feature/oauth
+base: 4ed3259
+---
+
+Reviewing the token exchange path after the provider swap.
+```
+
+Every key is optional, as is the body and the file itself. `revmux config` reports the front matter under
+`paths.tasks`, which is how a caller matches an existing task instead of guessing at an id — `pr123` opened
+beside an existing `pr-123` silently forks the history into two.
+
+**revmux stores and reports these; it never resolves one.** No git command runs against `branch` or `base`,
+and nothing is fetched from `url`. They are strings you wrote and strings you read back.
+
+### Prior rounds
 
 **Prior rounds are injected into every composed prompt.** revmux wrote them, so it hands them over rather
-than making the caller copy them forward. The injected block is the `runs/` path plus a generated one-line
-inventory per round — name, when it ran, finding counts by severity, which sources degraded — so an agent can
-judge relevance without opening anything. It carries its own re-evaluate-independently instruction, and on a
-first round it is omitted entirely.
+than making the caller copy them forward. The injected block is the task directory path plus a generated
+one-line inventory per round — name, when it ran, finding counts by severity, which sources degraded — so an
+agent can judge relevance without opening anything. It carries its own re-evaluate-independently instruction,
+and on a first round it is omitted entirely.
+
+### Cleaning up
+
+revmux deletes nothing, ever. To reclaim space, remove rounds yourself:
+
+```
+rm -rf .revmux/tasks/pr-123/01-initial
+```
+
+That is safe at any time. Nothing links rounds together: the prior-round inventory is rebuilt from whichever
+round directories are present, so removing one loses that round's own record and affects nothing else.
 
 ## Run archive
 
-Every run writes its artifacts under `runs/<run>/`. They exist so a review can be audited without re-running
-it, which the final report alone cannot support.
+Every run writes its artifacts into its own round directory, beside the `input/` it was pointed at. They
+exist so a review can be audited without re-running it, which the final report alone cannot support — and
+because the round holds its own context, one round read in isolation shows both what was reviewed and what
+came back.
 
 ```
-runs/after-fix/
+<tasks-dir>/pr-123/02-after-fix/
+├── input/                    the scope, goal, profile and context this round was reviewed against
 ├── manifest.json             roster, prompt provenance + content hashes, requested vs actual model, timings
 ├── prompts/
 │   ├── agents/               composed prompt per agent, post-substitution — the bytes the model saw
@@ -181,6 +271,23 @@ runs/after-fix/
 `manifest.json` records which of the three precedence layers supplied each prompt file and its content hash,
 because two rounds of one task can use different lens text. It also records requested-vs-actual model per
 agent: `claude --model` can be silently ignored, so a roster's model pin is a claim until it is read back.
+It doubles as the marker claiming the round — it is created exclusively as the run starts, which is both how
+a round that has already run is detected and how a real round is told from a directory left under the task.
+It is created empty and filled in when the run finishes, so a marker still empty means the run never came
+back, and such a round is not counted as a prior round in the meantime.
+
+**A round like that is re-runnable under the same name only while nothing else was written into it.**
+Interrupt a review before an agent reported and the round is still yours, with the `input/` you wrote in it.
+Interrupt one that had already written stage snapshots, agent tees or composed prompts and revmux refuses
+the name, because a second run would leave one round holding two runs' artifacts under a manifest
+describing only the second. The error names what it found; nothing is deleted to make the round usable.
+Open the next round and copy the `input/` across.
+
+**A round already being written by another revmux is refused too.** An empty marker is what an interrupted
+run leaves *and* what a run starting right now leaves, so the size alone cannot tell them apart. revmux
+holds an exclusive OS-level lock on the marker for the run's lifetime: a second invocation on the same round
+is turned away rather than sharing it, and the lock is gone the moment the holding process is, so a round
+nobody is writing is still re-runnable with nothing to clean up.
 
 A failed archive write fails the run. A report emitted next to a half-written archive reads as complete, and
 the gap only surfaces later when someone tries to audit it.
@@ -190,8 +297,7 @@ that agent's own goroutine and it is the only artifact whose failure is attribut
 failure there is reported the way any other agent failure is — named in the report banner and in `degraded`
 — rather than discarding the other agents' work.
 
-Old rounds are pruned to `--keep-runs` by modification time. Pruning only ever reads `runs/`, so `scope.md`,
-`goal.md`, `profile.md` and `context/` are never candidates however aggressive the setting is.
+Rounds accumulate and are never pruned; see [Cleaning up](#cleaning-up).
 
 ## Configuration
 
@@ -313,7 +419,7 @@ A prompt file naming anything else fails at load, which is what makes a typo lou
 | Flag | Default | Description |
 |---|---|---|
 | `--task=<id>` | | name of the task directory holding the review context |
-| `--run=<name>` | UTC timestamp | name for this round of the review |
+| `--run=<name>` | | name for this round of the review |
 | `--lenses=<a,b>` | | lens set replacing the profile roster |
 | `--workdir=<dir>` | working directory | directory the review subprocesses run in |
 | `--min-confidence=<n>` | `0` | drop findings below this confidence |
@@ -337,11 +443,14 @@ The runtime knobs below also read from the config file, under the same name as t
 | `--max-parallel=<n>` | `max-parallel` | `4` | how many agents run at once |
 | `--verify-groups=<n>` | `verify-groups` | `6` | cap on the number of verifier groups |
 | `--tasks-dir=<dir>` | `tasks-dir` | `./.revmux/tasks` | root directory holding task directories |
-| `--keep-runs=<n>` | `keep-runs` | `10` | how many runs to keep per task |
 | `--auto-exit=<d>` | `auto-exit` | `0s` | close the terminal UI this long after the report arrives; `0` leaves it open until a key is pressed |
 | `--profile=<name>` | `profile` | `comprehensive` | profile naming the roster to run |
 
-One subcommand: `revmux config` prints the resolved configuration as JSON and exits.
+`--task` and `--run` are both required for a review, and neither is a config key: a config file naming the
+round to write would make the same command review different context in different directories.
+
+Two subcommands, both of which print JSON and exit before any review starts: `revmux config` reports the
+resolved configuration, `revmux new` creates a round and reports its paths.
 
 ## Output
 
@@ -352,7 +461,8 @@ exactly that invocation.
 
 ```json
 {
-  "scope": {"task": "pr-123", "run": "after-fix", "scope_path": "/abs/.revmux/tasks/pr-123/scope.md"},
+  "scope": {"task": "pr-123", "run": "02-after-fix",
+            "scope_path": "/abs/.revmux/tasks/pr-123/02-after-fix/input/scope.md"},
   "sources": {
     "expected": 4, "reported": 3, "degraded": ["docs+tests"],
     "agents": [
@@ -398,12 +508,19 @@ listed in the TUI. Open questions, pre-existing and immaterial findings pass thr
 |---|---|
 | `0` | no findings above `--min-confidence` |
 | `1` | findings above `--min-confidence` |
-| `2` | tool error: bad config, unreadable prompt tree, missing or empty `scope.md`, a `--run` name that already exists, an unwritable run artifact, or every source degraded |
+| `2` | tool error: bad config, unreadable prompt tree, an omitted `--run`, a round with no `input/` or an empty `scope.md`, a round that has already run or is being written by another run, an unwritable run artifact, or every source degraded |
 
 `1` is a normal outcome, not a failure. Callers script against these values.
 
-A per-agent tee is the one artifact whose failure degrades a source rather than failing the run, and a
-`--keep-runs` prune that cannot delete an old round warns without changing the exit code.
+A per-agent tee is the one artifact whose failure degrades a source rather than failing the run; every other
+artifact either lands or the run exits `2`.
+
+A run that exits `2` leaves no report and, usually, an empty `manifest.json` in the round it claimed. That
+round is re-runnable under the same name once the cause is fixed, as long as the failed run had not written
+anything else into it — the `input/` you wrote is untouched and `revmux new` reports it back unchanged. A
+configuration error caught before the pipeline starts always leaves such a round; a failure part-way
+through a review may not, and then both `revmux new` and the run itself refuse the name and say what the
+round holds.
 
 A delivered signal — `SIGINT` or `SIGTERM` — cancels the run and exits `2`. Agent processes are started in
 their own session, so the terminal never signals them: revmux tears each process group down itself on the
@@ -455,7 +572,8 @@ With `--no-tui`, or when the tty cannot be opened, the same events render as tim
 
 revmux is normally driven by a caller model, so the resolved configuration is machine-readable rather than
 something to reconstruct from `--help` and a directory listing. `revmux config` prints it as JSON on stdout
-and exits `0` — it runs no pipeline, writes no run directory and touches nothing under the tasks root.
+and exits `0` — it runs no pipeline and creates nothing; the only thing it touches is a read of the tasks
+root, to list what is already there.
 
 It reports what **resolved**, never what is embedded: a user who overrode one lens and added another sees his
 own tree. Each runtime knob carries the precedence layer that supplied it, so a caller can tell a deliberate
@@ -505,21 +623,35 @@ $ revmux --stagger-delay=45s config
     "config_dir": "/home/user/.config/revmux",
     "project_dir": "/abs/project/.revmux",
     "workdir": "/abs/project",
-    "tasks": ["pr-123"]
+    "tasks": [
+      {"id": "pr-123", "description": "OAuth token exchange rework",
+       "url": "https://github.com/umputun/revmux/pull/123", "branch": "feature/oauth", "base": "4ed3259",
+       "rounds": ["01-initial", "02-after-fix"]}
+    ]
   }
 }
 ```
 
-The output is abbreviated above — a real run lists every profile, every lens and every knob. `paths.tasks`
-lists the task directories that already exist, since a `--run` name collides with an existing round and a
-caller cannot avoid that blind.
+The output is abbreviated above — a real run lists every profile, every lens and every knob.
+
+`paths.tasks` is the task store: every task that already exists, whatever its `task.md` says about it, and
+the rounds recorded under it. That is what a caller matches an in-flight review against — with an id alone it
+cannot tell whether `pr-123` is the same subject and opens `pr123` beside it. A task with no `task.md` is
+still listed, with the anchors empty; one whose `task.md` will not parse is listed too, with `meta_error`
+saying why they are empty. Rounds are those that ran to completion, so neither a directory prepared but not
+yet reviewed nor a round whose review was interrupted is one — both are still open to review under that
+name, the interrupted one as long as its review left nothing behind.
+
+An empty list always means empty. A tasks root that could not be read is reported as `paths.tasks_error`,
+a task whose own directory could not be read as `rounds_error` on that entry, and a `--workdir` that would
+not resolve as `paths.workdir_error` — nothing that failed is reported as nothing being there.
 
 ## Agent skills
 
 revmux is built to be driven by a caller model, and this repository ships that caller as a skill for
 two harnesses. The skill does the half revmux deliberately does not: it resolves what is being
-reviewed, runs the git commands, writes the task directory, launches revmux, reads the JSON back, and
-re-runs the same task under a new round name after fixes.
+reviewed, runs the git commands, writes the round's `input/`, launches revmux, reads the JSON back, and
+opens a new round on the same task after fixes.
 
 | harness | location | install |
 |---|---|---|
@@ -531,8 +663,8 @@ Both carry the same reference material — how to compose `scope.md`, `goal.md`,
 scripts:
 
 - `preflight.sh` — check revmux plus the executors the chosen profile's roster and stages need
-- `task-state.sh` — resolve the tasks root from `revmux config` and report which context files and
-  run names a task already has
+- `task-state.sh` — resolve the tasks root from `revmux config` and report what a task holds: its
+  `task.md` anchors, its rounds, and each round's `input/` state
 - `launch-revmux.sh` — run revmux **with its TUI** in a terminal overlay (agterm, tmux, Zellij, herdr,
   kitty, wezterm, cmux, ghostty, iTerm2, Emacs vterm), returning the report on stdout and revmux's own
   exit code
