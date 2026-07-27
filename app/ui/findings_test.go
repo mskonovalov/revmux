@@ -314,3 +314,34 @@ func TestFindingsState_titleWrapsWithEveryRowStyled(t *testing.T) {
 	assert.Contains(t, joined, "lost its output bound", "and the tail of the title survives")
 	assert.Contains(t, joined, "[97]", "with the confidence marker still on it")
 }
+
+func TestFindingsState_rowLines_spanAcrossAWrap(t *testing.T) {
+	// **markdown is rendered before the wrap, not after each row.** Both patterns need their
+	// delimiters on one string, so wrapping first and rendering each row leaves a span straddling the
+	// boundary matching neither — and the reader sees raw asterisks in the one line that is supposed to
+	// be a heading. A long emphasized title hits this immediately.
+	rep := finding.Report{Findings: []finding.Finding{{
+		File: "a.go", Line: 1, Severity: finding.Major, Confidence: 90,
+		Title: "**abcdefghijklmnopqrstuvwxyz** and `some/long/path/that/keeps/going.go` besides",
+	}}}
+	m := feed(t, browsed(t, rep), tea.WindowSizeMsg{Width: 34, Height: 40})
+
+	pane := m.findingsPane()
+	joined := strings.Join(pane, "\n")
+	assert.NotContains(t, joined, "**", "the emphasis is rendered, never shown as delimiters")
+	assert.NotContains(t, joined, "`", "and neither is the code span")
+
+	var rows []string
+	for _, l := range pane {
+		if strings.Contains(l, "###") || strings.Contains(l, "besides") || strings.Contains(l, "going.go") {
+			rows = append(rows, l)
+		}
+	}
+	require.Greater(t, len(rows), 1, "the title is longer than the pane, so it wraps")
+	for _, r := range rows {
+		assert.True(t, strings.HasPrefix(r, ansiHeadOn), "every row opens the heading style, got %q", r)
+		assert.True(t, strings.HasSuffix(r, ansiHeadOff),
+			"and closes it — SGR survives a newline, so an unclosed row paints everything after it, got %q", r)
+		assert.LessOrEqual(t, lipgloss.Width(r), 34)
+	}
+}

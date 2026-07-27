@@ -123,18 +123,27 @@ func (f *findingsState) heading(s finding.Severity) string {
 }
 
 // rowLines is one finding's headline — the report's own "### title" line carrying the confidence the
-// report prints at the foot of the entry — wrapped, with each row styled in its own right.
+// report prints at the foot of the entry — wrapped, with each row self-contained.
 //
-// **A style opened on one row and closed on another does not survive the break.** heading() puts its
-// opener at the very start and its closer at the very end, so wrapping the rendered string leaves the
-// first row opening a style it never closes and the rows after it carrying no opener at all — the
-// title would paint its first line and render the rest plain. Wrapping the plain text and styling each
-// row is what keeps every row self-contained.
+// **Render first, wrap second, then close every row.** Wrapping the plain text and rendering each row
+// afterwards splits a span across the boundary, and both markdown patterns require their delimiters on
+// one string, so neither row matches and the backticks or asterisks print literally — which a long
+// emphasized title hits immediately. Rendering first keeps spans whole.
+//
+// Closing every row is then what the wrap costs: SGR state is terminal-global and survives a newline,
+// so a row that opens the heading style and does not close it leaves everything after it painted until
+// something else closes it — the pane below, the next finding, the rest of the frame. Each row opening
+// what it closes is what contains that.
 func (f *findingsState) rowLines(v finding.Finding, width int) []string {
-	plain := "### " + v.Title + "  [" + strconv.Itoa(v.Confidence) + "]"
-	rows := Wrap("", plain, width)
+	rows := Wrap("", heading(3, v.Title+"  ["+strconv.Itoa(v.Confidence)+"]"), width)
 	for i, r := range rows {
-		rows[i] = ansiHeadOn + markdownWithin(r, ansiHeadOn) + ansiHeadOff
+		if !strings.HasPrefix(r, ansiHeadOn) {
+			r = ansiHeadOn + r
+		}
+		if !strings.HasSuffix(r, ansiHeadOff) {
+			r += ansiHeadOff
+		}
+		rows[i] = r
 	}
 	return rows
 }
