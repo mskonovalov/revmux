@@ -31,6 +31,9 @@ jobs:
           go test -race -timeout=300s -covermode=atomic -coverprofile=${{ github.workspace }}/profile.cov_tmp ./...
           grep -v -E "_mock.go|/mocks/" ${{ github.workspace }}/profile.cov_tmp > ${{ github.workspace }}/profile.cov
 
+      - name: check the two skill trees agree
+        run: make check-plugins
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:

@@ -9,7 +9,7 @@ REV=$(if $(filter --,$(GIT_REV)),latest,$(GIT_REV))
 # where `make install` links the binary; override for a prefix that needs no privileges
 BINDIR ?= /usr/local/bin
 
-all: test build
+all: test check-plugins build
 
 # cp writes in place, to the same inode. Rebuilding while a revmux is running from .bin/revmux
 # therefore rewrites the pages of a live Mach-O, and macOS then refuses to exec that file at all:
@@ -41,6 +41,15 @@ test:
 lint:
 	golangci-lint run --max-issues-per-linter=0 --max-same-issues=0
 
+# the two skill trees ship to different harnesses and each must be self-contained once installed, so
+# plugins/codex/ is a hand-maintained copy rather than a link. What must not diverge is the content:
+# an edit to one tree's references/ or scripts/ that never reached the other is a skill that behaves
+# one way under claude and another under codex.
+check-plugins:
+	diff -r .claude-plugin/skills/revmux/references plugins/codex/skills/revmux/references
+	diff -r .claude-plugin/skills/revmux/scripts plugins/codex/skills/revmux/scripts
+	@echo "plugin trees agree"
+
 fmt:
 	gofmt -s -w $(shell find . -type f -name "*.go" -not -path "./vendor/*" -not -path "*/mocks/*")
 	goimports -w $(shell find . -type f -name "*.go" -not -path "./vendor/*" -not -path "*/mocks/*")
@@ -54,4 +63,4 @@ version:
 	@echo "branch: $(BRANCH), hash: $(HASH), timestamp: $(TIMESTAMP)"
 	@echo "revision: $(REV)"
 
-.PHONY: all build install uninstall test lint fmt race version
+.PHONY: all build install uninstall test lint check-plugins fmt race version
