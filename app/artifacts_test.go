@@ -37,9 +37,15 @@ func TestRun_archive(t *testing.T) {
 			assert.FileExists(t, filepath.Join(dir, name))
 		}
 
+		// stdout is JSON, so it is findings.json the caller was handed; report.md is the rendered form
+		// kept for a human reading the archive afterwards
+		machine, err := os.ReadFile(filepath.Join(dir, findingsFileName)) //nolint:gosec // path built from t.TempDir
+		require.NoError(t, err)
+		assert.Equal(t, r.stdout.String(), string(machine), "the archived json is what the caller was shown")
+
 		report, err := os.ReadFile(filepath.Join(dir, "report.md")) //nolint:gosec // path built from t.TempDir
 		require.NoError(t, err)
-		assert.Equal(t, r.stdout.String(), string(report), "the archived report is what the caller was shown")
+		assert.Contains(t, string(report), "# Review:", "and the rendered form is archived beside it")
 
 		var rep finding.Report
 		data, err := os.ReadFile(filepath.Join(dir, "findings.json")) //nolint:gosec // path built from t.TempDir
@@ -270,9 +276,13 @@ func TestRun_tokensPerAgentSumToTheRunTotal(t *testing.T) {
 	assert.Equal(t, want, sum)
 	assert.Equal(t, want, got2.Tokens, "the manifest and the report must not disagree on what a run cost")
 
+	// the per-agent table is part of the rendered report, which lives in the archive now that stdout
+	// carries the machine shape
+	rendered, err := os.ReadFile(filepath.Join(dir, "report.md")) //nolint:gosec // path built from t.TempDir
+	require.NoError(t, err)
 	for name, n := range tokens {
-		assert.Contains(t, r.stdout.String(), fmt.Sprintf("| %s |", name))
-		assert.Contains(t, r.stdout.String(), fmt.Sprintf("| %d |", n), "the rendered report shows per-agent tokens")
+		assert.Contains(t, string(rendered), fmt.Sprintf("| %s |", name))
+		assert.Contains(t, string(rendered), fmt.Sprintf("| %d |", n), "the rendered report shows per-agent tokens")
 	}
 }
 

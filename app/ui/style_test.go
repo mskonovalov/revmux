@@ -9,7 +9,7 @@ import (
 
 func TestStyles_profiledAgainstTheGivenSurface(t *testing.T) {
 	// lipgloss decides whether to emit color by profiling a writer, and its default renderer profiles
-	// os.Stdout. Under `revmux --json > file` stdout is a pipe while the reader watches a terminal, so
+	// os.Stdout. Under `revmux > file` stdout is a pipe while the reader watches a terminal, so
 	// a palette left on the default comes out colorless there while AgentSpec.Paint keeps emitting raw
 	// ANSI regardless — a half painted frame. Passing the surface in is what prevents that.
 	t.Run("a nil surface still builds a usable palette", func(t *testing.T) {

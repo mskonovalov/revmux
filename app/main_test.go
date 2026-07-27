@@ -243,6 +243,9 @@ func TestRun_review(t *testing.T) {
 			Task: "pr-1", Run: "round-1", TasksDir: taskRoot(t), Profile: "focused", Lenses: []string{"bugs"},
 			StaggerDelay: 30 * time.Second, MaxParallel: 4, KeepRuns: 10,
 			NoSynthesis: true, // these assert rendering and exit codes; the merge has its own case below
+			// most cases here read the rendered report, so they ask for it; stdout is JSON by default
+			// because the caller is a program, and the case below that checks that says so itself
+			Markdown: true,
 		}
 	}
 
@@ -270,9 +273,9 @@ func TestRun_review(t *testing.T) {
 		assert.Contains(t, r.stderr.String(), prompt.AgentSpec{Color: "6"}.Paint("lenses")+"  done, 1 findings")
 	})
 
-	t.Run("json to stdout", func(t *testing.T) {
+	t.Run("json to stdout, which is the default", func(t *testing.T) {
 		o := base(t)
-		o.JSON = true
+		o.Markdown = false // the default, and what a caller model parses
 		r := newRunOpts(t, o)
 		r.result = executor.Result{StructuredOutput: json.RawMessage(
 			`{"findings":[{"file":"a.go","line":1,"severity":"minor","confidence":55,"title":"x"}]}`)}
@@ -458,7 +461,7 @@ func TestRun_degradedSourceDoesNotAbortTheRun(t *testing.T) {
 	// runner emits no activity and the fake clock fires no timer, so nothing would open the gate
 	r := newRunOpts(t, options{
 		Task: "pr-1", Run: "round-1", TasksDir: taskRoot(t), Profile: "focused",
-		MaxParallel: 4, KeepRuns: 10, NoSynthesis: true, NoVerify: true,
+		MaxParallel: 4, KeepRuns: 10, NoSynthesis: true, NoVerify: true, Markdown: true,
 	})
 	r.result = executor.Result{
 		StructuredOutput: json.RawMessage(`{"findings":[{"file":"app/main.go","line":42,"severity":"major",` +
@@ -671,6 +674,7 @@ func TestRun_reportWrittenOnce(t *testing.T) {
 		return options{
 			Task: "pr-1", Run: "round-1", TasksDir: taskRoot(t), Profile: "focused", Lenses: []string{"bugs"},
 			StaggerDelay: 30 * time.Second, MaxParallel: 4, KeepRuns: 10, NoSynthesis: true,
+			Markdown: true, // this reads the rendered banner off stdout
 		}
 	}
 	found := executor.Result{StructuredOutput: json.RawMessage(
@@ -714,6 +718,7 @@ func TestRun_archivesItsOwnArtifacts(t *testing.T) {
 	o := options{
 		Task: "pr-1", Run: "round-1", TasksDir: taskRoot(t), Profile: "focused", Lenses: []string{"bugs"},
 		StaggerDelay: 30 * time.Second, MaxParallel: 4, KeepRuns: 10, NoSynthesis: true, MinConfidence: 80,
+		Markdown: true,
 	}
 	r := newRunOpts(t, o)
 	r.result = executor.Result{
@@ -756,12 +761,12 @@ func TestRun_archivesItsOwnArtifacts(t *testing.T) {
 
 func TestRun_ttyGate(t *testing.T) {
 	// the report is redirected here, so stdout is a pipe and not a terminal: that must not decide
-	// whether the ui runs, or `revmux --json > findings.json` would silently lose it
+	// whether the ui runs, or `revmux > findings.json` would silently lose it
 	base := func(t *testing.T) options {
 		t.Helper()
 		return options{
 			Task: "pr-1", Run: "round-1", TasksDir: taskRoot(t), Profile: "focused", Lenses: []string{"bugs"},
-			StaggerDelay: 30 * time.Second, MaxParallel: 4, KeepRuns: 10, NoSynthesis: true, JSON: true,
+			StaggerDelay: 30 * time.Second, MaxParallel: 4, KeepRuns: 10, NoSynthesis: true,
 		}
 	}
 

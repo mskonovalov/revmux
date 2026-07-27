@@ -300,10 +300,17 @@ func (o runOpts) runnerFactory(rc reviewContext) func(pipeline.RunnerSpec) pipel
 	}
 }
 
+// write puts the report on stdout, as JSON unless a human asked for the rendered form.
+//
+// **JSON is the default because the caller is a program.** revmux is driven by a model composing an
+// invocation and parsing what comes back; the two human-facing renderings are the terminal UI, which
+// is on screen while the run happens, and `report.md` in the run archive, which is on disk afterwards.
+// Markdown on stdout served neither of them and had to be parsed back out by everything that did read
+// it.
 func (o runOpts) write(rep finding.Report) error {
-	render := rep.Markdown
-	if o.opts.JSON {
-		render = rep.JSON
+	render := rep.JSON
+	if o.opts.Markdown {
+		render = rep.Markdown
 	}
 	if err := render(o.stdout); err != nil {
 		return fmt.Errorf("report to stdout: %w", err)

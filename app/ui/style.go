@@ -36,7 +36,7 @@ type styles struct {
 // newStyles builds the palette against the surface the frame is actually written to.
 //
 // **The renderer has to be the tty, never the default one.** lipgloss's default renderer profiles
-// termenv.DefaultOutput, which is os.Stdout — and `revmux --json > findings.json` is one of the most
+// termenv.DefaultOutput, which is os.Stdout — and `revmux --task pr-1 > findings.json` is one of the most
 // common invocations, so stdout is a pipe while the reader sits at a terminal watching the run. Left
 // on the default, every style here would render colorless in exactly that case while AgentSpec.Paint
 // kept emitting raw ANSI regardless, and the frame would come out half painted.

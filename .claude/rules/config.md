@@ -214,6 +214,15 @@ after it.** `runOpts.review` applies it, because `finish` is where the report cr
 anything applied in `run` afterwards arrives too late. Filtering there instead puts the TUI and stdout in
 open disagreement about the same run, which is precisely what this section exists to forbid.
 
+### The report on stdout
+
+JSON by default; `--markdown` renders it instead. The caller is a program — a model composing an
+invocation and parsing the result — and the human-facing views are the TUI and the archived `report.md`.
+A markdown default made every programmatic consumer parse prose back into structure, and gave a human
+nothing the other two did not already give them better.
+
+Both forms are archived regardless of the flag, so the choice affects stdout alone.
+
 ### Exit codes
 
 - `0` — no findings above the threshold

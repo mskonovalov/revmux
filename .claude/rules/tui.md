@@ -37,7 +37,7 @@ terminal is free — writing it while the TUI still owns the screen interleaves 
 Render to the **tty**, never to stdout. stdout belongs to the report alone.
 
 Gate the TUI on the tty being openable, **never** on stdout being a TTY.
-With `revmux --json > findings.json` the stdout check is false while the user is sitting at a terminal
+With `revmux > findings.json` the stdout check is false while the user is sitting at a terminal
 expecting to watch the run — that check would silently disable the TUI in one of the most common invocations.
 
 That same tty handle is the program's **input** as well as its output: pass it to both `tea.WithInput` and

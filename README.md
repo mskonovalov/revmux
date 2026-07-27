@@ -52,7 +52,7 @@ That runs the `comprehensive` profile, shows a live TUI, and writes the markdown
 after fixing something, under a new round name, and revmux carries the earlier rounds into every prompt:
 
 ```
-revmux --task pr-123 --run after-fix --json > findings.json
+revmux --task pr-123 --run after-fix > findings.json
 ```
 
 ## How it works
@@ -288,7 +288,7 @@ A prompt file naming anything else fails at load, which is what makes a typo lou
 | `--no-synthesis` | | skip the synthesis stage |
 | `--no-verify` | | skip the verification stage |
 | `--no-tui` | | disable the terminal UI |
-| `--json` | | write the report as JSON |
+| `--markdown` | | write the report as markdown instead of JSON |
 | `--preserve-anthropic-api-key` | | pass `ANTHROPIC_API_KEY` to the model CLIs |
 | `--config-dir=<dir>` | `~/.config/revmux` | directory holding the config file and the prompt tree |
 | `--init` | | write the commented-out config template to `./.revmux/` |
@@ -313,8 +313,8 @@ One subcommand: `revmux config` prints the resolved configuration as JSON and ex
 
 ## Output
 
-The report goes to **stdout** — markdown by default, the machine shape with `--json`. The TUI renders to the
-tty and progress lines go to stderr, so `revmux --task pr-123 --json > findings.json` works with the display
+The report goes to **stdout** as JSON, or as markdown with `--markdown`. The TUI renders to the
+tty and progress lines go to stderr, so `revmux --task pr-123 > findings.json` works with the display
 running. The TUI is gated on the tty being openable, never on stdout being a terminal, which is false in
 exactly that invocation.
 

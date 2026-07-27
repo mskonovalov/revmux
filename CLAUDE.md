@@ -177,9 +177,13 @@ which destroys the independence the cross-source confidence boost depends on.
 The fix-and-re-review loop lives in the caller, which re-runs revmux against the same `--task` under a new
 `--run` name; revmux injects the prior rounds itself.
 
-**Findings go to stdout, everything else to tty/stderr.**
+**Findings go to stdout as JSON, everything else to tty/stderr.**
+revmux is driven by a caller model that parses what comes back, so the machine shape is the default and
+`--markdown` opts into the rendered one. The two human-facing renderings are the TUI, on screen while
+the run happens, and `report.md` in the archive, on disk afterwards — markdown on stdout served neither
+and had to be parsed back out by everything that did read it.
 The TUI renders to the tty, progress lines go to stderr, and only the report is written to stdout.
-That is what makes `revmux --json > findings.json` work with the TUI running at the same time.
+That is what makes `revmux > findings.json` work with the TUI running at the same time.
 Never print a status message, warning or banner to stdout.
 Gate the TUI on the tty being openable — never on stdout being a TTY, which is false whenever the report is redirected.
 The single exception is `revmux config`, which prints the resolved configuration as JSON and exits before

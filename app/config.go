@@ -57,7 +57,7 @@ type options struct {
 	NoSynthesis    bool     `long:"no-synthesis" no-ini:"true" description:"skip the synthesis stage"`
 	NoVerify       bool     `long:"no-verify" no-ini:"true" description:"skip the verification stage"`
 	NoTUI          bool     `long:"no-tui" no-ini:"true" description:"disable the terminal UI"`
-	JSON           bool     `long:"json" no-ini:"true" description:"write the report as JSON"`
+	Markdown       bool     `long:"markdown" no-ini:"true" description:"write the report as markdown instead of JSON"`
 	PreserveAPIKey bool     `long:"preserve-anthropic-api-key" no-ini:"true" description:"pass ANTHROPIC_API_KEY to the model CLIs"`
 
 	IdleTimeout  time.Duration `long:"idle-timeout" ini-name:"idle-timeout" default:"2m" description:"kill and retry an agent after this long with no output"`
