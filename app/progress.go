@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
 
 	"github.com/umputun/revmux/app/pipeline"
@@ -18,10 +17,6 @@ import (
 
 // progressTimeFormat keeps each line short: a run is minutes long, so the date adds nothing.
 const progressTimeFormat = "15:04:05"
-
-// minWrapCols is the narrowest text column worth wrapping into: below it a wrapped entry is more rows
-// of indent than of text, and clipping reads better.
-const minWrapCols = 20
 
 // minCols is the narrowest terminal worth clipping to; anything less and a line is all prefix.
 const minCols = 40
@@ -135,57 +130,7 @@ func (pr *progress) line(ev pipeline.Event) string {
 	// **any** line counts as life, not just a heartbeat: an agent narrating steadily is visibly alive
 	// already, and charging it a tool-call line every interval buries what it is saying
 	pr.beat(ev.Agent, ev.At)
-	return pr.wrap(ev.At.Format(progressTimeFormat)+" "+pr.prefix(ev.Agent), what)
-}
-
-// wrap lays one entry across as many rows as its text needs, continuing under the text column rather
-// than under the timestamp — the same shape the TUI uses, so a reviewer switching renderers reads the
-// same log. Clipping instead loses the end of exactly the lines worth reading: a narrated step or a
-// Bash command is the informative part and the part most likely to run long.
-func (pr *progress) wrap(head, text string) string {
-	avail := pr.cols() - lipgloss.Width(head)
-	if avail < minWrapCols || lipgloss.Width(text) <= avail {
-		return pr.clip(head + text)
-	}
-
-	indent := strings.Repeat(" ", lipgloss.Width(head))
-	out := []string{}
-	for rest := text; rest != ""; {
-		take := pr.take(rest, avail)
-		prefix := head
-		if len(out) > 0 {
-			prefix = indent
-		}
-		out = append(out, prefix+take)
-		rest = strings.TrimLeft(strings.TrimPrefix(rest, take), " ")
-	}
-	return strings.Join(out, "\n")
-}
-
-// take is the longest leading run of text that fits in cols, broken at a word when one is reachable.
-func (pr *progress) take(text string, cols int) string {
-	if lipgloss.Width(text) <= cols {
-		return text
-	}
-	cut := text
-	for lipgloss.Width(cut) > cols {
-		cut = cut[:len(cut)-1]
-	}
-	if sp := strings.LastIndex(cut, " "); sp > 0 && lipgloss.Width(cut[:sp]) >= cols/2 {
-		return cut[:sp]
-	}
-	return cut
-}
-
-// clip cuts a line to the terminal. **This renderer has to do its own, because it is the other half of
-// "display width belongs to the renderers".** The TUI clips through lipgloss against a width bubbletea
-// reports; nothing reports one here, so without this the decoder's sanity bound — thousands of runes,
-// not a column count — is what reaches stderr, and one narrated line wraps over half a screen.
-//
-// lipgloss does the measuring for the same reason it does in the TUI: the line carries the agent's
-// color, and slicing runes would cut a sequence in half.
-func (pr *progress) clip(line string) string {
-	return lipgloss.NewStyle().MaxWidth(pr.cols()).Render(line)
+	return strings.Join(ui.Wrap(ev.At.Format(progressTimeFormat)+" "+pr.prefix(ev.Agent), what, pr.cols()), "\n")
 }
 
 // cols is the terminal width, COLUMNS first so a caller can pin it and a test can be deterministic.

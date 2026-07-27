@@ -53,11 +53,15 @@ func (m Model) header() string {
 	// which is the longest thing on it, would push exactly the "complete, closing in 5s" off the edge at
 	// the moment it matters most. Parts are given up longest-first, and what a reader needs to know
 	// about where the run is survives longest.
+	// order matters and is stated in .claude/rules/tui.md: the breakdown, then the agent count, then
+	// the stage, then the total. The count outlives the stage because a reader who has lost the stage
+	// still learns whether anything was found, while a stage name without a count says only that
+	// something is happening.
 	for _, level := range []headerParts{
 		{agents: true, stage: true, count: countFull},
 		{agents: true, stage: true, count: countTotal},
 		{agents: false, stage: true, count: countTotal},
-		{agents: false, stage: true, count: countNone},
+		{agents: false, stage: false, count: countTotal},
 		{agents: false, stage: false, count: countNone},
 	} {
 		if line := m.headerLine(level); lipgloss.Width(line) <= m.view.width() {

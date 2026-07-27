@@ -172,7 +172,7 @@ func (r Report) findingsLines() []string {
 	out := []string{}
 	for i, f := range sorted {
 		if i == 0 || f.Severity != sorted[i-1].Severity {
-			out = append(out, "## "+f.Severity.heading(), "")
+			out = append(out, "## "+f.Severity.Heading(), "")
 		}
 		out = append(out, f.markdownLines()...)
 	}

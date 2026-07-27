@@ -4,7 +4,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/umputun/revmux/app/finding"
 )
@@ -77,8 +76,9 @@ func (m Model) findingsPane() []string {
 	return m.findings.render(m.view.width())
 }
 
-// render lays the report out the way the markdown on stdout does: a severity heading, then each
-// finding as its title, where it is, its body, its fix and its attribution.
+// render lays the report out the way the rendered report does: a severity heading, then each finding
+// as its title, where it is, its body, its fix and its attribution. Every row wraps — a title runs long
+// often enough, and clipping it takes the confidence marker off the end with it.
 func (f *findingsState) render(width int) []string {
 	lines := []string{}
 	if f.typing || f.query != "" {
@@ -93,7 +93,7 @@ func (f *findingsState) render(width int) []string {
 		if i == 0 || v.Severity != vis[i-1].Severity {
 			lines = append(lines, f.heading(v.Severity))
 		}
-		lines = append(lines, f.row(v))
+		lines = append(lines, Wrap("", f.row(v), width)...)
 		lines = append(lines, f.detail(v, width)...)
 	}
 	return lines
@@ -115,19 +115,17 @@ func (f *findingsState) empty() string {
 	return "nothing matches " + strconv.Quote(f.query) + "."
 }
 
-// heading is the report's own "## Major", so the pane and the file read the same.
+// heading is the report's own "## Major", so the pane and the file read the same. The title-casing is
+// Severity.Heading's, not a second copy: a codex source is not schema-constrained, so a severity can
+// arrive as any string and a byte index into it can split a rune.
 func (f *findingsState) heading(s finding.Severity) string {
-	name := string(s)
-	if name == "" {
-		name = "unspecified"
-	}
-	return heading(2, strings.ToUpper(name[:1])+name[1:])
+	return heading(2, s.Heading())
 }
 
 // row is one finding's headline: the report's own "### title" line, carrying the confidence the report
 // prints at the foot of the entry.
 func (f *findingsState) row(v finding.Finding) string {
-	return heading(3, markdown(v.Title)) + "  [" + strconv.Itoa(v.Confidence) + "]"
+	return heading(3, v.Title) + "  [" + strconv.Itoa(v.Confidence) + "]"
 }
 
 // detail is the rest of the report's entry, in the report's own order: where it is, the body, the fix,
@@ -169,33 +167,15 @@ func (f *findingsState) meta(v finding.Finding) string {
 // cutting it at the terminal's width leaves the half that says least.
 func (f *findingsState) indent(text string, width int) []string {
 	const pad = "    "
-	avail := max(width-len(pad), minWrapCols)
 	out := []string{}
 	for para := range strings.SplitSeq(text, "\n") {
 		if strings.TrimSpace(para) == "" {
 			out = append(out, "")
 			continue
 		}
-		for rest := para; rest != ""; {
-			take := f.take(rest, avail)
-			out = append(out, pad+markdown(take))
-			rest = strings.TrimLeft(strings.TrimPrefix(rest, take), " ")
-		}
+		out = append(out, Wrap(pad, markdown(para), width)...)
 	}
 	return out
-}
-
-// take is the longest leading run of text that fits in cols, broken at a word when one is reachable.
-// Runes rather than bytes, since a body carries arbitrary prose.
-func (f *findingsState) take(text string, cols int) string {
-	if utf8.RuneCountInString(text) <= cols {
-		return text
-	}
-	cut := string([]rune(text)[:cols])
-	if sp := strings.LastIndex(cut, " "); sp > 0 && utf8.RuneCountInString(cut[:sp]) >= cols/2 {
-		return cut[:sp]
-	}
-	return cut
 }
 
 func (f *findingsState) rank(s finding.Severity) int {

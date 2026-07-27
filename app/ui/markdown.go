@@ -33,13 +33,24 @@ const (
 // Raw ANSI for the same reason markdown is, and closing on the narrow "back to default" codes rather
 // than a reset, which would clear the style of whatever clip() renders around it.
 func heading(level int, text string) string {
-	return ansiHeadOn + strings.Repeat("#", level) + " " + text + ansiHeadOff
+	return ansiHeadOn + strings.Repeat("#", level) + " " + markdownWithin(text, ansiHeadOn) + ansiHeadOff
 }
 
 // markdown renders the inline markdown in one line of model prose. Block constructs are deliberately
 // not handled: a finding's body is a paragraph or two, and the browser already supplies the structure
 // around it.
-func markdown(s string) string {
-	s = mdBold.ReplaceAllString(s, ansiBoldOn+"$1"+ansiBoldOff)
-	return mdCode.ReplaceAllString(s, ansiCodeOn+"$1"+ansiCodeOff)
+func markdown(s string) string { return markdownWithin(s, "") }
+
+// markdownWithin renders inline markdown that sits inside an enclosing style, re-opening that style
+// after each span it closes.
+//
+// **Without the re-open, a span inside a heading turns the heading off from that point on.** A heading
+// is bold and accented; a code span closes with "back to default foreground" and emphasis closes with
+// "bold off" — the same two attributes. So `### fix **the** retry budget` rendered its first two words
+// as a heading and the rest as plain text, on the line whose whole job is to be a heading. Passing the
+// enclosing sequence back in is what keeps the nesting honest, and it stays raw ANSI rather than
+// lipgloss for the reason the constants above give.
+func markdownWithin(s, reopen string) string {
+	s = mdBold.ReplaceAllString(s, ansiBoldOn+"$1"+ansiBoldOff+reopen)
+	return mdCode.ReplaceAllString(s, ansiCodeOn+"$1"+ansiCodeOff+reopen)
 }

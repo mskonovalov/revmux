@@ -78,12 +78,14 @@ func TestModel_findingsPane(t *testing.T) {
 	pane := strings.Join(browsed(t, report()).findingsPane(), "\n")
 
 	// the report's own headings, rendered: "## Critical" for a severity group, "### title" per finding
-	assert.Contains(t, pane, heading(2, "Critical"))
-	assert.Contains(t, pane, heading(2, "Major"))
-	assert.Contains(t, pane, heading(2, "Minor"))
+	// literals, not calls to the function under test: asserting heading(2, "Critical") against itself
+	// passes whatever heading emits, so the rendered form would be pinned nowhere
+	assert.Contains(t, pane, "\x1b[1m\x1b[36m## Critical\x1b[39m\x1b[22m")
+	assert.Contains(t, pane, "\x1b[1m\x1b[36m## Major\x1b[39m\x1b[22m")
+	assert.Contains(t, pane, "\x1b[1m\x1b[36m## Minor\x1b[39m\x1b[22m")
 	// the report's own shape: the title is the heading and the location sits under it, as "### title"
 	// followed by its `file:line` does on stdout
-	assert.Contains(t, pane, heading(3, "unchecked error")+"  [95]", "the worst finding is first")
+	assert.Contains(t, pane, "\x1b[1m\x1b[36m### unchecked error\x1b[39m\x1b[22m  [95]", "the worst finding is first")
 	assert.Contains(t, pane, "    app/main.go:42-48", "with where it is on the line under it")
 	assert.Contains(t, pane, heading(3, "pane clipping")+"  [80]")
 	assert.Contains(t, pane, "    app/ui/view.go", "a file-level finding renders as the bare path")

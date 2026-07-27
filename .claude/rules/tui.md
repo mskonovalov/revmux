@@ -77,7 +77,15 @@ cover both.
   because the two renderers build their rows independently and a derived agent is created on first
   sight, so an index would have to be threaded through and could disagree.
   **Every pane renders the markdown a model writes and wraps what will not fit** — the combined log,
-  each agent's scrollback and the findings browser alike. A model writes backticks and emphasis into
+  each agent's scrollback and the findings browser alike, every row of it including the browser's
+  headings and titles.
+  **There is one `Wrap`, in `app/ui`, and there were three.** Separate copies in the log, the browser
+  and the plain renderer had already diverged — two measured display width and one counted runes, so
+  the same text broke differently depending on which pane it landed in. It is exported because
+  `app/progress.go` is the fourth caller and lives in `package main`.
+  It walks runes, never bytes: trimming a byte at a time while measuring display cells exits inside a
+  multi-byte rune, and since markdown rendering runs first the text also carries ANSI, so a byte cut
+  can land inside an escape and spill it as literal characters. A model writes backticks and emphasis into
   its prose whichever pane it lands in, and a forensic view is the last place to throw the end of a
   line away, since it is where a reader went looking for the detail.
   Headings keep their hashes rather than having them stripped: the pane is showing a markdown document
@@ -111,7 +119,9 @@ cover both.
 - **The header degrades rather than being clipped, longest part first.** `statusTable` clips it, and
   the completion notice is the rightmost thing on the line — so the severity breakdown, the longest
   thing on it, would push "complete, closing in 5s" off the edge exactly when it matters. It gives up
-  the breakdown, then the agent count, then the stage, and clips only under all of that.
+  the breakdown, then the agent count, then the stage, then the total, and clips only under all of that.
+  The total outlives the stage: a reader who has lost the stage still learns whether anything was found,
+  while a stage name with no count says only that something is happening.
   **The count is rebuilt from the final report, not left as the last event's.** Verify moves rejected
   findings into `Immaterial` and `PreExisting` and `--min-confidence` filters, both without emitting a
   findings event, so a header fed only by events names severities the browser below it does not list.

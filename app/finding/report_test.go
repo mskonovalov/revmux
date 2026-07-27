@@ -187,7 +187,7 @@ func TestReport_MarkdownEveryEnumValue(t *testing.T) {
 	out := buf.String()
 
 	for _, s := range allSeverities {
-		assert.Contains(t, out, "## "+s.heading(), "severity %q must render its own group", s)
+		assert.Contains(t, out, "## "+s.Heading(), "severity %q must render its own group", s)
 		for _, v := range allVerdicts {
 			assert.Contains(t, out, "### "+string(s)+"/"+string(v))
 			assert.Contains(t, out, "verdict: "+string(v))

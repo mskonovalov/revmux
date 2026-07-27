@@ -1,9 +1,13 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/umputun/revmux/app/pipeline"
 )
@@ -44,4 +48,33 @@ func TestModel_focused(t *testing.T) {
 	assert.Equal(t, "bugs+impl", m.focused().spec.Name)
 	m.view.tab = 3
 	assert.Nil(t, m.focused())
+}
+
+func TestModel_agentLines_rendersAndWraps(t *testing.T) {
+	// **both behaviors, exercised past their no-op form.** The pane gained markdown rendering and
+	// wrapping, and a case feeding short plain text at the default width exercises neither — it passes
+	// unchanged with both removed, which is what the previous assertion did.
+	m := feed(t, New(ModelConfig{Roster: roster()}), tea.WindowSizeMsg{Width: 60, Height: 24})
+	m = feed(t, m,
+		event(pipeline.EventAgentActivity, "bugs+impl",
+			"checking `app/executor/rollout.go` because **the watchdog** cannot see the rollout at all"),
+	)
+	m.view.tab = 1
+
+	lines := m.agentLines()
+	require.Greater(t, len(lines), 1, "the entry is longer than the pane, so it wraps")
+	assert.NotContains(t, strings.Join(lines, ""), "`", "the backticks are rendered, not shown")
+	assert.NotContains(t, strings.Join(lines, ""), "**", "and so is the emphasis")
+	assert.Contains(t, strings.Join(lines, ""), ansiCodeOn+"app/executor/rollout.go"+ansiCodeOff)
+
+	for _, l := range lines {
+		assert.LessOrEqual(t, lipgloss.Width(l), 60, "no row runs past the terminal")
+	}
+	assert.Contains(t, strings.Join(strings.Fields(strings.Join(lines, " ")), " "),
+		"cannot see the rollout at all", "and the tail survives rather than being clipped")
+
+	t.Run("a forensic pane is the last place to lose the end of a line", func(t *testing.T) {
+		// it is where a reader went looking for the detail
+		assert.NotContains(t, lines[0], "...", "wrapped, never truncated with an ellipsis")
+	})
 }

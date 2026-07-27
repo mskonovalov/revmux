@@ -128,12 +128,12 @@ func TestSeverity_Rank(t *testing.T) {
 }
 
 func TestSeverity_Heading(t *testing.T) {
-	assert.Equal(t, "Critical", Critical.heading())
-	assert.Equal(t, "Major", Major.heading())
-	assert.Equal(t, "Minor", Minor.heading())
-	assert.Equal(t, "Unspecified", Severity("").heading())
-	assert.Equal(t, "Bogus", Severity("bogus").heading())
+	assert.Equal(t, "Critical", Critical.Heading())
+	assert.Equal(t, "Major", Major.Heading())
+	assert.Equal(t, "Minor", Minor.Heading())
+	assert.Equal(t, "Unspecified", Severity("").Heading())
+	assert.Equal(t, "Bogus", Severity("bogus").Heading())
 	// only claude gets a --json-schema, so a codex source can put any string here
-	assert.Equal(t, "Ölarm", Severity("ölarm").heading(), "a multi-byte first rune must survive titlecasing")
-	assert.True(t, utf8.ValidString(Severity("ölarm").heading()), "a byte-indexed cut would split the rune")
+	assert.Equal(t, "Ölarm", Severity("ölarm").Heading(), "a multi-byte first rune must survive titlecasing")
+	assert.True(t, utf8.ValidString(Severity("ölarm").Heading()), "a byte-indexed cut would split the rune")
 }

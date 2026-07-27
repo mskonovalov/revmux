@@ -106,10 +106,10 @@ func (s Severity) rank() int {
 	return 3
 }
 
-// heading titlecases a severity for a report section. It decodes the first rune rather than the first
+// Heading titlecases a severity for a report section. It decodes the first rune rather than the first
 // byte: only the claude path has a schema constraining the vocabulary, so a codex source can return
 // any string here and a byte-indexed cut would mangle a non-ASCII one.
-func (s Severity) heading() string {
+func (s Severity) Heading() string {
 	if s == "" {
 		return "Unspecified"
 	}

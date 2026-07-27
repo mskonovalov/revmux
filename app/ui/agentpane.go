@@ -17,7 +17,7 @@ func (m Model) agentLines() []string {
 	out := make([]string, 0, len(a.lines))
 	for _, e := range a.lines {
 		head := m.style.muted.Render(e.at.Format(timeFormat)) + " "
-		out = append(out, m.wrap(head, markdown(e.text))...)
+		out = append(out, Wrap(head, markdown(e.text), m.view.width())...)
 	}
 	return out
 }

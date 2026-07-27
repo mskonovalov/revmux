@@ -28,10 +28,6 @@ const (
 	// header, the rule under it, the column heading, the rule closing the table, the tab bar, and the
 	// rule under that. Miscount it and the pane runs past the bottom of the terminal.
 	chromeLines = 6
-
-	// minWrapCols is the narrowest text column worth wrapping into: below it a wrapped entry is more
-	// rows of indent than of text, and clipping reads better.
-	minWrapCols = 20
 )
 
 // ProgressInterval is how often a tool call earns a line of its own in a log.
