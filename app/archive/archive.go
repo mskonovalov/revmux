@@ -188,6 +188,14 @@ func (a *Archive) Prune() error {
 	}
 	entries, err := d.ReadDir(-1)
 	d.Close() //nolint:gosec // read-only, and the entries are already in hand
+	// an absent runs directory has to be tolerated at BOTH calls, not just at the open above. The
+	// handle was taken when the archive was built, so a directory unlinked since then still opens
+	// fine through the live fd and only reports itself gone when it is read — and the two platforms
+	// disagree about that: linux fails the getdents with ENOENT where macOS returns an empty listing.
+	// Guarding only the open passes locally and fails on linux.
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("read %s: %w", filepath.Dir(a.dir), err)
 	}
@@ -335,6 +343,13 @@ func (a *Archive) enumerated(r runEntry) (bool, error) {
 	}
 	if err != nil {
 		return false, fmt.Errorf("stat %s: %w", a.runPath(r.name), err)
+	}
+	// identity alone does not settle it: a directory removed and replaced by a symlink can be handed
+	// the very inode it just freed, and SameFile then answers true for a link that was never the
+	// directory this pass enumerated. The type check is what actually holds — whatever the name leads
+	// to now, a symlink is not the directory, so the run handle is never opened through it.
+	if !fi.IsDir() || fi.Mode()&fs.ModeSymlink != 0 {
+		return false, nil
 	}
 	return os.SameFile(fi, r.info), nil
 }

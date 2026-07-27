@@ -707,6 +707,26 @@ func TestArchive_clear(t *testing.T) {
 		require.NoError(t, a.clear(entry))
 	})
 
+	t.Run("a symlink is never the enumerated directory, whatever inode it was handed", func(t *testing.T) {
+		root, task := taskUnder(t)
+		outside := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(outside, "someone-elses-work"), []byte("x"), 0o600))
+
+		a, err := New(Opts{TasksDir: root, Task: taskName, Run: "round-2", Keep: 1})
+		require.NoError(t, err)
+
+		link := filepath.Join(task, runsDir, "round-1") // New creates runs/, so the link goes in after
+		require.NoError(t, os.Symlink(outside, link))
+
+		// the link's OWN identity, so SameFile is necessarily true and cannot be what rejects it.
+		// Only the type check can, which is the point: a directory removed and replaced by a link
+		// can be handed the inode it just freed, and identity alone then says yes to the link.
+		ok, err := a.enumerated(runEntry{name: "round-1", info: mustLstat(t, link)})
+		require.NoError(t, err)
+		assert.False(t, ok, "a link is not the directory that was enumerated, however its identity reads")
+		assert.FileExists(t, filepath.Join(outside, "someone-elses-work"))
+	})
+
 	t.Run("a symlink inside the candidate is unlinked rather than followed", func(t *testing.T) {
 		root, task := taskUnder(t)
 		old := olderRun(t, task, "round-1", -time.Hour)
