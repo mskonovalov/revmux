@@ -63,10 +63,16 @@ func TestSynthesizer_run(t *testing.T) {
 		_, err := s.run(context.Background(), synthSources())
 		require.NoError(t, err)
 
-		require.Len(t, seen, 1)
-		assert.Equal(t, EventFindings, seen[0].Kind)
-		assert.Equal(t, stageSynthesis, seen[0].Agent)
-		assert.Len(t, seen[0].Findings, 1)
+		// a stage announces and closes itself the way a finder does. Without the pair its row appears
+		// from nowhere and never leaves "running", so it reads as still going while verify is underway
+		require.Len(t, seen, 3)
+		assert.Equal(t, EventAgentStarted, seen[0].Kind)
+		assert.Equal(t, "merging 3 findings", seen[0].Text)
+		assert.Equal(t, EventFindings, seen[1].Kind)
+		assert.Equal(t, stageSynthesis, seen[1].Agent)
+		assert.Len(t, seen[1].Findings, 1)
+		assert.Equal(t, EventAgentDone, seen[2].Kind)
+		assert.Equal(t, "1 findings", seen[2].Text)
 	})
 
 	t.Run("a first attempt that did not deliver is retried rather than discarding the find stage", func(t *testing.T) {
@@ -108,10 +114,11 @@ func TestSynthesizer_run(t *testing.T) {
 				require.Len(t, rep.Findings, 1)
 				assert.Equal(t, 250, rep.Stats.Tokens, "the failed attempt spent what it spent")
 
-				require.Len(t, seen, 2)
-				assert.Equal(t, EventAgentRetried, seen[0].Kind)
-				assert.Equal(t, stageSynthesis, seen[0].Agent)
-				assert.Contains(t, seen[0].Text, tt.wantText)
+				// started, the retry, the merged findings, done
+				require.Len(t, seen, 4)
+				assert.Equal(t, EventAgentRetried, seen[1].Kind)
+				assert.Equal(t, stageSynthesis, seen[1].Agent)
+				assert.Contains(t, seen[1].Text, tt.wantText)
 			})
 		}
 	})

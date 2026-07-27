@@ -25,6 +25,11 @@ type runSpec struct {
 	parse      parser
 	sink       EventSink
 	stderrLine func(string)
+	// shareTouch hands the idle watchdog's reset to an executor that has a third source of liveness
+	// besides the two pipes. Codex is the case: it writes nothing to either stream for minutes while
+	// it reasons, and the only proof it is alive is its rollout file, which proc knows nothing about.
+	// Called once, before anything can stall.
+	shareTouch func(func())
 }
 
 // proc is the machinery Claude and Codex share: start, idle watchdog, process-group teardown, line
@@ -71,7 +76,11 @@ func (p *proc) run(ctx context.Context, req Request, spec runSpec) (Result, erro
 	if err != nil {
 		return Result{}, err
 	}
-	p.emit(spec.sink, Event{Kind: EventStarted, Text: p.bin})
+	// **nothing is emitted here, and that is deliberate.** A fork is not evidence of anything: the
+	// pipeline has already announced this agent with the lenses it carries, so a bare "claude" under
+	// that says nothing new — and any event the sink sees latches the stagger's leader gate, so
+	// announcing the fork releases the whole roster the instant the leader's binary exists. The gate
+	// is there to prove the leader can reach a model before three more processes try.
 
 	// both streams touch the watchdog, so it is serialized: stdout is read here and stderr in its own
 	// goroutine, and a Timer implementation is not required to tolerate two callers
@@ -83,6 +92,9 @@ func (p *proc) run(ctx context.Context, req Request, spec runSpec) (Result, erro
 		idleMu.Lock()
 		defer idleMu.Unlock()
 		idle.Reset(p.opts.IdleTimeout)
+	}
+	if spec.shareTouch != nil {
+		spec.shareTouch(touch)
 	}
 
 	// stderr is drained alongside stdout: reading it after the parse would let a chatty child fill the
@@ -100,7 +112,11 @@ func (p *proc) run(ctx context.Context, req Request, spec runSpec) (Result, erro
 	<-stderrDone
 	res.Raw = raw.String()
 	res.ExitCode = run.finish()
-	p.emit(spec.sink, Event{Kind: EventFinished, Text: fmt.Sprintf("exit %d", res.ExitCode)})
+	// only a non-zero exit is worth a line. "exit 0" says nothing the pipeline's own done event does
+	// not already say, and it lands as the last thing a reader sees under an agent that just finished
+	if res.ExitCode != 0 {
+		p.emit(spec.sink, Event{Kind: EventFinished, Text: fmt.Sprintf("exit %d", res.ExitCode)})
+	}
 
 	if ctx.Err() != nil {
 		return res, fmt.Errorf("%s run stopped: %w", p.bin, ctx.Err())

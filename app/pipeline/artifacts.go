@@ -44,14 +44,15 @@ func (p *Pipeline) save(name string, data []byte) {
 }
 
 // archivedPrompt is the prompt the process actually receives, which is the only version worth storing.
-// The codex executor appends its own output contract to the composed text — claude carries the same
-// instruction as --json-schema instead — so a codex prompt archived as composed would be missing the one
-// line asking for JSON at all, and describe a review that did not happen.
+// Each executor appends something of its own to the composed text: codex its output contract, since it
+// has no --json-schema, and claude its narration contract, since --json-schema otherwise leaves it
+// with nothing to say. A prompt archived as composed would be missing whichever one the run used, and
+// describe a review that did not happen.
 //
 // It is package-level rather than a method because all three stages call it, each with its own schema.
 func archivedPrompt(exec, text string, schema json.RawMessage) string {
 	if exec != executorCodex {
-		return text
+		return text + executor.ClaudeNarrationContract(schema)
 	}
 	return text + executor.CodexOutputContract(schema)
 }

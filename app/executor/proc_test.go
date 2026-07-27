@@ -251,3 +251,60 @@ func TestClaude_Run_parentCancel(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled, "a canceled parent is an error, not an idle timeout")
 	assert.False(t, res.IdleTimedOut)
 }
+
+// TestProc_run_emitsNothingAtFork pins the regression a comprehensive review caught: proc used to
+// announce the fork, and the stagger's leader gate opens on any output-shaped event the sink sees, so
+// the leader's own fork released the whole roster. The delay went dead and four agents hit the same
+// auth wall together - the exact amplification the stagger exists to prevent.
+func TestProc_run_emitsNothingAtFork(t *testing.T) {
+	path := writeFixture(t, cleanCapture(t))
+	sink := discardSink()
+	c := executor.NewClaude(fakeRunner("emit", path), executor.Opts{})
+
+	_, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, sink)
+	require.NoError(t, err)
+
+	calls := sink.EmitCalls()
+	require.NotEmpty(t, calls)
+	for _, call := range calls {
+		assert.NotEqual(t, "claude", call.Event.Text,
+			"the bare binary name means a fork was announced, and a fork is not output")
+	}
+
+	// whatever arrives first must be something the process actually produced, never a lifecycle event
+	first := calls[0].Event
+	assert.NotEqual(t, executor.EventProgress, first.Kind,
+		"a gate-opening kind must not be the first thing a run emits")
+}
+
+func TestProc_finishedEventOnlyOnFailure(t *testing.T) {
+	path := writeFixture(t, cleanCapture(t))
+
+	t.Run("a clean exit is silent", func(t *testing.T) {
+		sink := discardSink()
+		c := executor.NewClaude(fakeRunner("emit", path), executor.Opts{})
+		res, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, sink)
+		require.NoError(t, err)
+		require.Equal(t, 0, res.ExitCode)
+		for _, call := range sink.EmitCalls() {
+			assert.NotEqual(t, executor.EventFinished, call.Event.Kind,
+				"exit 0 adds nothing the pipeline's own done event does not already carry")
+		}
+	})
+
+	t.Run("a non-zero exit is reported with its code", func(t *testing.T) {
+		sink := discardSink()
+		c := executor.NewClaude(fakeRunner("fail", path), executor.Opts{})
+		res, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, sink)
+		require.NoError(t, err, "a bad exit comes back on the Result, not as an error")
+		require.Equal(t, 3, res.ExitCode)
+
+		var texts []string
+		for _, call := range sink.EmitCalls() {
+			if call.Event.Kind == executor.EventFinished {
+				texts = append(texts, call.Event.Text)
+			}
+		}
+		assert.Equal(t, []string{"exit 3"}, texts, "the code is what makes the line worth having")
+	})
+}

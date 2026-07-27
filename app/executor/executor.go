@@ -43,13 +43,20 @@ type Timer interface {
 // EventKind names what an Event reports.
 type EventKind string
 
-// Event kinds emitted by every executor. EventActivity means the process produced model output and is
-// kept distinct from EventInfo for that reason: a caller waiting on first activity — the stagger does —
-// must not be released by a startup banner the CLI prints before it has contacted a model.
+// Event kinds emitted by every executor.
+//
+// EventActivity and EventProgress both mean the process produced **model output** — prose in one case,
+// a tool call in the other — and they are kept distinct from everything else for one reason: a caller
+// waiting on first output, which the stagger is, must not be released by anything a process emits
+// before it has reached a model. A startup banner is not output, and neither is a fork.
+//
+// There is deliberately no "started" kind. One existed, proc emitted it the instant the fork
+// succeeded, and it bought nothing the pipeline had not already announced — while giving the sink an
+// event to mistake for output.
 const (
-	EventStarted   EventKind = "started"
 	EventInfo      EventKind = "info"
 	EventActivity  EventKind = "activity"
+	EventProgress  EventKind = "progress"
 	EventRateLimit EventKind = "rate_limit"
 	EventFinished  EventKind = "finished"
 )

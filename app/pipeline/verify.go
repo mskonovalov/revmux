@@ -54,6 +54,7 @@ type verifyGroup struct {
 	findings []finding.Finding
 	text     string
 	name     string // the resolved, collision-free label; assigned once by compose
+	shown    string // the short, collision-free name a reader sees
 }
 
 // verdict is the wire shape of one entry the model returns. The correction fields apply to a
@@ -142,6 +143,15 @@ func (v *verifier) name(groups []verifyGroup) {
 		groups[i].name = name
 		taken[name] = true
 	}
+
+	// the displayed name is resolved separately and stays short: the archived label spells out every
+	// directory because that is a filename an auditor reads at leisure, while a status row and a tab
+	// have one column each and "verify app-executor+app-ui+1-more" fits in neither
+	shown := make(map[string]bool, len(groups))
+	for i := range groups {
+		groups[i].shown = v.freeName(groups[i].shortLabel(), shown)
+		shown[groups[i].shown] = true
+	}
 }
 
 // freeName returns the first unused name for a label. The generated candidate is checked against
@@ -182,7 +192,7 @@ func (v *verifier) judge(ctx context.Context, g verifyGroup, index int) []findin
 
 // runOne runs one group's already-composed prompt and applies the verdicts it returned.
 func (v *verifier) runOne(ctx context.Context, g verifyGroup) ([]finding.Finding, error) {
-	agent := stageVerify + "-" + g.name
+	agent := g.agent()
 	v.emit(Event{Kind: EventAgentStarted, Agent: agent, Text: strings.Join(g.dirs, ", ")})
 
 	spec := RunnerSpec{Executor: v.stage.Executor, Model: v.stage.Model, Effort: v.stage.Effort}
@@ -315,7 +325,7 @@ func (v *verifier) dir(f finding.Finding) string {
 // unverifiedGroup marks a group nothing judged and says so on the event channel, so a failed
 // verifier is visible rather than looking like a group that confirmed everything.
 func (v *verifier) unverifiedGroup(g verifyGroup, err error) []finding.Finding {
-	v.emit(Event{Kind: EventAgentDegraded, Agent: stageVerify + "-" + g.name, Text: err.Error()})
+	v.emit(Event{Kind: EventAgentDegraded, Agent: g.agent(), Text: err.Error()})
 	out := make([]finding.Finding, 0, len(g.findings))
 	for _, f := range g.findings {
 		f.Verdict = finding.Unverified
@@ -419,6 +429,26 @@ func (g verifyGroup) slug(dir string) string {
 		return "root"
 	}
 	return out
+}
+
+// agent is what a reader sees: a verify group named for what it covers, which is all a status row or
+// a tab has space to say. The descriptive label stays on the archived prompt, where the space exists
+// and where an auditor needs to know every directory a group covered — and the group's own started
+// event lists those directories, so nothing is lost by keeping them out of the name.
+func (g verifyGroup) agent() string {
+	return stageVerify + " " + g.shown
+}
+
+// shortLabel names the group by what it covers rather than by its position: "ui" says more than "3"
+// in the one column a row has, and a reader comparing a finding to a row can tell which is which.
+// The last element of the first directory, since the leading path is the same for every group in one
+// review.
+func (g verifyGroup) shortLabel() string {
+	if len(g.dirs) == 0 {
+		return "root"
+	}
+	parts := strings.Split(strings.Trim(g.dirs[0], "/"), "/")
+	return g.slug(parts[len(parts)-1])
 }
 
 // findingsBlock is what the group's verifier is asked to judge, ids included, since a verdict names

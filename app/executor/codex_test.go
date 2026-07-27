@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -169,12 +171,14 @@ func TestCodex_outputContract(t *testing.T) {
 		assert.Equal(t, "review this", res.Raw)
 	})
 
-	t.Run("a claude prompt is never wrapped", func(t *testing.T) {
+	t.Run("a claude prompt never gets the codex contract", func(t *testing.T) {
 		path := writeFixture(t, codexCapture(t))
 		c := executor.NewClaude(fakeRunner("echo", path), executor.Opts{})
 		res, err := c.Run(context.Background(), executor.Request{Prompt: "review this", Schema: finding.FinderSchema()}, discardSink())
 		require.NoError(t, err)
-		assert.Equal(t, "review this", res.Raw, "claude gets its contract from --json-schema")
+		assert.NotContains(t, res.Raw, "Return ONLY a JSON object", "claude gets its output contract from --json-schema")
+		assert.Contains(t, res.Raw, "narrate",
+			"it gets the narration contract instead, because the schema otherwise leaves it with nothing to say")
 	})
 }
 
@@ -239,15 +243,20 @@ func TestCodex_Run_firstStdoutWriteEmitsActivity(t *testing.T) {
 	sink := discardSink()
 	clk := &mocks.ClockMock{}
 
-	c := executor.NewCodex(fakeRunner("emit", path), executor.Opts{Clock: clk})
+	// "fail" rather than "emit": a clean exit emits no lifecycle event at all, and the ordering below
+	// needs the reaping to be observable to prove the release does not wait for it
+	c := executor.NewCodex(fakeRunner("fail", path), executor.Opts{Clock: clk})
 	_, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, sink)
 	require.NoError(t, err)
 
+	// progress rather than activity: the write is codex answering, long after its rollout has narrated
+	// what it was doing, so it opens the gate without appending a bare line to a log that said it all
 	kinds := eventKinds(sink)
-	activity := slices.Index(kinds, executor.EventActivity)
-	require.GreaterOrEqual(t, activity, 0, "the raw stdout write is a codex leader's only release signal")
-	assert.Less(t, activity, slices.Index(kinds, executor.EventFinished),
-		"activity arrives on the write, not when the process is reaped")
+	release := slices.Index(kinds, executor.EventProgress)
+	require.GreaterOrEqual(t, release, 0, "the raw stdout write is a codex leader's fallback release signal")
+	reaped := slices.Index(kinds, executor.EventFinished)
+	require.GreaterOrEqual(t, reaped, 0, "a non-zero exit is still reported")
+	assert.Less(t, release, reaped, "the release arrives on the write, not when the process is reaped")
 	assert.Empty(t, clk.AfterFuncCalls(), "the release came from the write, never from a timer")
 }
 
@@ -347,6 +356,11 @@ func TestCodex_Run_failedRunReportsNoEchoedTokens(t *testing.T) {
 func TestCodex_Run_stderrKeepsTheWatchdogAlive(t *testing.T) {
 	// codex reports its reasoning and every tool call on stderr and writes stdout only when it answers,
 	// so a watchdog ticking on stdout alone kills a healthy run at the idle timeout
+	//
+	// CODEX_HOME is redirected because the recorded stderr carries a real session id: left alone, the
+	// rollout tail globs the developer's own ~/.codex, finds that session and touches the watchdog from
+	// outside the test — which both breaks the count below and reads a directory no test may touch
+	t.Setenv("CODEX_HOME", t.TempDir())
 	path := writeFixture(t, nil)
 	errPath := writeFixture(t, codexStderrCapture(t))
 
@@ -496,4 +510,100 @@ func TestCodex_Run_canceledContextSkipsPatterns(t *testing.T) {
 	res, err := c.Run(ctx, executor.Request{Prompt: "x"}, discardSink())
 	require.ErrorIs(t, err, context.Canceled)
 	assert.False(t, res.RateLimited, "a canceled run's tail is meaningless")
+}
+
+func TestCodex_Run_rolloutKeepsTheWatchdogAlive(t *testing.T) {
+	// codex's own liveness during a long review: both pipes are silent for minutes while it reasons,
+	// and the rollout is the only thing moving. A watchdog that cannot see it kills a working run,
+	// retries it into the same wall and degrades the source — observed doing exactly that.
+	const session = "019fa0ca-1111-2222-3333-444455556666"
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	dir := filepath.Join(home, "sessions", "2026", "07", "26")
+	require.NoError(t, os.MkdirAll(dir, 0o750))
+	rollout := filepath.Join(dir, "rollout-2026-07-26T18-38-04-"+session+".jsonl")
+	require.NoError(t, os.WriteFile(rollout, []byte(
+		`{"type":"response_item","payload":{"type":"reasoning","summary":[{"text":"**Analyzing the stagger gate**"}]}}`+"\n"),
+		0o600))
+
+	var resets atomic.Int64
+	clk := &mocks.ClockMock{
+		NowFunc: func() time.Time { return time.Unix(0, 0).UTC() },
+		AfterFuncFunc: func(time.Duration, func()) executor.Timer {
+			return &mocks.TimerMock{
+				StopFunc:  func() bool { return true },
+				ResetFunc: func(time.Duration) bool { resets.Add(1); return true },
+			}
+		},
+	}
+
+	// stdout is empty and stderr carries exactly one line, so the pipes account for exactly one reset
+	// between them. That is the baseline, and it is what makes any further reset attributable to the
+	// rollout rather than to pipe traffic — the shape that starved the watchdog in the first place.
+	out := writeFixture(t, nil)
+	errPath := writeFixture(t, []byte("session id: "+session+"\n"))
+
+	seen := make(chan struct{})
+	var once sync.Once
+	sink := &mocks.EventSinkMock{EmitFunc: func(ev executor.Event) {
+		if ev.Kind == executor.EventActivity && strings.Contains(ev.Text, "Analyzing the stagger gate") {
+			once.Do(func() { close(seen) })
+		}
+	}}
+
+	c := executor.NewCodex(fakeRunner("emit", out, errPath), executor.Opts{IdleTimeout: time.Minute, Clock: clk})
+	_, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, sink)
+	require.NoError(t, err)
+
+	select {
+	case <-seen:
+	default:
+		t.Fatal("the rollout record never reached the sink, so the touch cannot be asserted")
+	}
+	assert.Greater(t, resets.Load(), int64(1),
+		"the one stderr line is the only reset the pipes can account for, so a rollout record must add its own — "+
+			"without it codex is killed at the idle timeout while it is reasoning")
+}
+
+func TestCodex_Run_rolloutLivenessIsNotTheDisplayFilter(t *testing.T) {
+	// a rollout record that renders nothing is still codex working: function_call_output, event_msg
+	// and a reasoning record with an empty summary all advance the file without producing an event.
+	// Touching from the sink would tie the watchdog to what happens to be worth displaying, which is
+	// the same starvation the tail exists to prevent, one layer in.
+	const session = "019fa0ca-aaaa-bbbb-cccc-ddddeeeeffff"
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	dir := filepath.Join(home, "sessions", "2026", "07", "26")
+	require.NoError(t, os.MkdirAll(dir, 0o750))
+	rollout := filepath.Join(dir, "rollout-2026-07-26T19-00-00-"+session+".jsonl")
+	require.NoError(t, os.WriteFile(rollout, []byte(
+		`{"type":"response_item","payload":{"type":"function_call_output","output":"ok"}}`+"\n"+
+			`{"type":"event_msg","payload":{"type":"token_count"}}`+"\n"), 0o600))
+
+	var resets atomic.Int64
+	clk := &mocks.ClockMock{
+		NowFunc: func() time.Time { return time.Unix(0, 0).UTC() },
+		AfterFuncFunc: func(time.Duration, func()) executor.Timer {
+			return &mocks.TimerMock{
+				StopFunc:  func() bool { return true },
+				ResetFunc: func(time.Duration) bool { resets.Add(1); return true },
+			}
+		},
+	}
+
+	sink := discardSink()
+	c := executor.NewCodex(fakeRunner("emit", writeFixture(t, nil), writeFixture(t, []byte("session id: "+session+"\n"))),
+		executor.Opts{IdleTimeout: time.Minute, Clock: clk})
+	_, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, sink)
+	require.NoError(t, err)
+
+	var rollouts int
+	for _, call := range sink.EmitCalls() {
+		if call.Event.Kind == executor.EventActivity {
+			rollouts++
+		}
+	}
+	require.Zero(t, rollouts, "neither record renders, which is the whole point of the case")
+	assert.Greater(t, resets.Load(), int64(1),
+		"the file advancing is the liveness, not the subset of records worth showing")
 }

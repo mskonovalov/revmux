@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -100,8 +101,8 @@ func TestClaude_args(t *testing.T) {
 
 	want := []string{
 		"--print", "--output-format", "stream-json", "--verbose",
-		"--permission-mode", "dontAsk",
-		"--disallowedTools", "Edit,Write,NotebookEdit",
+		"--permission-mode", "auto",
+		"--disallowedTools", "Edit,Write",
 		"--disable-slash-commands",
 		"--no-session-persistence",
 		"--model", "opus",
@@ -260,4 +261,44 @@ func TestClaude_Run_idleTimeout(t *testing.T) {
 	assert.Empty(t, res.StructuredOutput)
 	assert.NotEmpty(t, res.Raw, "whatever the agent managed to emit is kept")
 	assert.NotEmpty(t, clk.AfterFuncCalls())
+}
+
+func TestClaude_Run_permissionDenied(t *testing.T) {
+	// the shape is a real capture: dontAsk refusing a command no permission rule covered
+	data := patchEvent(t, "result", func(ev map[string]any) {
+		ev["permission_denials"] = []any{
+			map[string]any{"tool_name": "Bash", "tool_use_id": "toolu_1",
+				"tool_input": map[string]any{"command": "git -c core.pager=cat diff --stat HEAD~1..HEAD"}},
+			map[string]any{"tool_name": "Bash", "tool_use_id": "toolu_2",
+				"tool_input": map[string]any{"command": "git -c core.pager=cat diff --stat HEAD~1..HEAD"}},
+		}
+	})
+	sink := discardSink()
+	c := executor.NewClaude(fakeRunner("emit", writeFixture(t, data)), executor.Opts{})
+
+	res, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, sink)
+	require.NoError(t, err, "a denial narrows the review, it does not fail the run")
+	assert.NotEmpty(t, res.StructuredOutput, "and the findings it did produce still come back")
+
+	var texts []string
+	for _, call := range sink.EmitCalls() {
+		if call.Event.Kind == executor.EventInfo {
+			texts = append(texts, call.Event.Text)
+		}
+	}
+	require.Len(t, texts, 1, "one line, whatever the agent said in its own prose")
+	assert.Contains(t, texts[0], "denied 2 tool call(s)", "the count is every denial")
+	assert.Contains(t, texts[0], "Bash git -c core.pager=cat diff", "named by what was refused")
+	assert.Equal(t, 1, strings.Count(texts[0], "core.pager"), "one repeated command is listed once")
+}
+
+func TestClaude_Run_noPermissionDenials(t *testing.T) {
+	sink := discardSink()
+	c := executor.NewClaude(fakeRunner("emit", writeFixture(t, cleanCapture(t))), executor.Opts{})
+
+	_, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, sink)
+	require.NoError(t, err)
+	for _, call := range sink.EmitCalls() {
+		assert.NotContains(t, call.Event.Text, "denied", "a clean run says nothing about denials")
+	}
 }

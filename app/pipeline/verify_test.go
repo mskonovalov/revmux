@@ -423,7 +423,7 @@ func TestVerifier_run_failures(t *testing.T) {
 			for _, ev := range seen {
 				if ev.Kind == EventAgentDegraded {
 					degraded++
-					assert.True(t, strings.HasPrefix(ev.Agent, stageVerify+"-"), "the failing group is named")
+					assert.True(t, strings.HasPrefix(ev.Agent, stageVerify+" "), "the failing group is named")
 				}
 			}
 			assert.Equal(t, 2, degraded, "a failed verifier is loud rather than looking like a group that confirmed everything")
@@ -767,4 +767,60 @@ func countingClock() (executor.Clock, func() int) {
 		defer mu.Unlock()
 		return armed
 	}
+}
+
+func TestVerifyGroup_shortLabel(t *testing.T) {
+	tests := []struct {
+		name string
+		dirs []string
+		want string
+	}{
+		{"the last element, since the leading path repeats across groups", []string{"app/executor"}, "executor"},
+		{"a nested one is still its own last element", []string{"app/prompt/defaults/prompts"}, "prompts"},
+		{"a single element is itself", []string{"app"}, "app"},
+		{"the repository root has a name of its own", []string{"."}, "root"},
+		{"no directories at all is the root too", nil, "root"},
+		{"only the first is used, however many were merged", []string{"app/ui", "app/executor", "app"}, "ui"},
+		{"a dotted directory keeps its name without the dot", []string{".claude/rules"}, "rules"},
+		{"a trailing separator does not produce an empty name", []string{"app/ui/"}, "ui"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := verifyGroup{dirs: tc.dirs}
+			assert.Equal(t, tc.want, g.shortLabel())
+			assert.NotEmpty(t, g.shortLabel(), "an empty name would leave a row and a tab unlabeled")
+		})
+	}
+}
+
+func TestVerifier_name_displayedNamesAreDistinct(t *testing.T) {
+	// the displayed name is resolved in its own pass, so two groups whose first directories share a
+	// last element must still be told apart — they each get a row, a tab and a status line
+	v := &verifier{}
+	groups := []verifyGroup{
+		{dirs: []string{"app/ui"}}, {dirs: []string{"other/ui"}},
+		{dirs: []string{"app/executor"}}, {dirs: []string{"."}},
+	}
+	v.name(groups)
+
+	shown := map[string]bool{}
+	for _, g := range groups {
+		require.NotEmpty(t, g.shown, "every group is named")
+		assert.False(t, shown[g.shown], "%q was used twice, so two rows would collide", g.shown)
+		shown[g.shown] = true
+		assert.Equal(t, stageVerify+" "+g.shown, g.agent(), "the agent name is what a reader sees")
+	}
+
+	assert.Equal(t, "ui", groups[0].shown)
+	assert.NotEqual(t, "ui", groups[1].shown, "the second ui is suffixed rather than colliding")
+	assert.Equal(t, "executor", groups[2].shown)
+	assert.Equal(t, "root", groups[3].shown)
+
+	t.Run("the archived filename stays descriptive, so a run is still auditable", func(t *testing.T) {
+		// the short name is for a reader; the label spelling out the directories is what an auditor
+		// opens, and the two must not be conflated
+		assert.Equal(t, "app-ui", groups[0].name)
+		assert.Equal(t, "other-ui", groups[1].name)
+		assert.NotEqual(t, groups[0].shown, groups[0].name)
+	})
 }

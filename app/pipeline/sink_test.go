@@ -24,13 +24,10 @@ func TestSink_Emit(t *testing.T) {
 			want: Event{Kind: EventRateLimit, Agent: "bugs", Text: "throttled"},
 		},
 		{
-			name: "process start is a state change, not a second agent-started",
-			in:   executor.Event{Kind: executor.EventStarted, Text: "claude"},
-			want: Event{Kind: EventAgentState, Agent: "bugs", Text: "claude"},
-		},
-		{
+			// an exit code is a status detail, not a log line - the pipeline's own done event carries
+			// what the agent actually produced a moment later
 			name: "process exit", in: executor.Event{Kind: executor.EventFinished, Text: "exit 0"},
-			want: Event{Kind: EventAgentState, Agent: "bugs", Text: "exit 0"},
+			want: Event{Kind: EventAgentProgress, Agent: "bugs", Text: "exit 0"},
 		},
 		{
 			name: "a resolved-config line is a state change, not model output",
@@ -73,7 +70,11 @@ func TestSink_firstActivity(t *testing.T) {
 			fires bool
 		}{
 			{name: "activity is output", kind: executor.EventActivity, fires: true},
-			{name: "a forked process has produced nothing yet", kind: executor.EventStarted},
+			// an agent that opens by reading files says nothing for its first minute, so gating on
+			// prose alone would leave stagger_delay as the only release path for the whole roster
+			{name: "progress is output too", kind: executor.EventProgress, fires: true},
+			// the earliest thing a process can emit, and the reason the gate ignores everything that is
+			// not model output: a banner proves the binary started, never that it reached a model
 			{name: "a codex banner prints before a model is reached", kind: executor.EventInfo},
 			{name: "an exit is not the first output", kind: executor.EventFinished},
 			{name: "a throttled leader must not release the rest", kind: executor.EventRateLimit},

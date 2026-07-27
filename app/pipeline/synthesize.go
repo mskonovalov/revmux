@@ -49,6 +49,12 @@ func (s *synthesizer) run(ctx context.Context, sources []sourceResult) (finding.
 	s.save(path.Join(stagePromptDir, stageSynthesis+".md"),
 		[]byte(archivedPrompt(stage.Executor, text, finding.SynthesisSchema())))
 
+	// a stage announces itself and closes itself, exactly as a finder does. Without the pair its row
+	// appears from nowhere on its first tool call and then never leaves "running", so it reads as
+	// still going while verify is already underway — two stages apparently in flight at once.
+	s.emit(Event{Kind: EventAgentStarted, Agent: stageSynthesis,
+		Text: "merging " + strconv.Itoa(len(s.all(sources))) + " findings"})
+
 	res, err := s.dispatch(ctx, stage, text)
 	if err != nil {
 		return finding.Report{}, err
@@ -60,7 +66,18 @@ func (s *synthesizer) run(ctx context.Context, sources []sourceResult) (finding.
 	}
 	rep.Stats.Tokens = res.Tokens
 	s.emit(Event{Kind: EventFindings, Agent: stageSynthesis, Findings: rep.Findings})
+	s.emit(Event{Kind: EventAgentDone, Agent: stageSynthesis,
+		Text: strconv.Itoa(len(rep.Findings)) + " findings"})
 	return rep, nil
+}
+
+// all is every finding the finders reported, for the line that announces what synthesis is merging.
+func (s *synthesizer) all(sources []sourceResult) []finding.Finding {
+	var out []finding.Finding
+	for _, src := range sources {
+		out = append(out, src.findings...)
+	}
+	return out
 }
 
 // dispatch runs the stage, retrying once when the first attempt did not deliver. This is a single

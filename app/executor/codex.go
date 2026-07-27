@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // readChunk is how much stdout one read takes. Codex answers in one long block, so the parser reads raw
@@ -53,16 +54,57 @@ func NewCodex(runner CommandRunner, opts Opts) *Codex {
 // an error, and output holding no JSON degrades the source instead of failing the run.
 func (c *Codex) Run(ctx context.Context, req Request, sink EventSink) (Result, error) {
 	req.Prompt += CodexOutputContract(req.Schema)
-	errs := newCodexStderr(func(ev Event) { c.emit(sink, ev) })
+	session := make(chan string, 1)
+	errs := newCodexStderr(func(ev Event) { c.emit(sink, ev) }, session)
+
+	// **the rollout is codex's liveness, so it has to reach the watchdog.** Codex writes nothing to
+	// stdout until it answers and streams no reasoning on stderr, so during a long review both pipes
+	// are silent while the rollout fills with the steps it is working through. A watchdog reading only
+	// the pipes kills a healthy run at the idle timeout, retries it into the same wall and degrades the
+	// source that was working — the failure `.claude/rules/executor.md` describes for stdout alone,
+	// reached the same way one stream further out.
+	//
+	// It arrives through an atomic because the tail starts before proc.run exists to hand it over: the
+	// goroutine below blocks on the session id, which only stderr can supply, so by the time anything
+	// is read the touch is long since stored. A nil load simply means no idle timeout is armed.
+	var touch atomic.Pointer[func()]
+	live := func() {
+		if f := touch.Load(); f != nil {
+			(*f)()
+		}
+	}
 
 	spec := runSpec{
 		argv:       c.args(req),
 		sink:       sink,
 		parse:      func(ctx context.Context, r io.Reader) Result { return c.drain(ctx, r, sink) },
 		stderrLine: errs.line,
+		shareTouch: func(f func()) { touch.Store(&f) },
 	}
 
+	// follow the rollout for as long as the process runs. Canceled only after run returns, so the
+	// tailer gets one final pass over the records codex flushed on its way out — the last reasoning
+	// step and the answer both land after the last byte anyone was waiting on.
+	tailCtx, stopTail := context.WithCancel(context.WithoutCancel(ctx))
+	tailDone := make(chan struct{})
+	go func() {
+		defer close(tailDone)
+		select {
+		case id := <-session:
+			c.tailRollout(tailCtx, id, sink, live)
+		case <-tailCtx.Done():
+		}
+	}()
+
 	res, err := c.run(ctx, req, spec)
+	// **the touch is withdrawn before the tail is stopped, and that order matters.** run stops the idle
+	// timer on its way out, and the tail is still looping until stopTail lands — so its next pass could
+	// otherwise find new bytes and re-arm a timer belonging to a finished run. Suppressing the touch on
+	// the tail's own final pass does not cover this: the pass at the top of the loop has the same
+	// window. Withdrawing it here closes both, and the tail keeps emitting the records it finds.
+	touch.Store(nil)
+	stopTail()
+	<-tailDone
 	res.RequestedModel = req.Model
 	res.ActualModel = errs.model
 	res.Tokens = errs.total()
@@ -110,7 +152,10 @@ func (c *Codex) drain(ctx context.Context, r io.Reader, sink EventSink) Result {
 	for ctx.Err() == nil {
 		n, err := r.Read(buf)
 		if n > 0 {
-			once.Do(func() { c.emit(sink, Event{Kind: EventActivity, Text: "output"}) })
+			// progress, not activity: this fires when codex finally answers, long after the rollout has
+			// been narrating what it is doing, so logging it would append a bare "output" to a log that
+			// already said everything. It still opens the stagger gate, which is all it is for.
+			once.Do(func() { c.emit(sink, Event{Kind: EventProgress, Text: "answering"}) })
 		}
 		if err != nil {
 			break
@@ -189,11 +234,13 @@ type codexStderr struct {
 	diag       string
 	tokens     int
 	wantTokens bool
-	atEnd      bool // the accepted count is still the last thing stderr printed
+	atEnd      bool          // the accepted count is still the last thing stderr printed
+	session    chan<- string // receives the session id once the banner surfaces it, buffered, sent once
+	sentID     bool
 }
 
-func newCodexStderr(emit func(Event)) *codexStderr {
-	return &codexStderr{emit: emit, seen: make(map[string]bool)}
+func newCodexStderr(emit func(Event), session chan<- string) *codexStderr {
+	return &codexStderr{emit: emit, seen: make(map[string]bool), session: session}
 }
 
 // line handles one stderr line: it forwards the resolved model, sandbox and effort once each, keeps the
@@ -214,6 +261,18 @@ func (s *codexStderr) line(l string) {
 	s.count(l)
 	if s.diagnostic(l) {
 		s.diag = strings.TrimSpace(l)
+	}
+	// the one thing stderr is mined for beyond the headers: the id that names the rollout file, which
+	// is where codex's actual activity goes. Sent once, non-blocking, so a missing reader cannot stall
+	// the stderr drain and wedge the process behind a full pipe.
+	if !s.sentID && s.session != nil {
+		if id := s.sessionID(l); id != "" {
+			s.sentID = true
+			select {
+			case s.session <- id:
+			default:
+			}
+		}
 	}
 
 	key, val, ok := strings.Cut(l, ":")

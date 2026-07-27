@@ -533,7 +533,7 @@ func TestFinder_run_concurrency(t *testing.T) {
 			return &mocks.RunnerMock{RunFunc: func(_ context.Context, req executor.Request, sink executor.EventSink) (executor.Result, error) {
 				if strings.Contains(req.Prompt, "lens bugs") {
 					// what proc emits the instant the fork succeeds, before a byte has been read
-					sink.Emit(executor.Event{Kind: executor.EventStarted, Text: "claude"})
+					sink.Emit(executor.Event{Kind: executor.EventInfo, Text: "model: opus"})
 					close(started)
 					<-hold
 				}

@@ -18,8 +18,15 @@ type EventKind string
 // Event kinds. There is deliberately no pipeline-complete kind: completion must not be droppable, so
 // package main signals it to the TUI directly once Run has returned.
 const (
-	EventAgentStarted  EventKind = "agent_started"
+	EventAgentStarted EventKind = "agent_started"
+
+	// EventAgentActivity is what a model said — durable, worth a scrollback line.
+	// EventAgentProgress is what it is doing right now — a tool name, transient, worth only a status
+	// cell that the next one overwrites. Keeping them apart is what stops a review agent's tool calls
+	// from burying its reasoning; see app/executor/stream.go.
 	EventAgentActivity EventKind = "agent_activity"
+	EventAgentProgress EventKind = "agent_progress"
+
 	EventAgentState    EventKind = "agent_state"
 	EventAgentDone     EventKind = "agent_done"
 	EventAgentRetried  EventKind = "agent_retried"
