@@ -79,12 +79,18 @@ cover both.
   It must stay that compact — four concurrent agents scrolling their full reasoning would run faster
   than anyone can read, and it would stop being the situational-awareness view it exists to be.
 - The tabs after it are per-agent full-detail scrollback. Those are the forensic views.
-- **The tab bar measures itself and collapses before it is clipped.** There is no horizontal scroll on
-  that line, so clipping alone cuts the rightmost tabs mid-word and a reader cannot tell how many panes
-  exist or what is past the edge. When the full bar does not fit, unfocused tabs drop to their token
-  and the separator padding goes with them — the focused tab keeps its name, since its content is what
-  is on screen anyway. The short form is still clipped as a backstop, which a terminal narrow enough
-  can reach; collapsing is what keeps that from being the normal case, not a guarantee it never happens.
+- **The tab bar measures itself and collapses before it is clipped, and it gives things up in order of
+  what they are worth.** There is no horizontal scroll on that line, so clipping alone cuts the
+  rightmost tabs mid-word and a reader cannot tell how many panes exist or what is past the edge.
+  The order is: the separator padding first, then names one at a time from the left, then clipping as
+  a backstop. Padding is decoration and a name is information, so a bar that fits only by giving one
+  up gives up the decoration — spending a name to save two spaces per tab is the wrong trade, and
+  making it was a real defect. Names go from the left because panes fill left to right as a run goes
+  on, so the right-hand end is the recent work and the focused tab.
+  **The focused tab keeps its name at every width**, wherever it sits: its content is what fills the
+  pane below, and a bare token there would leave the one pane on screen unnamed.
+  Collapse the fewest that fit — dropping every name the moment the bar is one column over throws
+  away information nothing asked for.
   A verify group is named for what it covers rather than for its position — `verify ui`, not
   `verify 3` — since a row has one column and "ui" tells a reader more than a number does. The label
   spelling out every directory stays as the archived prompt's filename, where the space exists.

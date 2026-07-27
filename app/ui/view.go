@@ -64,24 +64,35 @@ func (m Model) tabBar() string {
 	}
 
 	// clipping alone is not enough: it cuts the right-hand tabs off mid-word, so a reader cannot tell
-	// how many panes exist or what is hiding past the edge. There is no horizontal scroll on this
-	// line, so when the full bar does not fit the unfocused tabs drop to their token and the focused
-	// one keeps its name — which is the only one whose content is on screen anyway.
-	if bar := m.tabRow(names, false); lipgloss.Width(bar) <= m.view.width() {
-		return bar
+	// how many panes exist or what is hiding past the edge. There is no horizontal scroll on this line.
+	//
+	// **Collapse the fewest tabs that make it fit, taking them from the left.** Dropping every name the
+	// moment the bar is one column too wide throws away information nothing asked for, and the left is
+	// the right end to start: the panes fill left to right as the run goes on, so the newest work and
+	// the focused tab are both toward the right, and the names that survive longest are the ones a
+	// reader is most likely to be looking for.
+	// At each level the padding goes before another name does: padding is decoration and a name is
+	// information, so a bar that fits only by giving one up should give up the decoration. Spending
+	// them the other way round drops a name to save two spaces per tab, which is the wrong trade.
+	for n := 0; n <= len(names); n++ {
+		for _, tight := range []bool{false, true} {
+			if bar := m.tabRow(names, n, tight); lipgloss.Width(bar) <= m.view.width() {
+				return bar
+			}
+		}
 	}
-	return m.clip(m.tabRow(names, true))
+	// every name is a token, the padding is gone, and it still does not fit; clipping is the backstop
+	return m.clip(m.tabRow(names, len(names), true))
 }
 
-// tabRow renders the bar, either in full or with every unfocused tab reduced to its leading token —
-// a digit for the first nine panes and a letter after that.
-// The short form also drops the padding around the separator: the padding is most of the cost once
-// the names are gone, and keeping it would clip the rightmost tabs anyway, which is the whole thing
-// being avoided.
-func (m Model) tabRow(names []string, short bool) string {
+// tabRow renders the bar with the leftmost collapse tabs reduced to their leading token — a digit for
+// the first nine panes and a letter after that. The focused tab always keeps its name, whatever its
+// position: its content is what fills the pane below, so a bare token there names nothing a reader can
+// see. tight additionally drops the padding around the separator.
+func (m Model) tabRow(names []string, collapse int, tight bool) string {
 	// the marker and the blank are the same width, so the names line up whichever tab is focused
 	mark, pad, sep := "▸ ", "  ", "  │"
-	if short {
+	if tight {
 		mark, pad, sep = "▸", "", "│"
 	}
 	labels := make([]string, 0, len(names))
@@ -90,7 +101,7 @@ func (m Model) tabRow(names []string, short bool) string {
 			labels = append(labels, m.style.tabOn.Render(mark+n))
 			continue
 		}
-		if short {
+		if i < collapse {
 			n, _, _ = strings.Cut(n, " ")
 		}
 		labels = append(labels, m.style.tabOff.Render(pad+n))

@@ -118,22 +118,55 @@ func TestModel_tabBar_collapsesWhenItCannotFit(t *testing.T) {
 	// how many panes exist or what is hiding past the edge
 	wide := []prompt.AgentSpec{
 		{Name: "bugs+impl"}, {Name: "arch+quality"}, {Name: "docs+tests"}, {Name: "codex"},
-		{Name: "synthesis"}, {Name: "verify 1"}, {Name: "verify 2"}, {Name: "verify 3"},
+		{Name: "synthesis"}, {Name: "verify ui"}, {Name: "verify executor"},
 	}
-	m := feed(t, New(ModelConfig{Roster: wide}), tea.WindowSizeMsg{Width: 40, Height: 24})
-	m.view.tab = 3
-
-	bar := m.tabBar()
-	assert.LessOrEqual(t, lipgloss.Width(bar), 40, "the bar must fit the terminal, not be cut off by it")
-	assert.Contains(t, bar, "4 docs+tests", "the focused tab keeps its name — its content is what is on screen")
-	assert.NotContains(t, bar, "bugs+impl", "the rest drop to their number rather than being sliced in half")
-	for _, n := range []string{"1", "2", "5", "9"} {
-		assert.Contains(t, bar, n, "every tab stays reachable, so the count is still visible")
+	bar := func(t *testing.T, width int) string {
+		t.Helper()
+		m := feed(t, New(ModelConfig{Roster: wide}), tea.WindowSizeMsg{Width: width, Height: 24})
+		m.view.tab = 6 // "verify ui", second from the right
+		out := m.tabBar()
+		assert.LessOrEqual(t, lipgloss.Width(out), width, "the bar must fit the terminal, not be cut off by it")
+		assert.Contains(t, out, "7 verify ui", "the focused tab keeps its name at every width")
+		return out
 	}
 
 	t.Run("a bar that fits is left alone", func(t *testing.T) {
-		roomy := feed(t, New(ModelConfig{Roster: roster()}), tea.WindowSizeMsg{Width: 120, Height: 24})
-		assert.Contains(t, roomy.tabBar(), "2 bugs+impl", "nothing is abbreviated when there is room")
+		full := bar(t, 200)
+		assert.Contains(t, full, "1 all", "nothing is abbreviated when there is room")
+		assert.Contains(t, full, "8 verify executor")
+		assert.Contains(t, full, "  │", "and it keeps the padding around the separator")
+	})
+
+	t.Run("the padding goes before any name does", func(t *testing.T) {
+		// padding is decoration and a name is information: giving up a name to save two spaces per tab
+		// is the wrong trade, and making it was the defect this pins
+		snug := bar(t, 120)
+		assert.Contains(t, snug, "1 all", "every name survives at a width the padded bar could not reach")
+		assert.Contains(t, snug, "8 verify executor")
+		assert.NotContains(t, snug, "  │", "what was given up is the padding")
+	})
+
+	t.Run("only then do tabs collapse, and from the left", func(t *testing.T) {
+		// panes fill left to right as a run goes on, so the right-hand end is the recent work and the
+		// names nearest the focused tab are the ones a reader is most likely looking for
+		narrow := bar(t, 90)
+		assert.NotContains(t, narrow, "bugs+impl", "the leftmost gives way first")
+		assert.Contains(t, narrow, "3 arch+quality", "while everything that still fits keeps its name")
+		assert.Contains(t, narrow, "8 verify executor")
+
+		narrower := bar(t, 70)
+		assert.NotContains(t, narrower, "arch+quality", "another gives way as the terminal shrinks")
+		assert.Contains(t, narrower, "4 docs+tests", "one at a time, never all at once")
+		assert.Contains(t, narrower, "8 verify executor")
+	})
+
+	t.Run("every tab stays reachable however far it collapses", func(t *testing.T) {
+		tiny := bar(t, 30)
+		for _, token := range []string{"1", "2", "3", "4", "5", "6", "8"} {
+			assert.Contains(t, tiny, token, "token %s must remain, or that pane cannot be reached", token)
+		}
+		assert.Contains(t, tiny, "7 verify ui",
+			"and the focused tab keeps its name even here — a bare token would leave the pane on screen unnamed")
 	})
 }
 
