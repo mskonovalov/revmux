@@ -239,7 +239,9 @@ func (o runOpts) render(roster []prompt.AgentSpec, events <-chan pipeline.Event)
 		return r
 	}
 
-	m := ui.New(ui.ModelConfig{Roster: roster, Events: events})
+	// the tty goes in as Output as well as to the program: the palette is profiled against the surface
+	// the frame lands on, and profiling stdout instead loses every color whenever the report is piped
+	m := ui.New(ui.ModelConfig{Roster: roster, Events: events, Output: tty, AutoExit: o.opts.AutoExit})
 	r.prog = tea.NewProgram(m, tea.WithInput(tty), tea.WithOutput(tty), tea.WithAltScreen())
 	go func() {
 		defer close(r.done)

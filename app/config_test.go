@@ -143,6 +143,7 @@ func TestParseArgs_knobOriginsNameTheWinningLayer(t *testing.T) {
 		"stagger-delay": originDefault,
 		"verify-groups": originDefault,
 		"tasks-dir":     originDefault,
+		"auto-exit":     originDefault,
 	}
 	assert.Equal(t, want, o.knobOrigins)
 	assert.Len(t, o.knobOrigins, len(knobNames()), "every knob reports an origin")
@@ -264,7 +265,7 @@ func TestKnobNames_iniNameMatchesLongName(t *testing.T) {
 		assert.NotEmpty(t, f.Tag.Get("default"), "field %s: a knob with no default resolves to a zero value", f.Name)
 	}
 	assert.Equal(t, []string{"idle-timeout", "hard-timeout", "stagger-delay", "max-parallel",
-		"verify-groups", "tasks-dir", "keep-runs", "profile"}, knobNames())
+		"verify-groups", "tasks-dir", "keep-runs", "auto-exit", "profile"}, knobNames())
 }
 
 func TestResolveContext_shapes(t *testing.T) {

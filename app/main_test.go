@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/creack/pty"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -266,7 +267,7 @@ func TestRun_review(t *testing.T) {
 
 		assert.Contains(t, r.stderr.String(), "stage find")
 		// the plain renderer prefixes the agent in its own resolved color, the same one the ui uses
-		assert.Contains(t, r.stderr.String(), prompt.AgentSpec{Color: "6"}.Paint("lenses")+": done, 1 findings")
+		assert.Contains(t, r.stderr.String(), prompt.AgentSpec{Color: "6"}.Paint("lenses")+"  done, 1 findings")
 	})
 
 	t.Run("json to stdout", func(t *testing.T) {
@@ -604,7 +605,11 @@ func TestRunOpts_render(t *testing.T) {
 	// report handed over the way review does it. The channel is unbuffered and the sends are waited
 	// on, because the second one returns only after the renderer applied the first — without that
 	// the frame under assertion races the quit.
-	finished := func(t *testing.T, ro runOpts, rep finding.Report, err error) {
+	// afterEvents runs once both events are in and before the report is handed over. A test that needs
+	// a keystroke presses it there rather than queueing it on the pty: a real terminal is read as soon
+	// as the program starts, so a quit waiting in the buffer ends the program before the first event
+	// lands, nothing drains the channel, and the send above blocks for good.
+	finished := func(t *testing.T, ro runOpts, rep finding.Report, err error, afterEvents ...func()) {
 		t.Helper()
 		events, sent := make(chan pipeline.Event), make(chan struct{})
 		go func() {
@@ -616,6 +621,9 @@ func TestRunOpts_render(t *testing.T) {
 
 		r := ro.render(roster, events)
 		<-sent
+		for _, fn := range afterEvents {
+			fn()
+		}
 		done := make(chan struct{})
 		go func() { defer close(done); r.finish(rep, err) }()
 		select {
@@ -633,16 +641,14 @@ func TestRunOpts_render(t *testing.T) {
 	})
 
 	t.Run("with a tty the ui renders there, and a failed run gets the terminal back", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "tty")
 		r := newRunOpts(t, options{})
 		ro := r.opts()
-		ro.openTTY = ttyFile(t, path)
+		open, frames, _ := ttyPair(t)
+		ro.openTTY = open
 
 		finished(t, ro, finding.Report{}, errors.New("every source degraded"))
 
-		frame, err := os.ReadFile(path) //nolint:gosec // path from t.TempDir
-		require.NoError(t, err)
-		assert.Contains(t, string(frame), "stage find", "the ui renders to the tty")
+		assert.Contains(t, frames(), "stage find", "the ui renders to the tty")
 		assert.Empty(t, r.stdout.String(), "and never to stdout")
 		assert.Empty(t, r.stderr.String(), "nor to the plain renderer's stream")
 	})
@@ -650,9 +656,11 @@ func TestRunOpts_render(t *testing.T) {
 	t.Run("a finished report goes to the browser, and the reader closing it ends the wait", func(t *testing.T) {
 		r := newRunOpts(t, options{})
 		ro := r.opts()
-		ro.openTTY = ttyKeys(t, "q")
+		open, _, typeKeys := ttyPair(t)
+		ro.openTTY = open
 
-		finished(t, ro, finding.Report{Findings: []finding.Finding{{Title: "unchecked error"}}}, nil)
+		finished(t, ro, finding.Report{Findings: []finding.Finding{{Title: "unchecked error"}}}, nil,
+			func() { typeKeys("q") })
 		assert.Empty(t, r.stdout.String(), "the browser renders the report, it does not write it")
 	})
 }
@@ -674,7 +682,9 @@ func TestRun_reportWrittenOnce(t *testing.T) {
 		r := newRunOpts(t, base(t))
 		r.result = found
 		ro := r.opts()
-		ro.openTTY = ttyKeys(t, "q")
+		open, _, typeKeys := ttyPair(t)
+		ro.openTTY = open
+		typeKeys("q") // safe to queue here: the pipeline's channel is buffered and drops, never blocks
 
 		assert.Equal(t, 1, run(ro))
 		out := r.stdout.String()
@@ -773,7 +783,9 @@ func TestRun_ttyGate(t *testing.T) {
 		r.result = executor.Result{StructuredOutput: json.RawMessage(
 			`{"findings":[{"file":"a.go","line":1,"severity":"major","confidence":90,"title":"unchecked error"}]}`)}
 		ro := r.opts()
-		ro.openTTY = ttyKeys(t, "q")
+		open, _, typeKeys := ttyPair(t)
+		ro.openTTY = open
+		typeKeys("q") // safe to queue here: the pipeline's channel is buffered and drops, never blocks
 
 		out := redirected(t, ro)
 
@@ -796,24 +808,63 @@ func TestRun_ttyGate(t *testing.T) {
 	})
 }
 
-// ttyFile stands in for the terminal a run renders to: a real file, so a test can read the frames
-// back. It carries no input, so only a quit ends the program. No test opens a real tty.
-func ttyFile(t *testing.T, path string) func() (*os.File, error) {
+// ttyPair hands the run a real pty and gives the test all three ends of it: the opener yields the
+// slave side, frames reports what was rendered to it, and typeKeys presses keys on it.
+//
+// A regular file cannot stand in for a terminal here, which is what this replaces. It is not
+// pollable, so the input reader falls back to a path that cannot be interrupted, and a program asked
+// to quit never finishes letting go — a hang that only appears on linux and cost a CI timeout to
+// find. A pty is a terminal, so raw mode, polling and shutdown all behave the way they do in use.
+//
+// Keys are pressed on demand rather than queued up front, and that ordering is the whole reason this
+// takes a function. A real terminal is read the moment the program starts, so a quit waiting in the
+// buffer is consumed before the first event arrives: the program exits, stops draining the event
+// channel, and the test's unbuffered send blocks forever. Queueing keys deadlocks the very test it
+// is meant to drive — press them once the events are in.
+//
+// The master is drained continuously rather than read at the end: its buffer is a few kilobytes, an
+// alt-screen frame is bigger than that, and an undrained pty blocks the renderer mid-write. Echo is
+// left alone — bubbletea turns it off with raw mode, and a keystroke echoed before that only adds a
+// character no assertion here looks at.
+func ttyPair(t *testing.T) (open func() (*os.File, error), frames func() string, typeKeys func(string)) {
 	t.Helper()
-	return func() (*os.File, error) { return os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600) } //nolint:gosec // path from t.TempDir
-}
+	ptmx, tty, err := pty.Open()
+	require.NoError(t, err)
 
-// ttyKeys stands in for the terminal a reader types into: a pipe holding his keystrokes. Frames
-// written back to it go nowhere, so a test asserting on rendered output wants ttyFile instead — one
-// file cannot serve both, since the frame written at open advances the offset past the input.
-func ttyKeys(t *testing.T, keys string) func() (*os.File, error) {
-	t.Helper()
-	pr, pw, err := os.Pipe()
-	require.NoError(t, err)
-	_, err = pw.WriteString(keys)
-	require.NoError(t, err)
-	t.Cleanup(func() { _, _ = pw.Close(), pr.Close() })
-	return func() (*os.File, error) { return pr, nil }
+	var mu sync.Mutex
+	var buf bytes.Buffer
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		b := make([]byte, 4096)
+		for {
+			n, readErr := ptmx.Read(b)
+			if n > 0 {
+				mu.Lock()
+				buf.Write(b[:n])
+				mu.Unlock()
+			}
+			if readErr != nil {
+				return
+			}
+		}
+	}()
+
+	t.Cleanup(func() {
+		_, _ = tty.Close(), ptmx.Close()
+		<-drained
+	})
+
+	return func() (*os.File, error) { return tty, nil },
+		func() string {
+			mu.Lock()
+			defer mu.Unlock()
+			return buf.String()
+		},
+		func(keys string) {
+			_, writeErr := ptmx.WriteString(keys)
+			assert.NoError(t, writeErr)
+		}
 }
 
 func TestRunOpts_runnerFactory(t *testing.T) {
@@ -921,12 +972,19 @@ func (r *runHarness) opts() runOpts {
 	}
 }
 
-func (r *runHarness) newRunner(pipeline.RunnerSpec) pipeline.Runner {
+func (r *runHarness) newRunner(spec pipeline.RunnerSpec) pipeline.Runner {
 	return &pmocks.RunnerMock{
 		RunFunc: func(_ context.Context, req executor.Request, _ executor.EventSink) (executor.Result, error) {
 			r.runs.Add(1)
+			// a real executor appends to the prompt inside Run, and this mock stands in for one. Record
+			// what a process would actually receive, or an archive compared against this is compared
+			// against bytes no process ever saw
+			received := req.Prompt + executor.ClaudeNarrationContract(req.Schema)
+			if spec.Executor == "codex" {
+				received = req.Prompt + executor.CodexOutputContract(req.Schema)
+			}
 			r.mu.Lock()
-			r.seen = append(r.seen, req.Prompt)
+			r.seen = append(r.seen, received)
 			r.mu.Unlock()
 			if req.RawOutput != nil {
 				_, _ = req.RawOutput.Write([]byte(r.result.Raw))

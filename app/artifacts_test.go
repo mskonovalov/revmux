@@ -132,7 +132,7 @@ func TestRun_archive(t *testing.T) {
 		codex := got.Agents[1]
 		assert.Equal(t, "codex", codex.Name)
 		assert.Equal(t, "gpt-5.6-sol", codex.RequestedModel)
-		assert.Equal(t, "xhigh", codex.Effort)
+		assert.Equal(t, "high", codex.Effort)
 		assert.True(t, codex.Degraded)
 		assert.Empty(t, codex.ActualModel, "nothing ran, so nothing is claimed to have run")
 		assert.Equal(t, []string{"codex"}, got.Degraded)
@@ -341,8 +341,8 @@ func archiveRun(t *testing.T) (*runHarness, string) {
 	return r, root
 }
 
-// prompts is what the runner was handed, which is how a test asserts on an injected block without
-// reading the archive back.
+// prompts is what a process receives — the composed prompt plus whatever its executor appends — which
+// is how a test asserts on an injected block without reading the archive back.
 func (r *runHarness) prompts() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -67,6 +67,7 @@ type options struct {
 	VerifyGroups int           `long:"verify-groups" ini-name:"verify-groups" default:"6" description:"cap on the number of verifier groups"`
 	TasksDir     string        `long:"tasks-dir" ini-name:"tasks-dir" default:"./.revmux/tasks" description:"root directory holding task directories"`
 	KeepRuns     int           `long:"keep-runs" ini-name:"keep-runs" default:"10" description:"how many runs to keep per task"`
+	AutoExit     time.Duration `long:"auto-exit" ini-name:"auto-exit" default:"0s" description:"close the terminal UI this long after the report arrives"`
 	Profile      string        `long:"profile" ini-name:"profile" default:"comprehensive" description:"profile naming the roster to run"`
 
 	ConfigDir    string `long:"config-dir" no-ini:"true" description:"directory holding the config file and the prompt tree"`
