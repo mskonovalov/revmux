@@ -33,6 +33,16 @@ if [ -z "$task" ]; then
     exit 1
 fi
 
+# same rules as revmux's own options.checkName. Rejecting here means a bad id is caught before the
+# caller composes scope.md/goal.md/profile.md into a path revmux will refuse at load. A branch name
+# is the common trigger: `feature/foo` contains a separator.
+case "$task" in
+    /*)     echo "error: task id \"$task\" is absolute" >&2; exit 1 ;;
+    .*)     echo "error: task id \"$task\" starts with a dot" >&2; exit 1 ;;
+    */*|*\\*) echo "error: task id \"$task\" contains a path separator; replace / with -" >&2; exit 1 ;;
+    *..*)   echo "error: task id \"$task\" references a parent directory" >&2; exit 1 ;;
+esac
+
 command -v revmux >/dev/null 2>&1 || { echo "error: revmux not on PATH" >&2; exit 1; }
 
 cfg=$(revmux config 2>/dev/null) || { echo "error: revmux config failed" >&2; exit 1; }

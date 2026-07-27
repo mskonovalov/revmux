@@ -11,20 +11,25 @@ BINDIR ?= /usr/local/bin
 
 all: test build
 
+# cp writes in place, to the same inode. Rebuilding while a revmux is running from .bin/revmux
+# therefore rewrites the pages of a live Mach-O, and macOS then refuses to exec that file at all:
+# `load code signature error 2`, killed by AppleSystemPolicy. Reviewing this repo with revmux hits
+# exactly that, since an agent that runs `make build` breaks the binary supervising it.
+# mv is a rename: the running process keeps its old inode and the new one is a clean file.
 build:
 	go build -ldflags "-X main.revision=$(REV) -s -w" -o .bin/revmux.$(BRANCH) ./app
-	cp .bin/revmux.$(BRANCH) .bin/revmux
+	cp .bin/revmux.$(BRANCH) .bin/revmux.tmp && mv -f .bin/revmux.tmp .bin/revmux
 
 # symlink rather than copy, so every subsequent `make build` is picked up without reinstalling.
 # rm before ln instead of `ln -sf`: with an existing symlink to a directory, BSD ln follows it and
 # creates the link inside it rather than replacing it.
 install: build
-	rm -f $(BINDIR)/revmux
-	ln -s $(CURDIR)/.bin/revmux $(BINDIR)/revmux
+	rm -f "$(BINDIR)/revmux"
+	ln -s "$(CURDIR)/.bin/revmux" "$(BINDIR)/revmux"
 	@echo "$(BINDIR)/revmux -> $(CURDIR)/.bin/revmux"
 
 uninstall:
-	rm -f $(BINDIR)/revmux
+	rm -f "$(BINDIR)/revmux"
 
 test:
 	go clean -testcache

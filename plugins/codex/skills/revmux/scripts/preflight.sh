@@ -57,8 +57,17 @@ if command -v jq >/dev/null 2>&1; then
         executors=$(printf '%s' "$cfg" | jq -r --arg p "$profile" \
             '[(.profiles[] | select(.name == $p) | .roster[].executor), (.stages[].executor)] | unique | .[]')
     else
-        echo "profile: (default - checking every executor any profile or stage uses)"
-        executors=$(printf '%s' "$cfg" | jq -r '[(.profiles[].roster[].executor), (.stages[].executor)] | unique | .[]')
+        # the resolved default profile, not every profile: checking rosters that will not run reports
+        # a missing binary the review never needed
+        profile=$(printf '%s' "$cfg" | jq -r '(.knobs[] | select(.name == "profile") | .value) // empty')
+        if [ -z "$profile" ]; then
+            fail "profile: could not resolve the default from revmux config"
+            echo "ok: false"
+            exit 1
+        fi
+        echo "profile: $profile (resolved default)"
+        executors=$(printf '%s' "$cfg" | jq -r --arg p "$profile" \
+            '[(.profiles[] | select(.name == $p) | .roster[].executor), (.stages[].executor)] | unique | .[]')
     fi
 else
     # without jq the roster cannot be read, so fall back to the full vocabulary. Over-checking

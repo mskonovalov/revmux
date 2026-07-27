@@ -14,9 +14,12 @@
 #
 # usage: launch-revmux.sh --task <id> [--run <name>] [any other revmux flag]
 # output: the report (JSON by default, markdown with --markdown) on stdout
-# exit:   0 no findings, 1 findings reported, 2 tool error, other = launcher failure
+# exit:   0 no findings, 1 findings reported, 2 tool error (all three are revmux's own)
+#         3 launcher failure - revmux never ran, or the overlay died before it finished
+#         127 revmux not installed
 #
-# NOTE the exit code passes through: 1 means the review found things and is a SUCCESS.
+# 0, 1 and 2 are revmux's and pass through unchanged; 1 means the review found things and is a
+# SUCCESS. No launcher failure may ever exit 0, 1 or 2 - use RC_LAUNCH_FAIL.
 #
 # env overrides:
 #   REVMUX_AGTERM_PERCENT  agterm overlay size, 1-100      (default 80)
@@ -25,6 +28,14 @@
 #   REVMUX_AUTO_EXIT       TUI self-close delay            (default 30s; 0 waits for a keypress)
 
 set -euo pipefail
+
+# the launcher's own failure code, outside revmux's 0/1/2 vocabulary. See the exit-code note above:
+# every path that fails before revmux produced a report must use this and never 1.
+RC_LAUNCH_FAIL=3
+
+# how long to wait for the overlay's inner shell to publish its pid before giving up on it. Only
+# covers process startup, never the review itself, so it stays short.
+PID_GRACE_SECONDS=10
 
 # resolve revmux to an absolute path so overlay shells (sh -c) find it even when the launching
 # server's PATH predates the user's shell rc files
@@ -93,31 +104,64 @@ REVMUX_CMD="/usr/bin/env$ENV_PREFIX $REVMUX_CMD"
 # while the TUI keeps rendering to the tty
 REVMUX_CMD="$REVMUX_CMD > $(sq "$REPORT_FILE") 2> $(sq "$STDERR_FILE")"
 
+# the inner command every sentinel-based backend runs: publish pid, run revmux, write the exit code.
+# The pid is what lets await_sentinel bound its wait - a closed overlay kills the inner shell by
+# SIGHUP before it can write the sentinel, so waiting on the file alone never returns.
 write_rc_cmd() {
     local sentinel="$1"
-    # single-quoted format keeps $?/$rc literal for the generated inner script
+    # single-quoted format keeps $$/$?/$rc literal for the generated inner script
     # shellcheck disable=SC2016
-    printf '%s; rc=$?; printf "%%s" "$rc" > %s.tmp && mv -f %s.tmp %s' \
-        "$REVMUX_CMD" "$(sq "$sentinel")" "$(sq "$sentinel")" "$(sq "$sentinel")"
+    printf 'printf "%%s" "$$" > %s.pid; %s; rc=$?; printf "%%s" "$rc" > %s.tmp && mv -f %s.tmp %s' \
+        "$(sq "$sentinel")" "$REVMUX_CMD" "$(sq "$sentinel")" "$(sq "$sentinel")" "$(sq "$sentinel")"
 }
 
 write_fifo_rc_cmd() {
     local sentinel="$1"
     # shellcheck disable=SC2016
-    printf '%s; rc=$?; echo "$rc" > %s; exit' "$REVMUX_CMD" "$(sq "$sentinel")"
+    printf 'printf "%%s" "$$" > %s.pid; %s; rc=$?; echo "$rc" > %s; exit' \
+        "$(sq "$sentinel")" "$REVMUX_CMD" "$(sq "$sentinel")"
 }
 
 read_rc() {
-    cat "$1" 2>/dev/null || echo 1
+    cat "$1" 2>/dev/null || echo "$RC_LAUNCH_FAIL"
 }
 
-# print the report and pass revmux's own exit code through. An empty report with a nonzero code is a
-# run that failed before producing one, so surface revmux's stderr - otherwise the overlay has
-# already closed and the reason went with it.
+# block until the sentinel appears or the overlay's inner shell is gone. 0 = sentinel landed,
+# 1 = overlay died first. PID_GRACE_SECONDS covers only the startup window before the pid is
+# published; after that the wait is bounded on the process, never on a timer, since a review runs as
+# long as it runs.
+await_sentinel() {
+    local sentinel="$1" pid="" waited=0
+    while [ ! -f "$sentinel" ]; do
+        if [ -z "$pid" ]; then
+            [ -s "$sentinel.pid" ] && pid=$(cat "$sentinel.pid" 2>/dev/null)
+            if [ -z "$pid" ] && [ "$waited" -ge "$((PID_GRACE_SECONDS * 10))" ]; then
+                echo "error: overlay never started (no pid after ${PID_GRACE_SECONDS}s)" >&2
+                return 1
+            fi
+            waited=$((waited + 1))
+        elif ! kill -0 "$pid" 2>/dev/null; then
+            # one last look: the process can exit in the window between writing the sentinel and
+            # our next stat, and that case is a completed run, not a dead overlay
+            [ -f "$sentinel" ] && return 0
+            echo "error: overlay closed before the review finished" >&2
+            return 1
+        fi
+        sleep 0.1
+    done
+    return 0
+}
+
+# print the report and pass the exit code through, surfacing revmux's stderr when no report exists -
+# the overlay has already closed by then and the reason would go with it.
 print_report_and_exit() {
     local rc="${1:-0}"
     if [ -s "$REPORT_FILE" ]; then
         cat "$REPORT_FILE"
+    elif [ "$rc" = "$RC_LAUNCH_FAIL" ]; then
+        # never attribute this code to revmux: it is the launcher's, and revmux may never have run
+        echo "error: no report produced (overlay closed, or revmux never started)" >&2
+        [ -s "$STDERR_FILE" ] && sed 's/^/  /' "$STDERR_FILE" >&2
     elif [ "$rc" != "0" ]; then
         echo "error: revmux exited $rc without writing a report" >&2
         [ -s "$STDERR_FILE" ] && sed 's/^/  /' "$STDERR_FILE" >&2
@@ -216,7 +260,7 @@ if [ -n "${ZELLIJ:-}" ] && command -v zellij >/dev/null 2>&1; then
     SENTINEL=$(mktemp "$TMPBASE/revmux-done-XXXXXX")
     rm -f "$SENTINEL"
     LAUNCH_SCRIPT=$(mktemp "$TMPBASE/revmux-launch-XXXXXX")
-    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$LAUNCH_SCRIPT"' EXIT
+    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" "$LAUNCH_SCRIPT"' EXIT
     cat > "$LAUNCH_SCRIPT" <<LAUNCHER
 #!/bin/sh
 $(write_rc_cmd "$SENTINEL")
@@ -240,9 +284,9 @@ LAUNCHER
             --name "$OVERLAY_TITLE" --cwd "$CWD" -- "$LAUNCH_SCRIPT" >/dev/null 2>&1
     fi
 
-    while [ ! -f "$SENTINEL" ]; do sleep 0.3; done
+    await_sentinel "$SENTINEL" || print_report_and_exit "$RC_LAUNCH_FAIL"
     rc=$(read_rc "$SENTINEL")
-    print_report_and_exit "${rc:-1}"
+    print_report_and_exit "${rc:-$RC_LAUNCH_FAIL}"
 fi
 
 # herdr: a new fullscreen tab via the herdr CLI. Must precede kitty - inside herdr-in-kitty
@@ -251,7 +295,7 @@ if [ "${HERDR_ENV:-}" = "1" ] && command -v herdr >/dev/null 2>&1; then
     SENTINEL=$(mktemp "$TMPBASE/revmux-done-XXXXXX")
     rm -f "$SENTINEL"
     LAUNCH_SCRIPT=$(mktemp "$TMPBASE/revmux-launch-XXXXXX")
-    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$LAUNCH_SCRIPT"' EXIT
+    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" "$LAUNCH_SCRIPT"' EXIT
     cat > "$LAUNCH_SCRIPT" <<LAUNCHER
 #!/bin/sh
 $(write_rc_cmd "$SENTINEL")
@@ -265,7 +309,7 @@ LAUNCHER
     HERDR_TAB_ARGS+=(--focus)
     HERDR_NEW=$(herdr "${HERDR_TAB_ARGS[@]}" 2>&1) || {
         echo "error: herdr tab create failed: $HERDR_NEW" >&2
-        exit 1
+        exit "$RC_LAUNCH_FAIL"
     }
     HERDR_TAB_ID=""
     HERDR_PANE_ID=""
@@ -281,19 +325,19 @@ LAUNCHER
     if [ -z "$HERDR_PANE_ID" ] || [ -z "$HERDR_TAB_ID" ]; then
         echo "error: herdr tab create did not return pane/tab ids: $HERDR_NEW" >&2
         [ -n "$HERDR_TAB_ID" ] && herdr tab close "$HERDR_TAB_ID" >/dev/null 2>&1 || true
-        exit 1
+        exit "$RC_LAUNCH_FAIL"
     fi
 
     if ! herdr pane run "$HERDR_PANE_ID" "sh $(sq "$LAUNCH_SCRIPT")" >/dev/null 2>&1; then
         echo "error: herdr pane run failed for pane $HERDR_PANE_ID" >&2
         herdr tab close "$HERDR_TAB_ID" >/dev/null 2>&1 || true
-        exit 1
+        exit "$RC_LAUNCH_FAIL"
     fi
 
-    while [ ! -f "$SENTINEL" ]; do sleep 0.3; done
+    await_sentinel "$SENTINEL" || print_report_and_exit "$RC_LAUNCH_FAIL"
     rc=$(read_rc "$SENTINEL")
     herdr tab close "$HERDR_TAB_ID" >/dev/null 2>&1 || true
-    print_report_and_exit "${rc:-1}"
+    print_report_and_exit "${rc:-$RC_LAUNCH_FAIL}"
 fi
 
 # kitty: overlay window with a sentinel file for blocking
@@ -301,16 +345,16 @@ KITTY_SOCK="${KITTY_LISTEN_ON:-}"
 if [ -n "$KITTY_SOCK" ] && command -v kitty >/dev/null 2>&1; then
     SENTINEL=$(mktemp "$TMPBASE/revmux-done-XXXXXX")
     rm -f "$SENTINEL"
-    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp"' EXIT
+    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid"' EXIT
 
     KITTY_ARGS=(kitty @ --to "$KITTY_SOCK" launch --type=overlay --title="$OVERLAY_TITLE" --cwd=current)
     [ -n "${KITTY_WINDOW_ID:-}" ] && KITTY_ARGS+=(--match "window_id:${KITTY_WINDOW_ID}")
     KITTY_ARGS+=(sh -c "cd $(sq "$CWD") && $(write_rc_cmd "$SENTINEL")")
     "${KITTY_ARGS[@]}" >/dev/null 2>&1
 
-    while [ ! -f "$SENTINEL" ]; do sleep 0.3; done
+    await_sentinel "$SENTINEL" || print_report_and_exit "$RC_LAUNCH_FAIL"
     rc=$(read_rc "$SENTINEL")
-    print_report_and_exit "${rc:-1}"
+    print_report_and_exit "${rc:-$RC_LAUNCH_FAIL}"
 fi
 
 # wezterm/kaku: split pane with a sentinel file for blocking
@@ -325,16 +369,16 @@ if [ -n "${WEZTERM_PANE:-}" ]; then
     if [ ${#WEZTERM_CLI[@]} -gt 0 ]; then
         SENTINEL=$(mktemp "$TMPBASE/revmux-done-XXXXXX")
         rm -f "$SENTINEL"
-        trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp"' EXIT
+        trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid"' EXIT
 
         WEZTERM_PCT="${REVMUX_POPUP_HEIGHT:-90%}"
         WEZTERM_PCT="${WEZTERM_PCT%%%}"
         "${WEZTERM_CLI[@]}" split-pane --bottom --percent "$WEZTERM_PCT" \
             --pane-id "$WEZTERM_PANE" --cwd "$CWD" -- sh -c "$(write_rc_cmd "$SENTINEL")" >/dev/null 2>&1
 
-        while [ ! -f "$SENTINEL" ]; do sleep 0.3; done
+        await_sentinel "$SENTINEL" || print_report_and_exit "$RC_LAUNCH_FAIL"
         rc=$(read_rc "$SENTINEL")
-        print_report_and_exit "${rc:-1}"
+        print_report_and_exit "${rc:-$RC_LAUNCH_FAIL}"
     fi
 fi
 
@@ -342,12 +386,12 @@ fi
 if is_cmux_session; then
     if ! command -v cmux >/dev/null 2>&1; then
         echo "error: cmux session detected but cmux CLI not found" >&2
-        exit 1
+        exit "$RC_LAUNCH_FAIL"
     fi
     SENTINEL=$(mktemp "$TMPBASE/revmux-done-XXXXXX")
     rm -f "$SENTINEL"
     LAUNCH_SCRIPT=$(mktemp "$TMPBASE/revmux-launch-XXXXXX")
-    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$LAUNCH_SCRIPT"' EXIT
+    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" "$LAUNCH_SCRIPT"' EXIT
     cat > "$LAUNCH_SCRIPT" <<LAUNCHER
 #!/bin/sh
 $(write_rc_cmd "$SENTINEL")
@@ -360,13 +404,13 @@ LAUNCHER
     # targets the caller's own pane and would replace the user's shell via exec
     if [ -z "$CMUX_SURF" ]; then
         echo "error: cmux new-split did not return a surface id: $CMUX_NEW" >&2
-        exit 1
+        exit "$RC_LAUNCH_FAIL"
     fi
     cmux send --surface "$CMUX_SURF" "exec $(sq "$LAUNCH_SCRIPT")\n" >/dev/null 2>&1
 
-    while [ ! -f "$SENTINEL" ]; do sleep 0.3; done
+    await_sentinel "$SENTINEL" || print_report_and_exit "$RC_LAUNCH_FAIL"
     rc=$(read_rc "$SENTINEL")
-    print_report_and_exit "${rc:-1}"
+    print_report_and_exit "${rc:-$RC_LAUNCH_FAIL}"
 fi
 
 # ghostty: split pane via AppleScript (macOS, Ghostty 1.3.0+)
@@ -374,7 +418,7 @@ if [ "${TERM_PROGRAM:-}" = "ghostty" ] && command -v osascript >/dev/null 2>&1; 
     SENTINEL=$(mktemp "$TMPBASE/revmux-done-XXXXXX")
     rm -f "$SENTINEL"
     LAUNCH_SCRIPT=$(mktemp "$TMPBASE/revmux-launch-XXXXXX")
-    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$LAUNCH_SCRIPT"' EXIT
+    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" "$LAUNCH_SCRIPT"' EXIT
     cat > "$LAUNCH_SCRIPT" <<LAUNCHER
 #!/bin/sh
 $(write_rc_cmd "$SENTINEL")
@@ -398,17 +442,17 @@ on run argv
 end run
 APPLESCRIPT
     ); then
-        exit 1
+        exit "$RC_LAUNCH_FAIL"
     fi
 
-    while [ ! -f "$SENTINEL" ]; do sleep 0.3; done
+    await_sentinel "$SENTINEL" || print_report_and_exit "$RC_LAUNCH_FAIL"
     rc=$(read_rc "$SENTINEL")
     osascript - "$GHOSTTY_TERM_ID" <<'APPLESCRIPT' 2>/dev/null
 on run argv
     tell application "Ghostty" to close terminal id (item 1 of argv)
 end run
 APPLESCRIPT
-    print_report_and_exit "${rc:-1}"
+    print_report_and_exit "${rc:-$RC_LAUNCH_FAIL}"
 fi
 
 # iterm2: split pane via AppleScript (macOS)
@@ -416,7 +460,7 @@ if [ -n "${ITERM_SESSION_ID:-}" ] && command -v osascript >/dev/null 2>&1; then
     SENTINEL=$(mktemp "$TMPBASE/revmux-done-XXXXXX")
     rm -f "$SENTINEL"
     LAUNCH_SCRIPT=$(mktemp "$TMPBASE/revmux-launch-XXXXXX")
-    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$LAUNCH_SCRIPT"' EXIT
+    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" "$LAUNCH_SCRIPT"' EXIT
     cat > "$LAUNCH_SCRIPT" <<LAUNCHER
 #!/bin/sh
 cd "\$1" && $REVMUX_CMD; rc=\$?; printf "%s" "\$rc" > "\$2.tmp" && mv -f "\$2.tmp" "\$2"
@@ -457,10 +501,10 @@ end run
 APPLESCRIPT
     ) || {
         echo "error: failed to open iTerm2 split via osascript: $ITERM_NEW_SESSION" >&2
-        exit 1
+        exit "$RC_LAUNCH_FAIL"
     }
 
-    while [ ! -f "$SENTINEL" ]; do sleep 0.3; done
+    await_sentinel "$SENTINEL" || print_report_and_exit "$RC_LAUNCH_FAIL"
     rc=$(read_rc "$SENTINEL")
     osascript - "$ITERM_NEW_SESSION" <<'APPLESCRIPT' 2>/dev/null
 on run argv
@@ -479,15 +523,15 @@ on run argv
     end tell
 end run
 APPLESCRIPT
-    print_report_and_exit "${rc:-1}"
+    print_report_and_exit "${rc:-$RC_LAUNCH_FAIL}"
 fi
 
 # emacs vterm: a new vterm buffer via emacsclient
 if [ "${INSIDE_EMACS:-}" = "vterm" ] && command -v emacsclient >/dev/null 2>&1; then
     SENTINEL=$(mktemp "$TMPBASE/revmux-done-XXXXXX")
-    rm -f "$SENTINEL" && mkfifo "$SENTINEL"
+    rm -f "$SENTINEL"
     LAUNCH_SCRIPT=$(mktemp "$TMPBASE/revmux-launch-XXXXXX")
-    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$LAUNCH_SCRIPT"' EXIT
+    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.pid" "$LAUNCH_SCRIPT"' EXIT
     cat > "$LAUNCH_SCRIPT" <<LAUNCHER
 #!/bin/sh
 cd $(sq "$CWD") && $(write_fifo_rc_cmd "$SENTINEL")
@@ -499,7 +543,7 @@ LAUNCHER
     VTERM_PID=$$
     if [ -z "$EMACS_PID" ] || ! [ "$EMACS_PID" -gt 0 ] 2>/dev/null; then
         echo "error: emacs server not reachable" >&2
-        exit 1
+        exit "$RC_LAUNCH_FAIL"
     fi
     while P=$(ps -o ppid= -p "$VTERM_PID" 2>/dev/null | tr -d ' '); [ "$P" != "$EMACS_PID" ] && [ "$P" != "1" ] && [ -n "$P" ]; do VTERM_PID=$P; done
 
@@ -523,7 +567,8 @@ LAUNCHER
           (let ((vterm-shell \"$ESCAPED_SCRIPT\"))
             (vterm-mode)))))" >/dev/null 2>&1
 
-    read -r rc < "$SENTINEL"
+    await_sentinel "$SENTINEL" || print_report_and_exit "$RC_LAUNCH_FAIL"
+    rc=$(read_rc "$SENTINEL")
     emacsclient --no-wait --eval "(progn (require 'cl-lib)
       (when-let ((f (cl-find-if (lambda (f) (string= (frame-parameter f 'name) \"$ESCAPED_TITLE\")) (frame-list))))
         (let ((bn (frame-parameter f 'revmux-buf)))
@@ -532,9 +577,9 @@ LAUNCHER
       (when-let ((f (cl-find-if (lambda (f) (frame-parameter f 'revmux-caller)) (frame-list))))
         (set-frame-parameter f 'revmux-caller nil)
         (select-frame-set-input-focus f)))" >/dev/null 2>&1
-    print_report_and_exit "${rc:-1}"
+    print_report_and_exit "${rc:-$RC_LAUNCH_FAIL}"
 fi
 
 echo "error: no overlay terminal available (requires agterm, tmux, zellij, herdr, kitty, wezterm, cmux, ghostty, iTerm2, or emacs vterm)" >&2
 echo "hint: run revmux directly with --no-tui for headless mode" >&2
-exit 1
+exit "$RC_LAUNCH_FAIL"
