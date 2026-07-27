@@ -10,7 +10,16 @@ func (m Model) agentLines() []string {
 	if len(a.lines) == 0 {
 		return []string{"waiting for " + a.spec.Name + "..."}
 	}
-	return a.lines
+
+	// wrapped and rendered exactly as the combined log is. A model writes markdown into its prose and
+	// the lines it writes are long; a forensic view that clips them is the one place a reader has gone
+	// looking for the detail, so it is the last place to throw the end of it away.
+	out := make([]string, 0, len(a.lines))
+	for _, e := range a.lines {
+		head := m.style.muted.Render(e.at.Format(timeFormat)) + " "
+		out = append(out, m.wrap(head, markdown(e.text))...)
+	}
+	return out
 }
 
 // focused is the agent behind the focused tab, nil on tab 0 or a tab past the roster.

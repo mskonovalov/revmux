@@ -48,13 +48,54 @@ func (m Model) agentRow(a *agentState) string {
 // header names the run and what it is doing. The findings count is the one number worth finding at a
 // glance, so it carries the only accent on the line.
 func (m Model) header() string {
+	// **it degrades rather than being clipped, for the same reason the tab bar does.** statusTable clips
+	// this line, and the completion notice is the rightmost thing on it — so the severity breakdown,
+	// which is the longest thing on it, would push exactly the "complete, closing in 5s" off the edge at
+	// the moment it matters most. Parts are given up longest-first, and what a reader needs to know
+	// about where the run is survives longest.
+	for _, level := range []headerParts{
+		{agents: true, stage: true, count: countFull},
+		{agents: true, stage: true, count: countTotal},
+		{agents: false, stage: true, count: countTotal},
+		{agents: false, stage: true, count: countNone},
+		{agents: false, stage: false, count: countNone},
+	} {
+		if line := m.headerLine(level); lipgloss.Width(line) <= m.view.width() {
+			return line
+		}
+	}
+	// narrower than the notice itself; clipping is the backstop under everything
+	return m.clip(m.headerLine(headerParts{count: countNone}))
+}
+
+// how much of the findings count the header has room for.
+const (
+	countFull  = iota // 6 findings (0 critical, 1 major, 5 minor)
+	countTotal        // 6 findings
+	countNone
+)
+
+// headerParts is one level of header detail.
+type headerParts struct {
+	agents, stage bool
+	count         int
+}
+
+// headerLine builds the header at one level of detail.
+func (m Model) headerLine(p headerParts) string {
 	head := m.style.title.Render("revmux")
-	head += m.style.muted.Render(" · " + strconv.Itoa(len(m.agents)) + " agents")
-	if m.stage != "" {
+	if p.agents {
+		head += m.style.muted.Render(" · " + strconv.Itoa(len(m.agents)) + " agents")
+	}
+	if p.stage && m.stage != "" {
 		head += m.style.muted.Render(" · ") + m.stage
 	}
-	if m.found.total > 0 {
-		head += m.style.muted.Render(" · ") + m.style.count.Render(m.found.String())
+	if m.found.total > 0 && p.count != countNone {
+		count := m.found.String()
+		if p.count == countTotal {
+			count = strconv.Itoa(m.found.total) + " findings"
+		}
+		head += m.style.muted.Render(" · ") + m.style.count.Render(count)
 	}
 	return head + m.closing()
 }

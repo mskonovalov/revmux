@@ -76,6 +76,12 @@ cover both.
   `prompt.DerivedSpec`, which both renderers call. It hashes the name rather than counting arrivals,
   because the two renderers build their rows independently and a derived agent is created on first
   sight, so an index would have to be threaded through and could disagree.
+  **Every pane renders the markdown a model writes and wraps what will not fit** — the combined log,
+  each agent's scrollback and the findings browser alike. A model writes backticks and emphasis into
+  its prose whichever pane it lands in, and a forensic view is the last place to throw the end of a
+  line away, since it is where a reader went looking for the detail.
+  Headings keep their hashes rather than having them stripped: the pane is showing a markdown document
+  and a reader with the report open beside it should see the same thing.
   Long entries wrap with a hanging indent rather than being clipped: a narrated step or a command is
   the informative part of the log and the part most likely to run long, and continuation rows carry no
   timestamp and no agent name so the entry still reads as one thing. The plain renderer wraps the same
@@ -102,9 +108,16 @@ cover both.
   A verify group is named for what it covers rather than for its position — `verify ui`, not
   `verify 3` — since a row has one column and "ui" tells a reader more than a number does. The label
   spelling out every directory stays as the archived prompt's filename, where the space exists.
+- **The header degrades rather than being clipped, longest part first.** `statusTable` clips it, and
+  the completion notice is the rightmost thing on the line — so the severity breakdown, the longest
+  thing on it, would push "complete, closing in 5s" off the edge exactly when it matters. It gives up
+  the breakdown, then the agent count, then the stage, and clips only under all of that.
+  **The count is rebuilt from the final report, not left as the last event's.** Verify moves rejected
+  findings into `Immaterial` and `PreExisting` and `--min-confidence` filters, both without emitting a
+  findings event, so a header fed only by events names severities the browser below it does not list.
 - On completion the model switches to the findings browser; agent tabs stay reachable
   so a reader can check *why* a finding was raised.
-- **The browser renders the report and nothing more.** It lays out what the markdown on stdout carries
+- **The browser renders the report and nothing more.** It lays out what the rendered report carries
   — a severity heading, then each finding as its title, where it is, its body, its fix and its
   attribution — wrapped to the pane rather than clipped at its edge, since a body is prose several
   sentences long and the tail is not the disposable half.

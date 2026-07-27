@@ -1,11 +1,13 @@
 package ui
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -100,4 +102,40 @@ func TestModel_statusTable_header(t *testing.T) {
 			assert.Equal(t, tt.want, m.header())
 		})
 	}
+}
+
+func TestModel_header_degradesInsteadOfClipping(t *testing.T) {
+	// the completion notice is the rightmost thing on the line, so clipping takes it first — and it is
+	// the one part a reader needs at exactly the moment the line is longest
+	full := feed(t, New(ModelConfig{Roster: roster()}),
+		pipeline.Event{Kind: pipeline.EventStage, Stage: "verify", At: at},
+		pipeline.Event{Kind: pipeline.EventFindings, Agent: "bugs+impl", At: at, Findings: []finding.Finding{
+			{Severity: finding.Critical}, {Severity: finding.Major}, {Severity: finding.Minor}}},
+		CompletedMsg{Report: finding.Report{Findings: []finding.Finding{
+			{Severity: finding.Critical}, {Severity: finding.Major}, {Severity: finding.Minor}}}},
+	)
+
+	for _, width := range []int{120, 70, 55, 40, 30, 12} {
+		t.Run(strconv.Itoa(width)+" columns", func(t *testing.T) {
+			m := feed(t, full, tea.WindowSizeMsg{Width: width, Height: 24})
+			assert.LessOrEqual(t, lipgloss.Width(m.header()), width, "the header must fit rather than be cut")
+		})
+	}
+
+	t.Run("the completion notice outlives everything the header can give up", func(t *testing.T) {
+		// down to the width where the notice alone no longer fits, which is where clipping takes over
+		for _, width := range []int{120, 70, 55, 40, 32} {
+			m := feed(t, full, tea.WindowSizeMsg{Width: width, Height: 24})
+			assert.Contains(t, m.header(), "complete", "at %d columns", width)
+		}
+	})
+
+	t.Run("it gives up the breakdown before the notice", func(t *testing.T) {
+		wide := feed(t, full, tea.WindowSizeMsg{Width: 120, Height: 24})
+		assert.Contains(t, wide.header(), "(1 critical, 1 major, 1 minor)", "there is room for all of it")
+
+		narrow := feed(t, full, tea.WindowSizeMsg{Width: 55, Height: 24})
+		assert.NotContains(t, narrow.header(), "critical", "the longest part goes first")
+		assert.Contains(t, narrow.header(), "3 findings", "but the total stays")
+	})
 }

@@ -34,7 +34,7 @@ func TestOptions_knobs(t *testing.T) {
 
 	t.Run("no meta flag is reported as a knob", func(t *testing.T) {
 		for _, k := range o.knobs() {
-			assert.NotContains(t, []string{"task", "run", "json", "config-dir", "version"}, k.Name)
+			assert.NotContains(t, []string{"task", "run", "markdown", "config-dir", "version"}, k.Name)
 		}
 	})
 }

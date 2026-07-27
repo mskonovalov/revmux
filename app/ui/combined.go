@@ -45,7 +45,7 @@ func (m Model) combinedLines() []string {
 			out = append(out, head+m.style.stage.Render(" "+e.text+" "))
 			continue
 		}
-		out = append(out, m.wrap(head, e.text)...)
+		out = append(out, m.wrap(head, markdown(e.text))...)
 	}
 	return out
 }

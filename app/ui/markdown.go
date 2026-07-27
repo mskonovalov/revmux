@@ -1,6 +1,9 @@
 package ui
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 // Inline markdown a model writes into a finding's body. Both are common in review prose: paths,
 // identifiers and flags arrive in backticks, and the emphasis a model puts on the one sentence that
@@ -19,7 +22,19 @@ const (
 	ansiBoldOff = "\x1b[22m"
 	ansiCodeOn  = "\x1b[36m"
 	ansiCodeOff = "\x1b[39m"
+	ansiHeadOn  = "\x1b[1m\x1b[36m"
+	ansiHeadOff = "\x1b[39m\x1b[22m"
 )
+
+// heading renders a markdown heading the way the report writes it — "## Major", "### title" — bold and
+// accented, with the hashes kept rather than stripped. Keeping them is deliberate: the pane is showing
+// a markdown document, and a reader who has the report open beside it should see the same thing.
+//
+// Raw ANSI for the same reason markdown is, and closing on the narrow "back to default" codes rather
+// than a reset, which would clear the style of whatever clip() renders around it.
+func heading(level int, text string) string {
+	return ansiHeadOn + strings.Repeat("#", level) + " " + text + ansiHeadOff
+}
 
 // markdown renders the inline markdown in one line of model prose. Block constructs are deliberately
 // not handled: a finding's body is a paragraph or two, and the browser already supplies the structure

@@ -48,7 +48,7 @@ EOF
 revmux --task pr-123
 ```
 
-That runs the `comprehensive` profile, shows a live TUI, and writes the markdown report to stdout. Re-run
+That runs the `comprehensive` profile, shows a live TUI, and writes the report to stdout as JSON. Re-run
 after fixing something, under a new round name, and revmux carries the earlier rounds into every prompt:
 
 ```

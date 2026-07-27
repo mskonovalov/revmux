@@ -77,14 +77,15 @@ func TestModel_complete(t *testing.T) {
 func TestModel_findingsPane(t *testing.T) {
 	pane := strings.Join(browsed(t, report()).findingsPane(), "\n")
 
-	assert.Contains(t, pane, "── CRITICAL ──")
-	assert.Contains(t, pane, "── MAJOR ──")
-	assert.Contains(t, pane, "── MINOR ──")
+	// the report's own headings, rendered: "## Critical" for a severity group, "### title" per finding
+	assert.Contains(t, pane, heading(2, "Critical"))
+	assert.Contains(t, pane, heading(2, "Major"))
+	assert.Contains(t, pane, heading(2, "Minor"))
 	// the report's own shape: the title is the heading and the location sits under it, as "### title"
 	// followed by its `file:line` does on stdout
-	assert.Contains(t, pane, "  unchecked error  [95]", "the worst finding is first")
+	assert.Contains(t, pane, heading(3, "unchecked error")+"  [95]", "the worst finding is first")
 	assert.Contains(t, pane, "    app/main.go:42-48", "with where it is on the line under it")
-	assert.Contains(t, pane, "  pane clipping  [80]")
+	assert.Contains(t, pane, heading(3, "pane clipping")+"  [80]")
 	assert.Contains(t, pane, "    app/ui/view.go", "a file-level finding renders as the bare path")
 	assert.Contains(t, pane, "    the write error is dropped", "a finding opens showing its body, not just its summary")
 	assert.NotContains(t, pane, "is the retry budget right", "open questions are the report's, not the browser's")
@@ -96,14 +97,14 @@ func TestModel_findingsPane(t *testing.T) {
 		}}
 		lines := browsed(t, rep).findingsPane()
 		assert.Equal(t, []string{
-			"── CRITICAL ──", "  bad  [0]", "    b.go:2", "",
-			"── INVENTED ──", "  odd  [0]", "    a.go:1", "",
+			heading(2, "Critical"), heading(3, "bad") + "  [0]", "    b.go:2", "",
+			heading(2, "Invented"), heading(3, "odd") + "  [0]", "    a.go:1", "",
 		}, lines)
 	})
 
 	t.Run("a finding with no severity at all still has a heading", func(t *testing.T) {
 		rep := finding.Report{Findings: []finding.Finding{{File: "a.go", Line: 1, Title: "unranked"}}}
-		assert.Contains(t, browsed(t, rep).findingsPane()[0], "UNSPECIFIED")
+		assert.Equal(t, heading(2, "Unspecified"), browsed(t, rep).findingsPane()[0])
 	})
 
 	t.Run("an empty report says so", func(t *testing.T) {
@@ -129,7 +130,7 @@ func TestFindingsState_scroll(t *testing.T) {
 	t.Run("it opens on the worst finding rather than at the end of the last one", func(t *testing.T) {
 		m := browsed(t, report())
 		assert.Equal(t, m.maxScroll(), m.view.scroll, "a report is read from its top, unlike a live log")
-		assert.Contains(t, strings.Join(m.detailPane(), "\n"), "CRITICAL",
+		assert.Contains(t, strings.Join(m.detailPane(), "\n"), heading(2, "Critical"),
 			"so the first thing on screen is the worst finding")
 	})
 
@@ -145,7 +146,7 @@ func TestFindingsState_rendersTheWholeReport(t *testing.T) {
 	// per finding and needed state kept in step with the pane.
 	pane := strings.Join(browsed(t, report()).findingsPane(), "\n")
 
-	assert.Contains(t, pane, "unchecked error", "the title, as the report's ### heading")
+	assert.Contains(t, pane, heading(3, "unchecked error"), "the title, as the report's ### heading")
 	assert.Contains(t, pane, "    app/main.go:42-48", "where it is, on the line under it")
 	assert.Contains(t, pane, "    the write error is dropped", "the body, indented under that")
 	assert.Contains(t, pane, "    so a short write reads as success", "keeping its own line breaks")
@@ -160,7 +161,7 @@ func TestFindingsState_rendersTheWholeReport(t *testing.T) {
 	t.Run("a finding with no body still shows where it is", func(t *testing.T) {
 		terse := finding.Report{Findings: []finding.Finding{
 			{File: "a.go", Line: 1, Severity: finding.Minor, Title: "terse"}}}
-		assert.Equal(t, []string{"── MINOR ──", "  terse  [0]", "    a.go:1", ""},
+		assert.Equal(t, []string{heading(2, "Minor"), heading(3, "terse") + "  [0]", "    a.go:1", ""},
 			browsed(t, terse).findingsPane())
 	})
 

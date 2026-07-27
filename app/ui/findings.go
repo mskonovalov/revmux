@@ -115,17 +115,19 @@ func (f *findingsState) empty() string {
 	return "nothing matches " + strconv.Quote(f.query) + "."
 }
 
+// heading is the report's own "## Major", so the pane and the file read the same.
 func (f *findingsState) heading(s finding.Severity) string {
-	if s == "" {
-		return "── UNSPECIFIED ──"
+	name := string(s)
+	if name == "" {
+		name = "unspecified"
 	}
-	return "── " + strings.ToUpper(string(s)) + " ──"
+	return heading(2, strings.ToUpper(name[:1])+name[1:])
 }
 
 // row is one finding's headline: the report's own "### title" line, carrying the confidence the report
 // prints at the foot of the entry.
 func (f *findingsState) row(v finding.Finding) string {
-	return "  " + markdown(v.Title) + "  [" + strconv.Itoa(v.Confidence) + "]"
+	return heading(3, markdown(v.Title)) + "  [" + strconv.Itoa(v.Confidence) + "]"
 }
 
 // detail is the rest of the report's entry, in the report's own order: where it is, the body, the fix,

@@ -393,14 +393,27 @@ func TestRun_review(t *testing.T) {
 		assert.Equal(t, 2, r.attempts(), "one launch plus one retry, then the run stops")
 	})
 
-	t.Run("a report that cannot be written exits 2", func(t *testing.T) {
-		r := newRunOpts(t, base(t))
-		r.result = executor.Result{StructuredOutput: json.RawMessage(`{"findings":[]}`)}
-		ro := r.opts()
-		ro.stdout = failingWriter{}
-		assert.Equal(t, 2, run(ro))
-		assert.Contains(t, r.stderr.String(), "write markdown report")
-	})
+	// both renderings, because base() asks for markdown and the default path would otherwise go
+	// untested — a report that cannot reach the caller must fail the run whichever shape it was in
+	for _, tc := range []struct {
+		name     string
+		markdown bool
+		want     string
+	}{
+		{"a markdown report that cannot be written exits 2", true, "write markdown report"},
+		{"and neither can a json one, which is the default", false, "report to stdout"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := base(t)
+			o.Markdown = tc.markdown
+			r := newRunOpts(t, o)
+			r.result = executor.Result{StructuredOutput: json.RawMessage(`{"findings":[]}`)}
+			ro := r.opts()
+			ro.stdout = failingWriter{}
+			assert.Equal(t, 2, run(ro))
+			assert.Contains(t, r.stderr.String(), tc.want)
+		})
+	}
 }
 
 func TestRun_promptsCarryPathsNotContents(t *testing.T) {

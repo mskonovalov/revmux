@@ -114,7 +114,7 @@ type agentState struct {
 	beat    time.Time // when this agent last put anything in the log, heartbeat or prose
 	pending string    // the newest tool call, held for the next heartbeat
 	last    string
-	lines   []string
+	lines   []combinedEntry
 }
 
 // eventsDone says the pipeline closed its channel, so the run is over and no further events arrive.
@@ -183,6 +183,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // tabs stay reachable so he can check why a finding was raised.
 func (m *Model) complete(rep finding.Report) {
 	m.findings = newFindings(rep)
+	// **the header's count is rebuilt from the report, not left as the last event's.** Two stages after
+	// synthesis change the set without emitting a findings event — verify moves rejected findings into
+	// Immaterial and PreExisting, and --min-confidence filters before the report is handed over — so a
+	// tally fed only by events names severities the browser below it does not list.
+	m.found = tally{}
+	m.found.add(rep.Findings)
 	m.done = true
 	m.exitIn = m.cfg.AutoExit
 	m.focus(m.findingsTab())
@@ -248,7 +254,7 @@ func (m *Model) apply(ev pipeline.Event) {
 	if text == "" {
 		return
 	}
-	a.push(m.style.muted.Render(ev.At.Format(timeFormat)) + " " + text)
+	a.push(combinedEntry{at: ev.At, text: text})
 	m.combined.push(combinedEntry{agent: a.spec.Name, at: ev.At, text: text})
 	// **any** line counts as life, not just a heartbeat. An agent that narrates steadily — codex
 	// streams a reasoning headline every few seconds — is visibly alive already, so charging it a
@@ -406,8 +412,10 @@ func (a *agentState) takeNote() string {
 	return text
 }
 
-// push appends one scrollback line, dropping the oldest once the pane's budget is spent.
-func (a *agentState) push(line string) {
+// push appends one scrollback entry, dropping the oldest once the pane's budget is spent. It keeps the
+// timestamp and the text apart rather than joined, so the pane can wrap the text under its own column
+// when the terminal is too narrow for it — a joined string cannot be re-split without parsing it back.
+func (a *agentState) push(line combinedEntry) {
 	a.lines = append(a.lines, line)
 	if len(a.lines) > scrollbackLimit {
 		a.lines = a.lines[len(a.lines)-scrollbackLimit:]

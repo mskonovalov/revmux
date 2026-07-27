@@ -17,7 +17,8 @@ func TestModel_agentLines(t *testing.T) {
 
 	t.Run("the focused agent's own scrollback", func(t *testing.T) {
 		m.view.tab = 1
-		assert.Equal(t, []string{"16:02:11 started [bugs, impl]", "16:02:11 Reading the executor first."}, m.agentLines())
+		assert.Equal(t, []string{"16:02:11 started [bugs, impl]", "16:02:11 Reading the executor first."}, m.agentLines(),
+			"timestamp then text, wrapped and markdown-rendered like the combined log")
 		m.view.tab = 2
 		assert.Equal(t, []string{"16:02:11 Checking the teardown path."}, m.agentLines(),
 			"one pane never shows another agent's lines")

@@ -81,7 +81,9 @@ func TestModel_apply(t *testing.T) {
 			m := feed(t, New(ModelConfig{Roster: roster()}), tt.ev)
 			assert.Equal(t, tt.wantState, m.agents[0].state)
 			assert.Equal(t, tt.wantLast, m.agents[0].last)
-			assert.Equal(t, []string{"16:02:11 " + tt.wantLast}, m.agents[0].lines)
+			// the scrollback keeps the timestamp apart from the text, so the pane can wrap under its own
+			// column; a joined string could not be re-split without parsing it back
+			assert.Equal(t, []combinedEntry{{text: tt.wantLast, at: at}}, m.agents[0].lines)
 			require.Len(t, m.combined.entries, 1)
 			assert.Equal(t, combinedEntry{agent: "bugs+impl", text: tt.wantLast, at: at}, m.combined.entries[0])
 		})
@@ -237,7 +239,7 @@ func TestModel_Init(t *testing.T) {
 func TestAgentState_push(t *testing.T) {
 	a := &agentState{}
 	for i := range scrollbackLimit + 10 {
-		a.push("line " + strings.Repeat("x", i%2))
+		a.push(combinedEntry{at: at, text: "line " + strings.Repeat("x", i%2)})
 	}
 
 	assert.Len(t, a.lines, scrollbackLimit, "the oldest lines are dropped, the pane stays bounded")
@@ -396,5 +398,30 @@ func TestAgentState_runtime_freezesWhenFinished(t *testing.T) {
 		}
 		assert.Contains(t, rows["bugs+impl"], "40s", "the finished row holds the time it actually took")
 		assert.Contains(t, rows["codex"], "4m0s", "while the one still going keeps counting")
+	})
+}
+
+func TestModel_complete_rebuildsTheTally(t *testing.T) {
+	// verify rejects findings after synthesis emitted its count, and --min-confidence filters after
+	// that, so the header must take its number from the report it was handed rather than from the last
+	// event it happened to see
+	m := feed(t, New(ModelConfig{Roster: roster()}),
+		pipeline.Event{Kind: pipeline.EventFindings, Agent: "synthesis", At: at, Findings: []finding.Finding{
+			{Severity: finding.Critical}, {Severity: finding.Major}, {Severity: finding.Minor},
+		}},
+	)
+	require.Equal(t, 3, m.found.total, "synthesis reported three")
+
+	done := feed(t, m, CompletedMsg{Report: finding.Report{Findings: []finding.Finding{
+		{Severity: finding.Major}, {Severity: finding.Minor},
+	}}})
+	assert.Equal(t, 2, done.found.total, "verify rejected one, and the header says so")
+	assert.Equal(t, 0, done.found.critical, "the rejected one was the critical, and it is gone from the count")
+	assert.Contains(t, done.header(), "2 findings (0 critical, 1 major, 1 minor)")
+
+	t.Run("an empty report empties the count rather than leaving the old one", func(t *testing.T) {
+		none := feed(t, m, CompletedMsg{Report: finding.Report{}})
+		assert.Equal(t, 0, none.found.total)
+		assert.NotContains(t, none.header(), "findings", "nothing survived, so the header says nothing about them")
 	})
 }
