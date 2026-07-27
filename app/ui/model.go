@@ -25,8 +25,9 @@ const (
 	defaultRows = 30
 
 	// chromeLines is what the frame spends on everything that is not the pane or an agent row: the
-	// header, the column heading, the rule closing the table, the tab bar, and the rule under it.
-	chromeLines = 5
+	// header, the rule under it, the column heading, the rule closing the table, the tab bar, and the
+	// rule under that. Miscount it and the pane runs past the bottom of the terminal.
+	chromeLines = 6
 )
 
 // ProgressInterval is how often a tool call earns a line of its own in a log.
@@ -85,6 +86,7 @@ type Model struct {
 	combined *combinedState
 	findings *findingsState
 	stage    string
+	now      time.Time // the newest event time seen, which is what every row's elapsed is measured against
 	found    int
 	done     bool          // the run is over and the report is in
 	exitIn   time.Duration // what is left of the auto-exit countdown, zero when nothing is counting
@@ -210,9 +212,12 @@ func (m Model) next() tea.Cmd {
 // row for it rather than panicking, and one arriving after that agent finished is just another line:
 // ordering across concurrent agents is not guaranteed.
 func (m *Model) apply(ev pipeline.Event) {
+	if ev.At.After(m.now) {
+		m.now = ev.At
+	}
 	if ev.Kind == pipeline.EventStage {
 		m.stage = ev.Stage
-		m.combined.push(combinedEntry{at: ev.At, text: "stage " + ev.Stage})
+		m.combined.push(combinedEntry{at: ev.At, text: ev.Stage})
 		return
 	}
 
@@ -372,11 +377,26 @@ func (a *agentState) push(line string) {
 
 // runtime is the agent's elapsed time as the status table shows it, measured between event timestamps
 // rather than off a clock so the table renders the same in a test as in a terminal.
-func (a *agentState) runtime() string {
-	if a.started.IsZero() || !a.updated.After(a.started) {
+// runtime is how long this agent has been going, measured against the newest event time in the whole
+// run rather than against this agent's own last one.
+//
+// **Its own last event freezes the clock the moment it goes quiet**, which is exactly when a reader
+// wants to know how long it has been quiet for — a stalled agent showed the elapsed it had when it
+// last spoke while every busy row kept counting. Any event from any agent now advances them all,
+// which for a run with four agents talking is every render.
+//
+// This still takes no clock. `.claude/rules/tui.md` forbids one here, and the reason holds: the
+// elapsed a reader sees has to be the elapsed the archive recorded, and a clock read in this package
+// would drift from the timestamps the pipeline stamped.
+func (a *agentState) runtime(now time.Time) string {
+	end := a.updated
+	if now.After(end) {
+		end = now
+	}
+	if a.started.IsZero() || !end.After(a.started) {
 		return "-"
 	}
-	d := a.updated.Sub(a.started).Round(time.Second)
+	d := end.Sub(a.started).Round(time.Second)
 	if d == 0 {
 		return "-"
 	}

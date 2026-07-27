@@ -79,18 +79,22 @@ cover both.
   It must stay that compact — four concurrent agents scrolling their full reasoning would run faster
   than anyone can read, and it would stop being the situational-awareness view it exists to be.
 - The tabs after it are per-agent full-detail scrollback. Those are the forensic views.
-- **The tab bar measures itself and collapses before it is clipped, and it gives things up in order of
-  what they are worth.** There is no horizontal scroll on that line, so clipping alone cuts the
-  rightmost tabs mid-word and a reader cannot tell how many panes exist or what is past the edge.
-  The order is: the separator padding first, then names one at a time from the left, then clipping as
-  a backstop. Padding is decoration and a name is information, so a bar that fits only by giving one
-  up gives up the decoration — spending a name to save two spaces per tab is the wrong trade, and
-  making it was a real defect. Names go from the left because panes fill left to right as a run goes
-  on, so the right-hand end is the recent work and the focused tab.
-  **The focused tab keeps its name at every width**, wherever it sits: its content is what fills the
-  pane below, and a bare token there would leave the one pane on screen unnamed.
-  Collapse the fewest that fit — dropping every name the moment the bar is one column over throws
-  away information nothing asked for.
+- **The tab bar measures itself and degrades before it is clipped.** There is no horizontal scroll on
+  that line, so clipping alone cuts the rightmost tabs mid-word and a reader cannot tell how many
+  panes exist or what is past the edge.
+  The rule is **collapse the fewest names that fit, and at each count keep the padding if it still
+  fits** — a search, not a one-way ladder. That ordering is what puts the padding ahead of the first
+  name, since a padded bar one name down is only tried after the tight bar with every name has
+  failed; it also lets the padding return once a further name has been spent, which is the right
+  trade, because two spaces per tab buys less than a word. Collapse the fewest that fit: dropping
+  every name the moment the bar is one column over throws away information nothing asked for.
+  Names go from the left, because panes fill left to right as a run goes on and the right-hand end
+  carries the recent work. Tab one is exempt entirely — `1 all` is four columns and is the view a reader
+  falls back to from anywhere, so it is never the name that gets spent.
+  **The focused tab keeps its name at every width the search can satisfy**, wherever it sits: its
+  content is what fills the pane below, and a bare token there would leave the one pane on screen
+  unnamed. Below that width the clip backstop cuts from the right and takes the focused name with
+  everything else — collapsing is what keeps that rare, not a guarantee it never happens.
   A verify group is named for what it covers rather than for its position — `verify ui`, not
   `verify 3` — since a row has one column and "ui" tells a reader more than a number does. The label
   spelling out every directory stays as the archived prompt's filename, where the space exists.

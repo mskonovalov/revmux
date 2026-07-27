@@ -27,7 +27,7 @@ func TestModel_combinedLines(t *testing.T) {
 	// four, not five: the findings event feeds the header count and the browser, but the done event a
 	// moment later carries the same number, and printing both puts it on consecutive lines
 	require.Len(t, lines, 4, "the stage, the start, one activity and the done line")
-	assert.Contains(t, lines[0], "stage find",
+	assert.Contains(t, lines[0], "find",
 		"a stage change names no agent and is indented to the same column as one that does")
 	assert.Equal(t, "16:02:11 "+roster()[0].Paint("bugs+impl")+"  started [bugs, impl]", lines[1])
 	assert.Equal(t, "16:02:12 "+roster()[1].Paint("codex")+"      tool: Grep", lines[2],

@@ -28,7 +28,7 @@ func TestProgress_line(t *testing.T) {
 		ev   pipeline.Event
 		want string
 	}{
-		{name: "stage", ev: pipeline.Event{Kind: pipeline.EventStage, Stage: "find"}, want: "16:02:11 stage find"},
+		{name: "stage", ev: pipeline.Event{Kind: pipeline.EventStage, Stage: "find"}, want: "16:02:11 find"},
 		{
 			name: "agent started names its lenses",
 			ev:   pipeline.Event{Kind: pipeline.EventAgentStarted, Agent: "bugs+impl", Text: "bugs, impl"},
@@ -109,7 +109,7 @@ func TestProgress_paint(t *testing.T) {
 		{
 			"a stage change belongs to no agent and is indented to the same column",
 			pipeline.Event{Kind: pipeline.EventStage, Stage: "find", At: progressAt},
-			"16:02:11            stage find",
+			"16:02:11            find",
 		},
 	}
 
@@ -155,7 +155,7 @@ func TestProgress_run(t *testing.T) {
 		pr.run(events)
 
 		assert.Equal(t, []string{
-			"16:02:11 stage find",
+			"16:02:11 find",
 			"16:02:11 " + painted("bugs") + "  started [bugs]",
 			"16:02:11 " + painted("bugs") + "  done, 1 findings",
 		}, strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n"))

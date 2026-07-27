@@ -86,7 +86,7 @@ func (pr *progress) line(ev pipeline.Event) string {
 	var what string
 	switch ev.Kind {
 	case pipeline.EventStage:
-		what = "stage " + ev.Stage
+		what = ev.Stage
 	case pipeline.EventAgentStarted:
 		what = "started"
 		if ev.Text != "" {

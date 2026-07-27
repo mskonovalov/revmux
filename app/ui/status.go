@@ -12,8 +12,8 @@ import (
 // statusTable is one row per agent — name, state, elapsed, last activity — under the run header and
 // a column heading, all of it inside a full-width rule.
 func (m Model) statusTable() string {
-	rows := make([]string, 0, len(m.agents)+3)
-	rows = append(rows, m.clip(m.header()), m.clip(m.columns()))
+	rows := make([]string, 0, len(m.agents)+4)
+	rows = append(rows, m.clip(m.header()), m.rule(), m.clip(m.columns()))
 	for _, a := range m.agents {
 		rows = append(rows, m.clip(m.agentRow(a)))
 	}
@@ -41,7 +41,7 @@ func (m Model) columns() string {
 func (m Model) agentRow(a *agentState) string {
 	name := a.spec.Paint(a.spec.Name + strings.Repeat(" ", m.nameWidth()-lipgloss.Width(a.spec.Name)))
 	state := m.stateStyle(a.state).Render(fmt.Sprintf("%-9s", a.state))
-	elapsed := m.style.muted.Render(fmt.Sprintf("%7s", a.runtime()))
+	elapsed := m.style.muted.Render(fmt.Sprintf("%7s", a.runtime(m.now)))
 	return name + "  " + state + "  " + elapsed + "  " + a.last
 }
 
@@ -51,7 +51,7 @@ func (m Model) header() string {
 	head := m.style.title.Render("revmux")
 	head += m.style.muted.Render(" · " + strconv.Itoa(len(m.agents)) + " agents")
 	if m.stage != "" {
-		head += m.style.muted.Render(" · stage ") + m.stage
+		head += m.style.muted.Render(" · ") + m.stage
 	}
 	if m.found > 0 {
 		head += m.style.muted.Render(" · ") + m.style.count.Render(strconv.Itoa(m.found)+" findings")

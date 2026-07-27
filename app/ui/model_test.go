@@ -115,7 +115,7 @@ func TestModel_apply(t *testing.T) {
 
 		assert.Equal(t, "find", m.stage)
 		require.Len(t, m.combined.entries, 1)
-		assert.Equal(t, combinedEntry{text: "stage find", at: at}, m.combined.entries[0])
+		assert.Equal(t, combinedEntry{text: "find", at: at}, m.combined.entries[0])
 		assert.Empty(t, m.agents[0].lines, "a stage change belongs to no agent")
 	})
 
@@ -260,7 +260,8 @@ func TestAgentState_runtime(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := &agentState{started: tt.started, updated: tt.updated}
-			assert.Equal(t, tt.want, a.runtime())
+			// its own last event as "now" — the elapsed a quiet agent shows when nothing else is running
+			assert.Equal(t, tt.want, a.runtime(tt.updated))
 		})
 	}
 }
@@ -320,5 +321,37 @@ func TestModel_closing(t *testing.T) {
 		auto := feed(t, New(ModelConfig{Roster: roster(), AutoExit: 5 * time.Second}), CompletedMsg{Report: report()})
 		assert.Contains(t, auto.View(), "closing in 5s")
 		assert.Contains(t, auto.View(), "any key to stay")
+	})
+}
+
+func TestAgentState_runtime_advancesWithTheRun(t *testing.T) {
+	// **an agent's own last event freezes its clock the moment it goes quiet**, which is exactly when
+	// a reader wants to know how long it has been quiet for. Measuring against the newest event time
+	// anywhere in the run makes every row advance whenever anything happens.
+	quiet := &agentState{started: at, updated: at.Add(5 * time.Second)}
+	assert.Equal(t, "5s", quiet.runtime(at.Add(5*time.Second)), "nothing else has happened yet")
+	assert.Equal(t, "40s", quiet.runtime(at.Add(40*time.Second)),
+		"another agent spoke at 40s, so this row shows how long this one has been silent")
+
+	t.Run("a stale now never rewinds a row", func(t *testing.T) {
+		// events from concurrent agents arrive out of order, so now can lag a row's own last event
+		assert.Equal(t, "5s", quiet.runtime(at.Add(time.Second)))
+	})
+
+	t.Run("the model tracks the newest event time it has seen", func(t *testing.T) {
+		m := feed(t, New(ModelConfig{Roster: roster()}),
+			event(pipeline.EventAgentStarted, "bugs+impl", "bugs"),
+			pipeline.Event{Kind: pipeline.EventAgentActivity, Agent: "codex", Text: "reading", At: at.Add(time.Minute)},
+			pipeline.Event{Kind: pipeline.EventAgentActivity, Agent: "codex", Text: "older", At: at.Add(time.Second)},
+		)
+		assert.Equal(t, at.Add(time.Minute), m.now, "an out-of-order event must not wind the run back")
+
+		var row string
+		for l := range strings.SplitSeq(m.statusTable(), "\n") {
+			if strings.Contains(l, "bugs+impl") {
+				row = l
+			}
+		}
+		assert.Contains(t, row, "1m0s", "the quiet agent's row advanced because another one spoke")
 	})
 }

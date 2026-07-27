@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -35,7 +36,7 @@ func TestModel_View(t *testing.T) {
 	)
 
 	out := m.View()
-	assert.Contains(t, out, "revmux · 2 agents · stage find", "the status table is on top")
+	assert.Contains(t, out, "revmux · 2 agents · find", "the status table is on top")
 	assert.Contains(t, out, "AGENT", "under a column heading")
 	assert.Contains(t, out, "▸ 1 all", "tabs are numbered from one, and the combined view is focused by default")
 	assert.Contains(t, out, "2 bugs+impl")
@@ -103,7 +104,7 @@ func TestModel_clip(t *testing.T) {
 
 func TestModel_paneHeight(t *testing.T) {
 	m := feed(t, New(ModelConfig{Roster: roster()}), tea.WindowSizeMsg{Width: 80, Height: 10})
-	assert.Equal(t, 3, m.paneHeight(), "the table, its heading, both rules and the tab bar take their rows first")
+	assert.Equal(t, 2, m.paneHeight(), "the table, its heading, all three rules and the tab bar take their rows first")
 	assert.Len(t, strings.Split(m.View(), "\n"), 10, "and the frame still fits the terminal exactly")
 
 	t.Run("a terminal too short for the table still renders a pane", func(t *testing.T) {
@@ -127,6 +128,7 @@ func TestModel_tabBar_collapsesWhenItCannotFit(t *testing.T) {
 		out := m.tabBar()
 		assert.LessOrEqual(t, lipgloss.Width(out), width, "the bar must fit the terminal, not be cut off by it")
 		assert.Contains(t, out, "7 verify ui", "the focused tab keeps its name at every width")
+		assert.Contains(t, out, "1 all", "and so does tab one, which is short and is where a reader falls back to")
 		return out
 	}
 
@@ -141,7 +143,7 @@ func TestModel_tabBar_collapsesWhenItCannotFit(t *testing.T) {
 		// padding is decoration and a name is information: giving up a name to save two spaces per tab
 		// is the wrong trade, and making it was the defect this pins
 		snug := bar(t, 120)
-		assert.Contains(t, snug, "1 all", "every name survives at a width the padded bar could not reach")
+		assert.Contains(t, snug, "2 bugs+impl", "every name survives at a width the padded bar could not reach")
 		assert.Contains(t, snug, "8 verify executor")
 		assert.NotContains(t, snug, "  │", "what was given up is the padding")
 	})
@@ -150,19 +152,20 @@ func TestModel_tabBar_collapsesWhenItCannotFit(t *testing.T) {
 		// panes fill left to right as a run goes on, so the right-hand end is the recent work and the
 		// names nearest the focused tab are the ones a reader is most likely looking for
 		narrow := bar(t, 90)
-		assert.NotContains(t, narrow, "bugs+impl", "the leftmost gives way first")
+		assert.NotContains(t, narrow, "bugs+impl", "tab two gives way first, since tab one is exempt")
 		assert.Contains(t, narrow, "3 arch+quality", "while everything that still fits keeps its name")
 		assert.Contains(t, narrow, "8 verify executor")
 
 		narrower := bar(t, 70)
-		assert.NotContains(t, narrower, "arch+quality", "another gives way as the terminal shrinks")
-		assert.Contains(t, narrower, "4 docs+tests", "one at a time, never all at once")
+		assert.NotContains(t, narrower, "arch+quality", "more give way as the terminal shrinks")
+		assert.NotContains(t, narrower, "docs+tests")
+		assert.Contains(t, narrower, "5 codex", "and it stops as soon as it fits, rather than clearing the bar")
 		assert.Contains(t, narrower, "8 verify executor")
 	})
 
 	t.Run("every tab stays reachable however far it collapses", func(t *testing.T) {
 		tiny := bar(t, 30)
-		for _, token := range []string{"1", "2", "3", "4", "5", "6", "8"} {
+		for _, token := range []string{"2", "3", "4", "5", "6", "8"} {
 			assert.Contains(t, tiny, token, "token %s must remain, or that pane cannot be reached", token)
 		}
 		assert.Contains(t, tiny, "7 verify ui",
@@ -199,4 +202,26 @@ func TestTabToken(t *testing.T) {
 			assert.Equal(t, -1, m0.tabIndex(k))
 		}
 	})
+}
+
+func TestModel_tabBar_clipBackstop(t *testing.T) {
+	// the one path where the width guarantee can actually break. Every other width is satisfied inside
+	// the search loop, where asserting the bar fits only re-checks the loop's own exit condition — the
+	// loop returns when it fits, so that assertion is tautological there and proves nothing.
+	wide := []prompt.AgentSpec{
+		{Name: "bugs+impl"}, {Name: "arch+quality"}, {Name: "docs+tests"}, {Name: "codex"},
+		{Name: "synthesis"}, {Name: "verify ui"}, {Name: "verify executor"},
+	}
+	for _, width := range []int{18, 12, 4, 1} {
+		t.Run(strconv.Itoa(width)+" columns is below anything the search can satisfy", func(t *testing.T) {
+			m := feed(t, New(ModelConfig{Roster: wide}), tea.WindowSizeMsg{Width: width, Height: 24})
+			m.view.tab = 6
+
+			out := m.tabBar()
+			assert.LessOrEqual(t, lipgloss.Width(out), width,
+				"the backstop must still hold the width, or the frame breaks its own shape")
+			assert.NotContains(t, out, "\n", "however narrow, the bar is one line")
+			assert.True(t, utf8.ValidString(out), "clipping must not cut a rune or a color sequence in half")
+		})
+	}
 }

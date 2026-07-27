@@ -22,23 +22,25 @@ func TestModel_statusTable(t *testing.T) {
 	)
 
 	rows := strings.Split(m.statusTable(), "\n")
-	require.Len(t, rows, 5, "a header, a column heading, one row per agent, and the closing rule")
-	assert.Equal(t, "revmux · 2 agents · stage find", rows[0])
-	assert.Contains(t, rows[1], "AGENT", "the column heading names what each column holds")
-	assert.Contains(t, rows[1], "ACTIVITY")
-	assert.Contains(t, rows[2], "running")
-	assert.Contains(t, rows[2], "9s", "elapsed comes off the event timestamps, not a clock")
-	assert.Contains(t, rows[2], "tool: Read", "the row shows the last activity")
-	assert.Contains(t, rows[3], "waiting", "an agent that has not reported yet is still listed")
-	assert.Contains(t, rows[3], "-", "and has no elapsed time")
+	require.Len(t, rows, 6,
+		"a header, the rule under it, a column heading, one row per agent, and the closing rule")
+	assert.Equal(t, m.rule(), rows[1], "the header is separated from the table rather than reading as its first row")
+	assert.Equal(t, "revmux · 2 agents · find", rows[0])
+	assert.Contains(t, rows[2], "AGENT", "the column heading names what each column holds")
+	assert.Contains(t, rows[2], "ACTIVITY")
+	assert.Contains(t, rows[3], "running")
+	assert.Contains(t, rows[3], "9s", "elapsed comes off the event timestamps, not a clock")
+	assert.Contains(t, rows[3], "tool: Read", "the row shows the last activity")
+	assert.Contains(t, rows[4], "waiting", "an agent that has not reported yet is still listed")
+	assert.Contains(t, rows[4], "-", "and has no elapsed time")
 }
 
 func TestModel_statusTable_color(t *testing.T) {
 	m := New(ModelConfig{Roster: roster()})
 	rows := strings.Split(m.statusTable(), "\n")
 
-	assert.Contains(t, rows[2], roster()[0].Paint("bugs+impl"), "an ANSI-named color reaches the row")
-	assert.Contains(t, rows[3], "\x1b[38;2;255;136;0m", "a hex color reaches it as truecolor")
+	assert.Contains(t, rows[3], roster()[0].Paint("bugs+impl"), "an ANSI-named color reaches the row")
+	assert.Contains(t, rows[4], "\x1b[38;2;255;136;0m", "a hex color reaches it as truecolor")
 
 	t.Run("names are padded before they are painted", func(t *testing.T) {
 		// the color sequence has no width: padding after painting would count it as if it did and
@@ -46,7 +48,7 @@ func TestModel_statusTable_color(t *testing.T) {
 		plain := strings.Split(New(ModelConfig{Roster: []prompt.AgentSpec{
 			{Name: "bugs+impl"}, {Name: "codex"},
 		}}).statusTable(), "\n")
-		assert.Equal(t, strings.Index(plain[2], "waiting"), strings.Index(plain[3], "waiting"))
+		assert.Equal(t, strings.Index(plain[3], "waiting"), strings.Index(plain[4], "waiting"))
 	})
 }
 
@@ -60,7 +62,7 @@ func TestModel_statusTable_header(t *testing.T) {
 		{
 			"a stage is named once it opens",
 			[]tea.Msg{pipeline.Event{Kind: pipeline.EventStage, Stage: "synthesis", At: at}},
-			"revmux · 2 agents · stage synthesis",
+			"revmux · 2 agents · synthesis",
 		},
 		{
 			"findings are counted across agents",

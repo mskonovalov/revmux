@@ -41,8 +41,9 @@ func (m Model) paneLines() []string {
 	return m.agentLines()
 }
 
-// paneHeight is what the chrome leaves for the pane: one row per agent plus five fixed lines — the
-// header, the column heading, the rule under the table, the tab bar and the rule under that.
+// paneHeight is what the chrome leaves for the pane: one row per agent plus the fixed lines counted by
+// chromeLines — the header, the rule under it, the column heading, the rule closing the table, the tab
+// bar and the rule under that.
 func (m Model) paneHeight() int { return max(1, m.view.height()-len(m.agents)-chromeLines) }
 
 // maxScroll is how far back the focused pane can be scrolled, zero when it all fits.
@@ -66,15 +67,18 @@ func (m Model) tabBar() string {
 	// clipping alone is not enough: it cuts the right-hand tabs off mid-word, so a reader cannot tell
 	// how many panes exist or what is hiding past the edge. There is no horizontal scroll on this line.
 	//
-	// **Collapse the fewest tabs that make it fit, taking them from the left.** Dropping every name the
-	// moment the bar is one column too wide throws away information nothing asked for, and the left is
-	// the right end to start: the panes fill left to right as the run goes on, so the newest work and
-	// the focused tab are both toward the right, and the names that survive longest are the ones a
-	// reader is most likely to be looking for.
-	// At each level the padding goes before another name does: padding is decoration and a name is
-	// information, so a bar that fits only by giving one up should give up the decoration. Spending
-	// them the other way round drops a name to save two spaces per tab, which is the wrong trade.
-	for n := 0; n <= len(names); n++ {
+	// **Collapse the fewest names that fit, and at each count keep the padding if it still fits.**
+	// That ordering is what makes the padding go before the first name, since a padded bar one name
+	// down is tried only after the tight bar with every name has failed — and it lets the padding come
+	// back once a further name has been spent, which is cheaper than it looks: two spaces per tab buys
+	// less than a word. Dropping every name the moment the bar is one column over throws away
+	// information nothing asked for.
+	//
+	// Names go from the left because panes fill left to right as a run goes on, so the right-hand end
+	// carries the recent work and the focused tab. Counting starts at tab two rather than tab one:
+	// "all" is four columns and it is the view a reader falls back to from anywhere, so spending it
+	// buys almost nothing and costs the one name most worth keeping.
+	for n := range names {
 		for _, tight := range []bool{false, true} {
 			if bar := m.tabRow(names, n, tight); lipgloss.Width(bar) <= m.view.width() {
 				return bar
@@ -85,12 +89,16 @@ func (m Model) tabBar() string {
 	return m.clip(m.tabRow(names, len(names), true))
 }
 
-// tabRow renders the bar with the leftmost collapse tabs reduced to their leading token — a digit for
-// the first nine panes and a letter after that. The focused tab always keeps its name, whatever its
-// position: its content is what fills the pane below, so a bare token there names nothing a reader can
-// see. tight additionally drops the padding around the separator.
+// tabRow renders the bar with collapse tabs reduced to their leading token — a digit for the first
+// nine panes and a letter after that — taken from tab two rightward, never from tab one.
+//
+// The focused tab always keeps its name, whatever its position: its content is what fills the pane
+// below, so a bare token there names nothing a reader can see. tight drops the padding around the
+// separator and the padding inside every cell with it.
 func (m Model) tabRow(names []string, collapse int, tight bool) string {
-	// the marker and the blank are the same width, so the names line up whichever tab is focused
+	// padded, the marker and the blank are the same width, so a name sits in the same column whichever
+	// tab is focused. The tight row trades that alignment away for the columns it saves: there the
+	// marker is one cell against no padding at all, so moving focus shifts everything to its right.
 	mark, pad, sep := "▸ ", "  ", "  │"
 	if tight {
 		mark, pad, sep = "▸", "", "│"
@@ -101,7 +109,9 @@ func (m Model) tabRow(names []string, collapse int, tight bool) string {
 			labels = append(labels, m.style.tabOn.Render(mark+n))
 			continue
 		}
-		if i < collapse {
+		// counted from tab two: index zero is "all", four columns and the view a reader falls back to
+		// from anywhere, so it is never the name that gets spent
+		if i > 0 && i <= collapse {
 			n, _, _ = strings.Cut(n, " ")
 		}
 		labels = append(labels, m.style.tabOff.Render(pad+n))
