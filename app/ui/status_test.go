@@ -65,20 +65,32 @@ func TestModel_statusTable_header(t *testing.T) {
 			"revmux · 2 agents · synthesis",
 		},
 		{
-			"findings are counted across agents",
+			"findings are counted across agents, and broken down by severity",
 			[]tea.Msg{
-				pipeline.Event{Kind: pipeline.EventFindings, Agent: "bugs+impl", At: at, Findings: []finding.Finding{{}, {}}},
-				pipeline.Event{Kind: pipeline.EventFindings, Agent: "codex", At: at, Findings: []finding.Finding{{}}},
+				pipeline.Event{Kind: pipeline.EventFindings, Agent: "bugs+impl", At: at, Findings: []finding.Finding{
+					{Severity: finding.Critical}, {Severity: finding.Minor}}},
+				pipeline.Event{Kind: pipeline.EventFindings, Agent: "codex", At: at, Findings: []finding.Finding{
+					{Severity: finding.Major}}},
 			},
-			"revmux · 2 agents · 3 findings",
+			"revmux · 2 agents · 3 findings (1 critical, 1 major, 1 minor)",
+		},
+		{
+			"a severity the model invented counts toward the total and is named nowhere",
+			[]tea.Msg{
+				pipeline.Event{Kind: pipeline.EventFindings, Agent: "bugs+impl", At: at, Findings: []finding.Finding{
+					{Severity: finding.Major}, {Severity: "invented"}}},
+			},
+			"revmux · 2 agents · 2 findings (0 critical, 1 major, 0 minor)",
 		},
 		{
 			"a synthesis row does not inflate the agent count's own findings total",
 			[]tea.Msg{
-				pipeline.Event{Kind: pipeline.EventFindings, Agent: "bugs+impl", At: at, Findings: []finding.Finding{{}, {}}},
-				pipeline.Event{Kind: pipeline.EventFindings, Agent: "synthesis", At: at, Findings: []finding.Finding{{}}},
+				pipeline.Event{Kind: pipeline.EventFindings, Agent: "bugs+impl", At: at, Findings: []finding.Finding{
+					{Severity: finding.Major}, {Severity: finding.Major}}},
+				pipeline.Event{Kind: pipeline.EventFindings, Agent: "synthesis", At: at, Findings: []finding.Finding{
+					{Severity: finding.Minor}}},
 			},
-			"revmux · 3 agents · 1 findings",
+			"revmux · 3 agents · 1 findings (0 critical, 0 major, 1 minor)",
 		},
 	}
 

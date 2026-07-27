@@ -91,7 +91,7 @@ type Model struct {
 	findings *findingsState
 	stage    string
 	now      time.Time // the newest event time seen, which is what every row's elapsed is measured against
-	found    int
+	found    tally
 	done     bool          // the run is over and the report is in
 	exitIn   time.Duration // what is left of the auto-exit countdown, zero when nothing is counting
 }
@@ -276,10 +276,42 @@ func (m *Model) agent(name string) *agentState {
 // finding twice and shows a number that is neither the raw total nor the merged one.
 func (m *Model) count(ev pipeline.Event) {
 	if m.rostered(ev.Agent) {
-		m.found += len(ev.Findings)
+		m.found.add(ev.Findings)
 		return
 	}
-	m.found = len(ev.Findings)
+	m.found = tally{}
+	m.found.add(ev.Findings)
+}
+
+// tally is the header's findings count broken down by severity. A bare total says how much there is to
+// read and nothing about whether it is worth reading now — one critical among twenty is a different
+// run from twenty minor, and the header is where that difference is cheapest to show.
+type tally struct {
+	total, critical, major, minor int
+}
+
+func (t *tally) add(fs []finding.Finding) {
+	for _, f := range fs {
+		t.total++
+		switch f.Severity {
+		case finding.Critical:
+			t.critical++
+		case finding.Major:
+			t.major++
+		case finding.Minor:
+			t.minor++
+		}
+	}
+}
+
+// String is the same shape the prior-round inventory uses, so a reader meets one vocabulary rather
+// than two. A severity the model invented is counted in the total and named nowhere, which is what
+// keeps the parts from ever exceeding it.
+func (t tally) String() string {
+	return strconv.Itoa(t.total) + " findings (" +
+		strconv.Itoa(t.critical) + " critical, " +
+		strconv.Itoa(t.major) + " major, " +
+		strconv.Itoa(t.minor) + " minor)"
 }
 
 // rostered reports whether the name is a roster entry rather than a stage process. The roster is the

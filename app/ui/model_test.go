@@ -92,7 +92,7 @@ func TestModel_apply(t *testing.T) {
 			Findings: []finding.Finding{{Title: "one"}, {Title: "two"}}}
 		m := feed(t, New(ModelConfig{Roster: roster()}), event(pipeline.EventAgentStarted, "codex", ""), ev)
 
-		assert.Equal(t, 2, m.found)
+		assert.Equal(t, 2, m.found.total)
 		assert.Equal(t, stateRunning, m.agents[1].state, "emitting findings is not finishing")
 		assert.Equal(t, "2 findings emitted", m.agents[1].last)
 	})
@@ -105,7 +105,7 @@ func TestModel_apply(t *testing.T) {
 		m := feed(t, New(ModelConfig{Roster: roster()}),
 			found("bugs+impl", 5), found("codex", 4), found("synthesis", 3))
 
-		assert.Equal(t, 3, m.found, "synthesis merged what the finders reported, so its count supersedes theirs")
+		assert.Equal(t, 3, m.found.total, "synthesis merged what the finders reported, so its count supersedes theirs")
 		assert.Contains(t, m.header(), "3 findings")
 	})
 

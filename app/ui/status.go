@@ -53,8 +53,8 @@ func (m Model) header() string {
 	if m.stage != "" {
 		head += m.style.muted.Render(" · ") + m.stage
 	}
-	if m.found > 0 {
-		head += m.style.muted.Render(" · ") + m.style.count.Render(strconv.Itoa(m.found)+" findings")
+	if m.found.total > 0 {
+		head += m.style.muted.Render(" · ") + m.style.count.Render(m.found.String())
 	}
 	return head + m.closing()
 }

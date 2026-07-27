@@ -35,7 +35,7 @@ func TestModel_combinedLines(t *testing.T) {
 	assert.Equal(t, "16:02:12 "+roster()[1].Paint("codex")+"      tool: Grep", lines[2],
 		"chronological, not grouped by agent, and the shorter name is padded out to the longest")
 	assert.Contains(t, lines[3], "done, 1 findings")
-	assert.Equal(t, 1, m.found, "the findings event still feeds the header count")
+	assert.Equal(t, 1, m.found.total, "the findings event still feeds the header count")
 }
 
 func TestModel_combinedLines_alignsOnTheWidestName(t *testing.T) {
