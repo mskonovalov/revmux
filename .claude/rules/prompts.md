@@ -39,7 +39,7 @@ agents:
   - {name: arch+quality, lenses: [architecture, quality], color: magenta}
   - {name: docs+tests,   lenses: [docs, tests],           color: green}
   - {name: codex, executor: codex, lenses: [adversarial],
-     model: gpt-5.6-sol, effort: xhigh, color: yellow}
+     model: gpt-5.6-sol, effort: high, color: yellow}
 ---
 ```
 

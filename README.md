@@ -218,7 +218,7 @@ agents:
   - {name: arch+quality, lenses: [architecture, quality], color: magenta}
   - {name: docs+tests,   lenses: [docs, tests],           color: green}
   - {name: codex, executor: codex, lenses: [adversarial],
-     model: gpt-5.6-sol, effort: xhigh, color: yellow}
+     model: gpt-5.6-sol, effort: high, color: yellow}
 ---
 ```
 
@@ -306,6 +306,7 @@ The runtime knobs below also read from the config file, under the same name as t
 | `--verify-groups=<n>` | `verify-groups` | `6` | cap on the number of verifier groups |
 | `--tasks-dir=<dir>` | `tasks-dir` | `./.revmux/tasks` | root directory holding task directories |
 | `--keep-runs=<n>` | `keep-runs` | `10` | how many runs to keep per task |
+| `--auto-exit=<d>` | `auto-exit` | `0s` | close the terminal UI this long after the report arrives; `0` leaves it open until a key is pressed |
 | `--profile=<name>` | `profile` | `comprehensive` | profile naming the roster to run |
 
 One subcommand: `revmux config` prints the resolved configuration as JSON and exits.
@@ -387,19 +388,19 @@ pane below it. The roster fills it first, and the synthesis and verify processes
 they start, so the table shows what is running rather than only what the profile named. The findings count
 in the header follows the same logic: the finders add to it, and a later stage's merged count replaces it.
 
-Tab `0 · all` is the combined chronological view and is focused by default; tabs `1`-`9` are per-agent
-full-detail scrollback including thinking. On completion the model switches to the findings browser, and the
+Tab `1 all` is the combined chronological view and is focused by default; the tabs after it are per-agent
+full-detail scrollback. On completion the model switches to the findings browser, and the
 agent tabs stay reachable so a reader can check why a finding was raised.
 
 | keys | action |
 |---|---|
 | `tab` / `shift+tab`, `←` `→`, `h` `l` | switch pane |
-| `0`-`9` | focus that pane directly |
+| `1`-`9`, then a letter | focus that pane directly; the token is shown on the tab, and letters already bound to something else are skipped |
 | `f` | jump to the findings browser |
 | `↑` `↓`, `k` `j` | scroll, or move the cursor in the browser |
 | `pgup` `pgdn`, `ctrl+b` `ctrl+f` | page |
 | `home` `end`, `g` `G` | top, bottom |
-| `enter` | expand or collapse a finding |
+| `enter` | fold a finding down to its summary, or open it back up |
 | `/` | filter findings; `enter` accepts, `esc` clears |
 | `q`, `esc`, `ctrl+c` | quit |
 
@@ -447,7 +448,7 @@ $ revmux --stagger-delay=45s config
         {"name": "bugs+impl", "lenses": ["bugs", "impl"], "executor": "claude",
          "model": "opus", "effort": "high", "color": "6", "color_name": "cyan"},
         {"name": "codex", "lenses": ["adversarial"], "executor": "codex",
-         "model": "gpt-5.6-sol", "effort": "xhigh", "color": "3", "color_name": "yellow"}
+         "model": "gpt-5.6-sol", "effort": "high", "color": "3", "color_name": "yellow"}
       ]
     }
   ],

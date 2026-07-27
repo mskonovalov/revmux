@@ -25,10 +25,31 @@ Measured directly against the real CLI. Do not re-derive, and do not assume any 
   Use it. It is strictly better than matching error strings.
 - The `result` event also carries per-model `usage`, `ttft_ms` and `permission_denials`.
   Read the token counts off `usage` — never estimate or recompute them.
+- **`permission_denials` must be reported, and it is the one field whose absence is silent.**
+  Each entry is `{tool_name, tool_use_id, tool_input}` — `tool_input.command` for a Bash denial.
+  A refused tool call does not fail the agent: it writes a sentence in its own prose
+  ("Bash is denied in this mode, so I'll work from the files directly") and continues with less,
+  so the review narrows to whatever the permission layer allowed and still returns a full-looking
+  report. Unread, the only trace is that sentence in one agent's scrollback.
+  It goes out as `EventInfo`, for the same reason the codex banner does — it must not release the
+  stagger gate. See `.claude/rules/pipeline.md`.
 - **`--model` can be silently ignored.**
   A run with `--model haiku` actually executed `claude-sonnet-4-6`.
   Always read the model back from `modelUsage` in the result event and report what actually ran.
   A roster full of per-agent model pins is a claim, not a fact, until it is verified this way.
+- **`--json-schema` makes the model silent unless the prompt asks otherwise, and that has to be asked for.**
+  The schema forces every conclusion through a `StructuredOutput` tool call, so a review agent's text
+  blocks come back all but empty and the run log is a wall of tool names with no sign of what is being
+  investigated. Its thinking is no substitute: the blocks arrive with `thinking` empty and only a
+  `signature`, so the plaintext never reaches the CLI at all. The stream carries no
+  `content_block_delta` either, so nothing else streams incrementally — text blocks are the only
+  live channel there is.
+  Measured on one task with one schema, run twice: bare, 2 text blocks against 8 tool calls; with the
+  narration instruction appended, 7 text blocks against 7 tool calls, same 8 findings. It costs
+  nothing and it is the only way to get a claude agent to say what it is doing.
+  That is `ClaudeNarrationContract`, appended by the executor and exported so the archive records it —
+  the same shape and the same reason as `CodexOutputContract`. Codex needs none of it; its reasoning
+  arrives in the rollout.
 - Even a trivial call carries substantial input tokens — system prompt, project instructions, skills listing.
   Worth reporting per agent, which is all revmux does with it.
 
@@ -37,17 +58,32 @@ Measured directly against the real CLI. Do not re-derive, and do not assume any 
 ```
 claude --print --output-format stream-json --verbose
        --model <m> --effort <e>
-       --permission-mode dontAsk
-       --disallowedTools "Edit,Write,NotebookEdit"
+       --permission-mode auto
+       --disallowedTools "Edit,Write"
        --disable-slash-commands
        --no-session-persistence
        --json-schema <findings schema>
        < prompt
 ```
 
-- `--permission-mode dontAsk` so a headless run never blocks on a permission prompt.
+- `--permission-mode auto` so a headless run never blocks on a permission prompt.
+  **Not `dontAsk`, which was measured and is wrong here.** `dontAsk` denies anything that would have
+  prompted, and revmux passes no `--allowedTools`, so every Bash call an agent makes is refused —
+  including the `git diff` the whole design depends on, since `CLAUDE.md` has agents run diff commands
+  themselves. The agent does not fail: it says "Bash is denied in this mode" and reads files instead,
+  so a diff-scoped review silently becomes a whole-tree review with the delta guessed. Measured
+  directly: `dontAsk` with no allowlist denies, `auto` allows.
 - `--disallowedTools` removes the edit tools from the agent's context — revmux never modifies source.
-  This is best-effort, not a sandbox; the prompt must state the constraint too.
+  This is best-effort, not a sandbox; the prompt must state the constraint too, and every shipped
+  profile and stage prompt does.
+  **Keep this list to the edit tools. Do not grow it into a Bash denylist.**
+  `auto` was measured allowing `echo ... > main.go` and `rm -f main.go` to delete a tracked file, so
+  the exposure is real — but a shell can write through a redirect, which is syntax rather than a
+  command and cannot be denied by name at all, so a Bash denylist buys a fraction of a guarantee while
+  costing real capability. `Bash(sed:*)` was tried and reverted: `sed -n '10,20p'` is an ordinary
+  read-only way to print a range, and denying it takes investigation away to stop nothing.
+  The read-only guarantee here rests on the prompt and on the agent having no reason to write.
+  Anything stronger needs a read-only checkout, which is a different design.
 - `--disable-slash-commands` prevents a lens agent invoking a skill that spawns its own subagent,
   which would put an agent inside the agent.
   The call site cannot prevent that any other way — it is a property of the invoked skill, not of the caller.
@@ -74,12 +110,14 @@ Two independent timers catching two different failures.
   and reset it on **every output line** through a touch closure passed into the stream parser.
   When the derived context is canceled but the parent context is alive, that is an idle timeout, not an error —
   set `Result.IdleTimedOut` so the caller can retry rather than fail the run.
-- **Both streams touch it — stderr is liveness, not noise.**
-  Codex reports its reasoning and every tool call on stderr and writes stdout only when it answers,
-  so a watchdog ticking on stdout alone kills a healthy codex run at the idle timeout, retries it into the
-  same wall, and degrades the source that was working.
-  The two touches are serialized: stdout is read on the calling goroutine and stderr in its own,
-  and a `Timer` implementation is not required to tolerate two callers.
+- **Every source of life touches it — stdout, stderr and the rollout.** None of the three is noise.
+  Codex writes stdout only when it answers, and a modern one streams no reasoning on stderr either: on
+  a long review both pipes are silent for minutes while only its rollout file moves. A watchdog missing
+  any of the three kills a healthy codex run at the idle timeout, retries it into the same wall, and
+  degrades the source that was working. Observed for stdout-only, then observed again for pipes-only.
+  The touches are serialized against each other: stdout is read on the calling goroutine, stderr in its
+  own, and the rollout tail in a third, so a `Timer` implementation is not required to tolerate
+  concurrent callers.
   The hard timeout is what bounds a process that chatters forever without answering.
 - **Hard timeout** is a plain `context.WithTimeout` over the whole call,
   catching the slow-but-alive case where the agent keeps emitting output forever.
@@ -97,6 +135,39 @@ Two independent timers catching two different failures.
   is either slow or flaky. A recorded fixture that simply ends is EOF, not a stall — proving the watchdog
   fires needs a fake runner that emits fixture bytes and then blocks until cancellation, plus a clock the
   test advances itself.
+
+### Display width belongs to the renderers
+
+The decoder emits text; how much of it fits is decided where the terminal width is known. `textLimit`
+is a sanity bound against a pathological block, not a column count.
+
+**Both renderers clip, and that is what makes this safe.** `app/ui` clips through lipgloss against the
+width bubbletea reports; `app/progress.go` has no such width reported to it, so it measures the terminal
+itself — `COLUMNS` first, then `term.GetSize` on its own writer, then a fallback for a redirected
+stderr. Without that half, moving the cut out of the decoder just replaces a bad truncation with an
+unbounded line on stderr.
+
+Cutting in the decoder destroys what no renderer can recover: a Bash command lost its tail at a
+constant 60 columns however wide the terminal was, and an assistant block cut at its first line lost
+everything after a lead-in — a closing summary reduced to "Summary of what I checked and found:".
+A multi-line block is therefore **flattened**, not truncated, since an event is one line by
+construction. The one deliberate exception is `rolloutTitle`, which keeps only the first line because
+some codex versions append a whole paragraph after the bold title.
+
+**Thinking is not progress and is never emitted.** The blocks arrive with `thinking` empty and only a
+`signature`, so a bare "thinking" line reported nothing at all while taking a line of the log. It
+existed as a heartbeat for a stream with no other sign of life; the narration contract is what fills
+that role now.
+
+### Exit codes are not log lines
+
+`exit 0` is emitted nowhere. The pipeline emits its own done event carrying what the agent actually
+produced, and a bare "exit 0" beside it is the last thing a reader sees under an agent that just
+finished — pure noise in the one position that should carry the outcome.
+Only a non-zero exit emits `EventFinished`, where the code is the point.
+
+That makes the event's absence meaningful, so a test asserting anything about reaping order needs a
+failing process to have something to order against. The `fail` helper mode exists for that.
 
 ### Process groups
 
@@ -134,18 +205,48 @@ Tee before parse, not after — a stream that fails to parse is exactly the one 
 
 Codex is a peer executor, not a special case in the pipeline — but the executor itself is genuinely different.
 
-- **Codex has no `stream-json` equivalent.**
+- **Codex has no `stream-json` equivalent, and its stdout stays empty until it answers.**
+  A review agent spends minutes reading and reasoning with not one byte on stdout, so anything watching
+  that stream alone shows a banner and then nothing for the whole review.
   Assistant text and tool dispatch land only in its session rollout file, whose path derives from a session id
-  printed in the stderr header banner.
-  If per-agent activity for codex is ever wanted in the TUI, tail that rollout — do not try to parse stderr prose.
+  printed in the stderr header banner. `app/executor/rollout.go` tails it: stderr is mined for the id and
+  nothing else, the file is found by globbing `~/.codex/sessions/*/*/*/rollout-*-<id>.jsonl`, and the tail
+  outlives the process so the last reasoning step and the answer are not lost.
+  Never parse stderr prose for activity — that is what the rollout exists to spare.
+- **Take reasoning from `response_item`/`reasoning` only.**
+  Codex writes an `event_msg`/`agent_reasoning` record for the same step as well, so handling both reports
+  every step twice. Only the first line of a summary is used: some versions append a whole paragraph after
+  the bold title, and forwarding it reintroduces the flood the rollout is read to avoid.
 - **Codex has no `--json-schema`.**
   The executor appends its own "return only JSON matching this shape" contract to the composed prompt,
   rendering `Request.Schema` inline. That field is set for **both** executors and carries the running
   stage's schema, so a codex entry running synthesis or verify asks for that stage's shape.
   Hardcoding a finder-shaped contract here breaks the moment a stage prompt declares `executor: codex`.
   The wrapper text lives in the executor, never in a lens file, which must stay executor-agnostic.
-- The idle watchdog ticks on raw stdout writes rather than parsed events — **and on stderr lines**,
-  which for codex is the only tick a long run gets before it answers. See the idle-timeout section above.
+- The idle watchdog ticks on raw stdout writes rather than parsed events, **on stderr lines, and on
+  rollout records**. All three, and the third is not optional.
+  A modern codex streams no reasoning on stderr at all: during a long review both pipes are silent for
+  minutes while the rollout fills with the steps it is working through. A watchdog reading only the
+  pipes kills a healthy run at the idle timeout, retries it into the same wall and degrades the source
+  that was working — observed doing exactly that, with both tees zero bytes and the rollout showing
+  the agent reasoning two minutes before it was killed.
+  `proc` cannot see the rollout, so `runSpec.shareTouch` hands the touch out and the tail calls it
+  **whenever the file advances** — never from the sink.
+  Touching from the sink ties liveness to the display filter: a `function_call_output`, an `event_msg`
+  or a reasoning record with an empty summary all move the file without producing an event, so codex
+  could be demonstrably working and still starve the timer.
+  The touch reaches the tail through an atomic, because the tail starts before `proc.run` exists to
+  hand it over; the goroutine blocks on the session id first, so it is always stored before anything
+  is read.
+  **`Codex.Run` withdraws it before canceling the tail, and that order is the fix — not a comment on
+  the final pass.** `run` stops the idle timer on its way out while the tail is still looping, so the
+  pass at the top of that loop can otherwise re-arm a timer belonging to a finished run. Suppressing
+  the touch only on the tail's own last pass leaves that window wide open.
+  **A test must pin both directions of the advance guard.** Asserting only that the timer *is* reset
+  passes a tail that touches on every poll — and a watchdog fed by its own polling never fires at all,
+  which is invisible from outside. An empty rollout gives the negative case with no timing at all.
+  A test for this must isolate the rollout as the only possible source of a reset — empty stdout and a
+  single stderr line — or the pipes' own touches drown the signal and it passes with the wiring removed.
 - Extraction must tolerate JSON wrapped in surrounding prose; finding no JSON is a degraded source, not a crash.
 - Codex stderr is noisy — startup banner, exec echo, hook lifecycle lines, reasoning stream.
   Forward at most the resolved `model:` / `sandbox:` / `reasoning effort:` header lines, once per process, and suppress the rest.

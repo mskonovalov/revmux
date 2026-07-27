@@ -161,12 +161,19 @@ instead would be wrong twice over, since it drops events and has a single reader
 First activity means an assistant turn for claude and the first raw stdout write for codex,
 so a codex leader still releases the rest without waiting out the full delay.
 
-**It must be `EventActivity` alone, never any event the sink happens to receive.**
-`proc` emits `EventStarted` the instant the fork succeeds, before a byte of output has been read, so a sink
-releasing on every kind opens the gate on every launch: nothing is staggered, the delay is dead, and the
-codex first-chunk signal that exists solely to release the roster never matters.
-The gate is there to prove the leader can actually reach a model before three more processes try —
-a started process proves only that the binary exists.
+**It must be model output alone — `EventActivity` or `EventProgress` — never any event the sink happens
+to receive.** Both of those mean the process produced an assistant turn: prose in one case, a tool call
+in the other. An agent that opens by reading twenty files says nothing for its first minute, so gating
+on prose alone would leave `stagger_delay` as the only release path for the whole roster.
+
+Everything else is excluded, and `proc` therefore emits **nothing** when the fork succeeds. It once
+announced the binary there, and that one event was enough to latch the gate before a byte had been
+read: nothing was staggered, the delay was dead, and the codex first-chunk signal that exists solely to
+release the roster never mattered. The gate is there to prove the leader can actually reach a model
+before three more processes try — a started process proves only that the binary exists.
+
+A test that stubs a kind nothing produces guards nothing. Pin this with an event the executors really
+emit, `EventInfo` being the earliest of them.
 `EventRateLimit` and `EventFinished` are excluded for the same reason: a throttled leader releasing the
 roster hands the limit to every follower, and by the time one exits the delay is the honest signal.
 
