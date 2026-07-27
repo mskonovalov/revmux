@@ -321,109 +321,105 @@ Exports (justification per item: who outside the package calls this?):
 - Create: `app/task/task.go`
 - Create: `app/task/task_test.go`
 
-- [ ] create `app/task/task.go` with the layout constants, `Meta` (yaml + json tags) and `CheckName`
-- [ ] implement `Load` reading `<dir>/task.md`, reusing the front-matter split pattern from
+- [x] create `app/task/task.go` with the layout constants, `Meta` (yaml + json tags) and `CheckName`
+- [x] implement `Load` reading `<dir>/task.md`, reusing the front-matter split pattern from
       `app/prompt/prompt.go:267`, with `dec.KnownFields(true)` so an unknown key is a load-time error
-- [ ] a missing `task.md` returns a zero `Meta` and no error; a malformed one is an error
-- [ ] write tests for `Load`: full front matter, partial, body-only with no front matter, absent file,
+- [x] a missing `task.md` returns a zero `Meta` and no error; a malformed one is an error
+- [x] write tests for `Load`: full front matter, partial, body-only with no front matter, absent file,
       unknown key rejected, malformed YAML rejected
-- [ ] write tests for `CheckName`: empty, absolute, separator, `..`, leading dot, valid
-- [ ] run tests — must pass before task 2
+- [x] write tests for `CheckName`: empty, absolute, separator, `..`, leading dot, valid
+- [x] run tests — must pass before task 2
 
 ### Task 2: archive — failing tests for the new layout (TDD)
 
 **Files:**
 - Modify: `app/archive/archive_test.go`
 
-- [ ] write a test that a round reached through a symlink is refused
-- [ ] write a test that a round already holding `manifest.json` is refused as already-run
-- [ ] write a test that a round containing only `input/` is accepted
-- [ ] write a test that a missing round errors with a message naming the round to create
-- [ ] write a test that a missing `input/` errors naming the path the caller must create
-- [ ] write a test that `New` refuses the old layout (`scope.md` or `runs/` at task level)
-- [ ] run tests — they MUST fail, proving they exercise the new behaviour before it exists
+- [x] write a test that a round reached through a symlink is refused
+- [x] write a test that a round already holding `manifest.json` is refused as already-run
+- [x] write a test that a round containing only `input/` is accepted
+- [x] write a test that a missing round errors with a message naming the round to create
+- [x] write a test that a missing `input/` errors naming the path the caller must create
+- [x] write a test that `New` refuses the old layout (`scope.md` or `runs/` at task level)
+- [x] run tests — they MUST fail, proving they exercise the new behaviour before it exists
 
-### Task 3: archive — `New` for the round layout
+### Task 3: the round layout, landing atomically
 
-**Files:**
-- Modify: `app/archive/archive.go`
-- Modify: `app/artifacts.go`
+**Why this is one task.** Tasks 3-6 of the original plan could not land separately, and the attempt
+proved it: `New` refusing a task that holds `runs/` breaks `Prune`'s own fixtures, which build
+`<task>/runs/<round>` via `olderRun` (`archive_test.go:811`) and then call `New`. Repointing the prune
+handle at the task directory makes whole rounds deletion candidates, and `TestArchive_Prune`'s "keep 0
+leaves every caller-written file" assertion could then only pass by being weakened. Meanwhile
+`archive.History` reads `filepath.Join(taskDir, runsDir)` (`history.go:45`) and the `app` tests build
+task-level `scope.md` (`artifacts_test.go:69`). None of these four can leave `go test ./...` green
+alone, so they land in one commit.
 
-- [ ] drop `runsDir`; the round is a direct child of the task directory
-- [ ] close the task handle inside `New` as today; with pruning gone nothing below needs it
-- [ ] `Lstat` the round entry through the task handle and refuse a symlink before opening
-- [ ] `OpenRoot` the round, then `checkHandle` it against the task handle
-- [ ] require `input/` to exist, erroring with the path the caller must create
-- [ ] create `manifest.json` with `O_CREATE|O_EXCL` as the atomic already-ran check
-- [ ] keep a structural old-layout backstop (`scope.md` or `runs/` at task level); the user-facing
-      message fires earlier, in Task 5
-- [ ] rename `checkRunsEntry` → `checkRoundEntry`; there is no `runs` entry left to check
-- [ ] delegate `checkComponent` to `task.CheckName`
-- [ ] replace `manifestFileName` in `app/artifacts.go` with `task.ManifestFile`; `reportFileName` and
-      `findingsFileName` stay local, since only `package main` writes them
-- [ ] refresh godoc naming `runs/`: package doc, `Opts`, `Archive` (including the handle field
-      comment), `New`, `Close`
-- [ ] run the Task 2 tests — must now pass
-
-### Task 4: remove pruning entirely
-
-Deletes revmux's only destructive primitive. Everything here is removal — nothing replaces it.
+**Starting point.** Uncommitted work already in the tree implements the `New` half against the plan's
+handle sequence; a copy and a patch are at
+`/private/tmp/claude-502/-Users-umputun-dev-umputun-revmux/2f0d244c-e7aa-48db-80b9-266048def49a/scratchpad/task3-archive/`.
+Build on it — do not discard it.
 
 **Files:**
 - Modify: `app/archive/archive.go`
 - Modify: `app/archive/archive_test.go`
-- Modify: `app/config.go`
-- Modify: `app/main.go`
-- Modify: `app/defaults/config`
-
-- [ ] delete `Prune`, `remove`, `clear`, `clearDir`, `clearSub`, `enumerated`, `runPath` and `runEntry`
-- [ ] drop the `keep` field from `Archive` and `Keep` from `Opts`
-- [ ] delete the `--keep-runs` flag, its `ini-name`, and its entry in `app/defaults/config`
-- [ ] remove the `Prune()` call site and its warn-but-do-not-fail error handling from `app/main.go`
-- [ ] delete the pruning tests rather than adapting them — the primitive is gone, so a test kept alive
-      against a shim tests the harness
-- [ ] confirm the remaining archive suite still covers symlink refusal and handle identity in `New`
-- [ ] run tests — must pass before task 5
-
-### Task 5: context resolution from `input/`
-
-**Files:**
-- Modify: `app/config.go`
-- Modify: `app/main.go`
-- Modify: `app/config_test.go`
-
-- [ ] `resolveContext` reads `<task>/<run>/input/{scope.md,goal.md,profile.md,context/}` via `app/task`
-- [ ] **detect the old layout here** (`scope.md` or `runs/` at task level) and error naming both shapes.
-      `resolveContext` runs before `archive.New`, so a check only in the archive is unreachable from the
-      CLI and the migration message would never fire
-- [ ] `reviewContext.TaskDir` stays the **task** directory — `archive.History` enumerates sibling rounds
-      from it. Making it the round directory yields an empty inventory with no error
-- [ ] an omitted `--run` is a load-time error naming the round and the `revmux new` call that creates it
-- [ ] delete `runName` and `runTimeFormat`; `main.go:132` reads `o.opts.Run` directly and drops the
-      `executor.Clock` argument
-- [ ] `checkNames` errors on an empty `--run` instead of returning nil; delegate to `task.CheckName`
-- [ ] `resolveContext` gains no create-on-missing fallback
-- [ ] write tests: each file resolved from `input/`, missing/empty `scope.md` errors, absent optionals
-      resolve to the placeholder, omitted `--run` errors, old layout errors naming both shapes
-- [ ] run tests — must pass before task 6
-
-### Task 6: prior-round inventory without `runs/`
-
-**Files:**
 - Modify: `app/archive/history.go`
 - Modify: `app/archive/history_test.go`
+- Modify: `app/artifacts.go`
+- Modify: `app/artifacts_test.go`
+- Modify: `app/config.go`
+- Modify: `app/config_test.go`
+- Modify: `app/main.go`
 
-- [ ] enumerate sibling round directories under the task directory, skipping `task.md` and any directory
-      without `manifest.json`
-- [ ] inventory line unchanged: name, when it ran, counts by severity, degraded sources
-- [ ] refresh the `History` godoc, which describes "the `runs/` path plus one line per round"
-- [ ] write tests: rounds discovered without `runs/`, `task.md` not listed, a stray directory not listed,
-      first round omits the block entirely
-- [ ] write the regression test for the silent failure: with a prior round present, the block resolved
-      from `reviewContext.TaskDir` is non-empty
-- [ ] run tests — must pass before task 7
+**3a — remove pruning** (do this first; it unblocks the rest)
 
-### Task 7: `revmux new` subcommand
+- [x] delete `Prune`, `remove`, `clear`, `clearDir`, `clearSub`, `enumerated`, `runPath`, `runEntry`
+- [x] drop the `keep` field from `Archive` and `Keep` from `Opts`
+- [x] delete the `--keep-runs` flag, its `ini-name`, and its entry in `app/defaults/config`
+- [x] remove the `Prune()` call site and its warn-but-do-not-fail handling from `app/main.go`
+- [x] delete `TestArchive_Prune`, `TestArchive_clear` and the `olderRun`/`mustLstat` helpers they own —
+      the primitive is gone, so keeping them against a shim would test the harness
+
+**3b — `New` for the round layout**
+
+- [x] drop `runsDir`; the round is a direct child of the task directory
+- [x] close the task handle inside `New`; with pruning gone nothing below needs it
+- [x] `Lstat` the round entry through the task handle and refuse a symlink before opening
+- [x] `OpenRoot` the round, then `checkHandle` it against the task handle
+- [x] require `input/` to exist, erroring with the path the caller must create
+- [x] create `manifest.json` with `O_CREATE|O_EXCL` as the atomic already-ran check
+- [x] refuse the old layout with an error containing `old layout` plus the offending entry name
+- [x] rename `checkRunsEntry` -> `checkRoundEntry`; delegate `checkComponent` to `task.CheckName`
+- [x] replace `manifestFileName` in `app/artifacts.go` with `task.ManifestFile`
+- [x] refresh godoc naming `runs/`: package doc, `Opts`, `Archive`, `New`, `Close`
+
+**3c — context resolution from `input/`**
+
+- [x] `resolveContext` reads `<task>/<run>/input/{scope.md,goal.md,profile.md,context/}` via `app/task`
+- [x] detect the old layout here too and error naming both shapes — `resolveContext` runs before
+      `archive.New`, so a check only in the archive is unreachable from the CLI
+- [x] `reviewContext.TaskDir` stays the **task** directory; `archive.History` enumerates rounds from it
+- [x] an omitted `--run` is a load-time error naming the round and the `revmux new` call that creates it
+- [x] delete `runName` and `runTimeFormat`; `main.go` reads `o.opts.Run` and drops the `Clock` argument
+- [x] `checkNames` errors on an empty `--run`; delegate to `task.CheckName`
+- [x] update the `app` test fixtures that build task-level `scope.md` to the round layout
+
+**3d — prior-round inventory**
+
+- [x] `History` enumerates sibling round directories under the task directory, skipping `task.md` and
+      any directory without `manifest.json`
+- [x] inventory line unchanged: name, when it ran, counts by severity, degraded sources
+- [x] refresh the `History` godoc, which describes "the `runs/` path plus one line per round"
+- [x] regression test for the silent failure: with a prior round present, the block resolved from
+      `reviewContext.TaskDir` is non-empty
+
+**3e — validate the whole change**
+
+- [x] `TestNew_roundLayout`'s seven subtests pass
+- [x] `go test ./... -race` green across every package
+- [x] `golangci-lint run --max-issues-per-linter=0 --max-same-issues=0` reports 0 issues
+- [x] no test was deleted except the pruning ones named in 3a, and none was weakened
+
+### Task 4: `revmux new` subcommand
 
 **Design Contract:**
 
@@ -455,21 +451,21 @@ Exports (justification per item: who outside the package calls this?):
 - Create: `app/newcmd.go`
 - Create: `app/newcmd_test.go`
 
-- [ ] add `Opts`, `Paths` and `Scaffold` to `app/task`, creating task dir, `task.md` template, round dir
+- [x] add `Opts`, `Paths` and `Scaffold` to `app/task`, creating task dir, `task.md` template, round dir
       and `input/`, reporting which were created
-- [ ] ship the `task.md` template fully commented out, mirroring `initConfig` (config.go:468); never
+- [x] ship the `task.md` template fully commented out, mirroring `initConfig` (config.go:468); never
       overwrite an existing `task.md`
-- [ ] refuse a round that already holds `manifest.json`
-- [ ] validate `--task` and `--run` via `task.CheckName` before creating anything
-- [ ] add `showNew` beside `showConfig` (config.go:82); `newCmd.Execute` sets it and prints nothing
-- [ ] add `runOpts.writeTaskPaths`, dispatched from `run` beside the `showConfig` case (main.go:75),
+- [x] refuse a round that already holds `manifest.json`
+- [x] validate `--task` and `--run` via `task.CheckName` before creating anything
+- [x] add `showNew` beside `showConfig` (config.go:82); `newCmd.Execute` sets it and prints nothing
+- [x] add `runOpts.writeTaskPaths`, dispatched from `run` beside the `showConfig` case (main.go:75),
       before any pipeline, archive or TUI exists
-- [ ] write tests for `Scaffold`: fresh task, second round on an existing task, existing `task.md`
+- [x] write tests for `Scaffold`: fresh task, second round on an existing task, existing `task.md`
       preserved, round with artifacts refused, invalid names refused before any mkdir
-- [ ] write tests for `writeTaskPaths` against an injected buffer: JSON shape and `created` contents
-- [ ] run tests — must pass before task 8
+- [x] write tests for `writeTaskPaths` against an injected buffer: JSON shape and `created` contents
+- [x] run tests — must pass before task 5
 
-### Task 8: `revmux config` reports tasks with their metadata
+### Task 5: `revmux config` reports tasks with their metadata
 
 **Design Contract:**
 
@@ -490,14 +486,14 @@ Exports (justification per item: who outside the package calls this?):
 - Modify: `app/introspect.go`
 - Modify: `app/introspect_test.go`
 
-- [ ] `.paths.tasks` changes from `[]string` to `[]taskInfo`: `id`, `description`, `url`, `branch`,
+- [x] `.paths.tasks` changes from `[]string` to `[]taskInfo`: `id`, `description`, `url`, `branch`,
       `base`, `rounds`
-- [ ] `taskInfo` embeds `task.Meta` rather than copying fields, so a new front-matter key surfaces once
-- [ ] read each task's `task.md` via `task.Load`; a task without one reports empty fields
-- [ ] write tests: task with full front matter, task with none, task with no rounds, several tasks ordered
-- [ ] run tests — must pass before task 9
+- [x] `taskInfo` embeds `task.Meta` rather than copying fields, so a new front-matter key surfaces once
+- [x] read each task's `task.md` via `task.Load`; a task without one reports empty fields
+- [x] write tests: task with full front matter, task with none, task with no rounds, several tasks ordered
+- [x] run tests — must pass before task 6
 
-### Task 9: project documentation
+### Task 6: project documentation
 
 **Files:**
 - Modify: `CLAUDE.md`
@@ -506,29 +502,33 @@ Exports (justification per item: who outside the package calls this?):
 - Modify: `README.md`
 - Modify: `app/defaults/config`
 
-- [ ] `CLAUDE.md` — the task-directory hard rule, the archive rule, keep-in-sync conventions, **plus
+- [x] `CLAUDE.md` — the task-directory hard rule, the archive rule, keep-in-sync conventions, **plus
       three sections the first draft missed**: "Findings go to stdout as JSON" (`revmux config` is no
       longer the single stdout exception), "Prior rounds are injected" (describes the `runs/` path), and
       Project structure (needs `app/task/`, `app/newcmd.go`, and the `app/archive/` line naming `runs/`)
-- [ ] rewrite the "revmux writes only under `runs/`… never modified or pruned" hard rule: revmux writes
+- [x] rewrite the "revmux writes only under `runs/`… never modified or pruned" hard rule: revmux writes
       only inside a round, and deletes nothing at all
-- [ ] `.claude/rules/config.md` — context resolution, `--task`/`--run`, and **delete** the entire
+- [x] `.claude/rules/config.md` — context resolution, `--task`/`--run`, and **delete** the entire
       pruning argument (the "Enumerating by identity" reasoning, the `RemoveAll`-on-a-name warning, the
       concurrent-prune note); it defends a primitive that no longer exists. Fix the
       `reviewContext.TaskDir` paragraph
-- [ ] document manual cleanup: `rm -rf <tasks-dir>/<task>/<round>` reclaims space, and removing a round
-      is safe because nothing links rounds together. Say it in README and in the skill's
-      `references/invocation.md`
-- [ ] remove the `Prune` carve-out from the exit-code section — there is no prune to fail
-- [ ] `.claude/rules/prompts.md` — `task.md` as a fourth front-matter kind, and that revmux never
+- [x] document manual cleanup: `rm -rf <tasks-dir>/<task>/<round>` reclaims space, and removing a round
+      is safe because nothing links rounds together. Said in README ("Cleaning up") and in
+      `.claude/rules/config.md`; the skill's `references/invocation.md` carries it in Task 7, which owns
+      both skill trees
+- [x] remove the `Prune` carve-out from the exit-code section — there is no prune to fail
+- [x] `.claude/rules/prompts.md` — `task.md` as a fourth front-matter kind, and that revmux never
       resolves `branch`/`base`
-- [ ] `README.md` — task directory, run archive, configuration, `revmux config` output, `revmux new`,
+- [x] `README.md` — task directory, run archive, configuration, `revmux config` output, `revmux new`,
       **and the flag table**: `--run` default column (:289), delete the `--keep-runs` row (:313), delete
       the "Pruning only ever reads `runs/`" paragraph (:166), and the exit-code row naming "a `--run`
       name that already exists" (:374)
-- [ ] verify no doc still describes `runs/` or task-level `scope.md`
+- [x] verify no doc still describes `runs/` or task-level `scope.md` — the three surviving mentions are
+      deliberate: two state that pruning and `--keep-runs` do not exist, one names `runs/` as an entry
+      identifying the refused old layout, which `app/config.go`'s `oldRunsDir` still checks for
+- [x] `app/defaults/config` needed no edit: Task 3 removed the `keep-runs` entry with the flag
 
-### Task 10: both skill trees
+### Task 7: both skill trees
 
 **Files:**
 - Modify: `.claude-plugin/skills/revmux/SKILL.md`
@@ -536,29 +536,29 @@ Exports (justification per item: who outside the package calls this?):
 - Modify: `.claude-plugin/skills/revmux/scripts/task-state.sh`
 - Modify: `plugins/codex/skills/revmux/**` (mirror)
 
-- [ ] `SKILL.md` Step 2: call `revmux new`, then write the four files at the paths it returns. No path
+- [x] `SKILL.md` Step 2: call `revmux new`, then write the four files at the paths it returns. No path
       construction, no `mkdir`, no hardcoded layout anywhere in the skill
-- [ ] match tasks via `task.md` front matter (`url`, `branch`); the derive-the-id table becomes a
+- [x] match tasks via `task.md` front matter (`url`, `branch`); the derive-the-id table becomes a
       fallback for naming a *new* task, not a way to find an existing one
-- [ ] `references/task-dir.md`: rewrite around what each file should contain, not where it lives
-- [ ] `references/output.md`: new archive layout
-- [ ] `references/invocation.md`: `--run` now required, `--keep-runs` gone, plus the manual-cleanup note
-- [ ] `scripts/task-state.sh`: report rounds and their `input/` state, and read `task.md`
-- [ ] mirror into `plugins/codex/`; `diff -r` of both `references/` and `scripts/` must be empty
-- [ ] run `shellcheck` on all four scripts — must be clean
+- [x] `references/task-dir.md`: rewrite around what each file should contain, not where it lives
+- [x] `references/output.md`: new archive layout
+- [x] `references/invocation.md`: `--run` now required, `--keep-runs` gone, plus the manual-cleanup note
+- [x] `scripts/task-state.sh`: report rounds and their `input/` state, and read `task.md`
+- [x] mirror into `plugins/codex/`; `diff -r` of both `references/` and `scripts/` must be empty
+- [x] run `shellcheck` on all four scripts — must be clean
 
-### Task 11: Verify acceptance criteria
+### Task 8: Verify acceptance criteria
 
-- [ ] verify all requirements from Overview are implemented
-- [ ] verify edge cases: symlinked round, stray task-level directory, old-layout task, missing `input/`
-- [ ] run full test suite: `make test`
-- [ ] run `make lint` — zero issues
-- [ ] verify coverage has not regressed on `app/archive`
+- [x] verify all requirements from Overview are implemented
+- [x] verify edge cases: symlinked round, stray task-level directory, old-layout task, missing `input/`
+- [x] run full test suite: `make test`
+- [x] run `make lint` — zero issues
+- [x] verify coverage has not regressed on `app/archive`
 
-### Task 12: [Final] Update documentation
+### Task 9: [Final] Update documentation
 
-- [ ] update README.md if anything drifted during implementation
-- [ ] update CLAUDE.md if new patterns were discovered
+- [x] update README.md if anything drifted during implementation (verified: none)
+- [x] update CLAUDE.md if new patterns were discovered (covered by task 6)
 - [ ] move this plan to `docs/plans/completed/`
 
 ## Post-Completion
