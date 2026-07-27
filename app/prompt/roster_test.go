@@ -250,3 +250,44 @@ func TestVocabularies(t *testing.T) {
 	assert.Equal(t, "low", Efforts()[0], "the accessor must not hand out the package slice")
 	assert.Equal(t, "claude", Executors()[0])
 }
+
+func TestDerivedSpec(t *testing.T) {
+	// a stage or verify group is not in the roster but still has to be told apart in the log. Both
+	// renderers call this, so what it must guarantee is that they cannot disagree.
+	t.Run("the same name always resolves to the same color", func(t *testing.T) {
+		for _, name := range []string{"synthesis", "verify ui", "verify executor"} {
+			first := DerivedSpec(name)
+			assert.Equal(t, first, DerivedSpec(name), "%s must resolve identically every time", name)
+			assert.NotEmpty(t, first.Color, "a derived agent is colored, or it cannot be told apart")
+			assert.NotEmpty(t, first.ColorName)
+			assert.Equal(t, name, first.Name)
+		}
+	})
+
+	t.Run("it does not depend on when the agent was first seen", func(t *testing.T) {
+		// the two renderers build their rows independently and create a derived agent on first sight,
+		// so anything counting arrivals could hand them different colors for the same run
+		forward := []AgentSpec{DerivedSpec("a"), DerivedSpec("b"), DerivedSpec("c")}
+		backward := []AgentSpec{DerivedSpec("c"), DerivedSpec("b"), DerivedSpec("a")}
+		assert.Equal(t, forward[0], backward[2])
+		assert.Equal(t, forward[2], backward[0])
+	})
+
+	t.Run("different names generally differ, which is the point", func(t *testing.T) {
+		seen := map[string]bool{}
+		for _, n := range []string{"verify app", "verify ui", "verify executor", "verify pipeline"} {
+			seen[DerivedSpec(n).ColorName] = true
+		}
+		assert.Greater(t, len(seen), 1, "one color for every verify group would defeat coloring them")
+	})
+
+	t.Run("an empty name is not colored", func(t *testing.T) {
+		assert.Empty(t, DerivedSpec("").Color, "there is nothing to tell apart")
+	})
+
+	t.Run("the resolved color is one lipgloss accepts", func(t *testing.T) {
+		spec := DerivedSpec("synthesis")
+		assert.Contains(t, spec.Paint("x"), "x", "and Paint round-trips the text it wraps")
+		assert.NotEqual(t, "x", spec.Paint("x"), "wrapped in a sequence rather than returned bare")
+	})
+}

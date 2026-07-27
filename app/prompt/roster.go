@@ -3,6 +3,7 @@ package prompt
 import (
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -112,6 +113,26 @@ type AgentSpec struct {
 	Effort    string   `json:"effort,omitempty"`
 	Color     string   `json:"color"`
 	ColorName string   `json:"color_name,omitempty"`
+}
+
+// DerivedSpec colors a process the roster does not name — a stage, a verify group — so the two
+// renderers cannot disagree about it. Neither may pick a color of its own: `app/ui` and the plain
+// `--no-tui` renderer would then paint the same agent differently, which is the whole reason the color
+// lives on the spec rather than in a renderer.
+//
+// The palette entry is chosen from a hash of the name rather than from an arrival index, because the
+// two renderers see the same events in the same order but build their rows independently, and a
+// derived agent is created on first sight rather than up front. A hash needs nothing threaded through.
+func DerivedSpec(name string) AgentSpec {
+	spec := AgentSpec{Name: name}
+	if name == "" {
+		return spec
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(name))
+	spec.ColorName = colorPalette[int(h.Sum32()%uint32(len(colorPalette)))] //nolint:gosec // a palette length is far inside uint32
+	spec.Color = strconv.Itoa(ansiColors[spec.ColorName])
+	return spec
 }
 
 // Efforts returns the accepted effort vocabulary, the same slice validate checks against.

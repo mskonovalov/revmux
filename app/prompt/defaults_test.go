@@ -40,7 +40,7 @@ func TestDefaults_FocusedRoster(t *testing.T) {
 	assert.Equal(t, AgentSpec{Name: "bugs", Lenses: []string{"bugs"}, Executor: "claude",
 		Model: "opus", Effort: "high", Color: "6", ColorName: "cyan"}, specs[0])
 	assert.Equal(t, AgentSpec{Name: "codex", Lenses: []string{"adversarial"}, Executor: "codex",
-		Model: "gpt-5.6-sol", Effort: "xhigh", Color: "3", ColorName: "yellow"}, specs[1],
+		Model: "gpt-5.6-sol", Effort: "high", Color: "3", ColorName: "yellow"}, specs[1],
 		"codex is a roster entry composing a lens, not a prompt file of its own")
 }
 
@@ -108,7 +108,7 @@ func TestDefaults_ComprehensiveRoster(t *testing.T) {
 	assert.Equal(t, AgentSpec{Name: "docs+tests", Lenses: []string{"docs", "tests"}, Executor: "claude",
 		Model: "opus", Effort: "high", Color: "2", ColorName: "green"}, specs[2])
 	assert.Equal(t, AgentSpec{Name: "codex", Lenses: []string{"adversarial"}, Executor: "codex",
-		Model: "gpt-5.6-sol", Effort: "xhigh", Color: "3", ColorName: "yellow"}, specs[3],
+		Model: "gpt-5.6-sol", Effort: "high", Color: "3", ColorName: "yellow"}, specs[3],
 		"codex is a peer source in the default roster, not a second pass over the others")
 
 	var carried []string
