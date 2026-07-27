@@ -28,35 +28,42 @@ So the split is not immutable-vs-mutable: **all caller context belongs to the ro
 Benefits: each round becomes self-describing and auditable; a later reflection agent can read any round
 in isolation; the caller stops constructing paths, so the layout becomes revmux's private detail.
 
-### ⚠️ OPEN DECISION — pruning now deletes caller-authored context
+### Pruning is removed entirely
 
-Moving `input/` into the round makes it a prune candidate. `--keep-runs` defaults to `10`, so the 11th
-round of a task would silently delete round 1's `scope.md` — **the exact artifact whose loss motivated
-this plan**.
+Moving `input/` into the round would make caller-authored context a prune candidate: at the default
+`--keep-runs=10`, the 11th round would silently delete round 1's `scope.md` — the exact artifact whose
+loss motivated this plan. It would also invert a CLAUDE.md hard rule verbatim.
 
-This inverts a CLAUDE.md hard rule verbatim: *"revmux writes only under `runs/`. Everything above it
-belongs to the caller and is never modified or pruned"*, and contradicts README's *"Pruning only ever
-reads `runs/`, so `scope.md`… are never touched"*.
+Rather than pick a trade-off, **revmux stops deleting anything.** `--keep-runs`, `Archive.Prune` and
+its whole supporting cast (`remove`, `clear`, `clearDir`, `clearSub`, `enumerated`, `runPath`,
+`runEntry`) are removed. A user who wants space back deletes round directories himself; the docs say so.
 
-Three ways to resolve it, to be decided before Task 3:
+This is the largest simplification in the change, not a concession:
 
-- **A. Prune the whole round.** Simple and consistent — the round is gone, its inputs go with it. Caller
-  work becomes prunable, which it never was.
-- **B. Prune artifacts, keep `input/`.** The round directory survives holding only its inputs. Preserves
-  the caller's authored context forever; leaves skeleton directories that are no longer runs and would
-  need excluding from the prior-round inventory.
-- **C. Default `--keep-runs` to unlimited.** Nothing is deleted unless asked. Sidesteps the conflict at
-  the cost of unbounded growth, and `keep-runs` still deletes caller input when set.
+- **revmux no longer has a destructive primitive.** `.claude/rules/config.md` calls `Prune` exactly
+  that and builds an elaborate defence around it — enumerate by identity, re-check after `Lstat`, empty
+  through a handle so a rename cannot carry a recursive delete elsewhere, never `RemoveAll` on a name.
+  Every line of that reasoning exists because a deletion takes a name. With no deletion, it is gone.
+- **it removes 283 of `archive.go`'s 446 lines**, and 74 `keep-runs`/`Prune` references across the repo.
+- **it retires the hardest part of this change.** The reason `runs/` mattered at all was that pruning
+  needed a directory it could safely enumerate. Nothing else did.
+- **it makes the round archive permanent**, which is what the archive rule wanted: a reflection agent
+  reading a task's history is never reading a truncated one.
 
-Whichever is chosen, Task 9 must rewrite the CLAUDE.md hard rule and the README line rather than leaving
-them contradicting the code.
+`manifest.json` still earns its place — as the exclusive-create marker that detects an already-run round
+and as the marker distinguishing a real round from a stray directory in the prior-round inventory. It is
+simply no longer a deletion key.
+
+Growth is bounded by the user, not the tool. Task 9 documents `rm -rf <task>/<round>` as the way to
+reclaim space, and that removing a round is safe because nothing links rounds together.
 
 ## Context (from discovery)
 
 Files involved:
 
-- `app/archive/archive.go` — `New`, `Prune`, `remove`, `clear`, `checkHandle`, `checkRunsEntry` (:383).
-  Nested `os.Root` handles, symlink refusal, identity-based pruning. The security-critical part.
+- `app/archive/archive.go` — `New`, `checkHandle`, `checkRunsEntry` (:383) are what survives; `Prune`
+  and its supporting cast (:176-375) are deleted by Task 4. Nested `os.Root` handles and symlink
+  refusal remain the security-critical part.
 - `app/config.go` — `resolveContext` (:311), `taskDir` (:345), `runName` (:288), `checkNames` (:441),
   `checkName` (:451), layout constants (:42-46), `showConfig` (:82), `initConfig` (:468)
 - `app/introspect.go` — `configCmd` (:18), `Execute` (:77), the model for a second subcommand
@@ -74,14 +81,15 @@ Patterns observed:
   writers exist, so it only sets `opts.showConfig` and `runOpts.writeCatalog` does the writing. Any new
   subcommand follows the same shape or it writes to the real `os.Stdout` and cannot be tested.
 - `initConfig` (config.go:468) is the precedent for writing a template without overwriting a custom file
-- every filesystem test uses `t.TempDir()`; archive tests delete, so a test pointed at the real tasks
-  root would destroy review history that cannot be regenerated
+- every filesystem test uses `t.TempDir()`. Archive tests delete today; once Task 4 removes pruning
+  nothing in revmux deletes, and the tests that did are removed with it
 
 Architectural guidance (go-architect):
 
 1. "Every directory at task level is a round" is a *convention*, not a structure — a caller adding
-   `notes/` or `.git` makes it a recursive-delete candidate. Replace the positional guarantee with an
-   **ownership** one: a prune candidate must contain `manifest.json`, an artifact revmux writes.
+   `notes/` or `.git` would become a recursive-delete candidate. **Superseded**: pruning is removed
+   entirely, so nothing enumerates the task directory to delete from it. `manifest.json` survives as
+   the marker distinguishing a real round from a stray directory, for the prior-round inventory only.
 2. `Mkdir` conflated collision detection and symlink refusal; split them. Lstat through the task handle
    refusing a symlink → `OpenRoot` → `checkHandle` → require `input/` → collision via
    `OpenFile("manifest.json", O_CREATE|O_EXCL)`, which is the new atomic "already ran" test.
@@ -143,11 +151,10 @@ If a previous task shipped a violation (spotted later by user, reviewer, or your
 - **TDD for `app/archive`**: the symlink, collision and pruning tests are written first and must fail
   before the implementation lands. These guarantees are the deliverable, not a side effect of it.
 - no e2e/UI suite in this project; the end-to-end check is a real review run (Post-Completion)
-- every filesystem test uses `t.TempDir()` — archive tests delete, so a test pointed at the real tasks
-  root would destroy review history that cannot be regenerated
-- the pruning tests carry the most weight: `runs/` gave a structural guarantee being replaced by an
-  ownership check, so "a directory without `manifest.json` is never pruned" is what proves the
-  replacement holds
+- every filesystem test uses `t.TempDir()`
+- **the pruning tests are deleted, not rewritten.** They exercise a primitive that no longer exists, and
+  keeping them alive against a shim would be testing the harness. Their removal is part of Task 4, and
+  the suite must still cover the containment guarantees `New` keeps: symlink refusal and handle identity
 - one regression test has a **silent** failure mode and must exist: if `reviewContext.TaskDir` becomes
   the round directory, `History` finds no rounds, returns `""`, and the prior-round block is omitted
   with no error — breaking a hard rule invisibly
@@ -184,9 +191,9 @@ rule already demanded.
 **`runs/` is removed.** It existed only to separate revmux-owned from caller-owned inside a task. With
 every caller file inside a round, that boundary moved down a level.
 
-**Pruning switches from a positional guarantee to an ownership one.** A candidate must contain
-`manifest.json`. A caller's stray directory at task level has none and is never touched — independent of
-caller discipline, which the positional rule was not.
+**Pruning is removed.** `runs/` existed so pruning had a directory it could safely enumerate; nothing
+else needed it. With no deletion, revmux has no destructive primitive and the layout question stops
+being a safety question. Old rounds are the user's to delete.
 
 **Collision detection becomes an exclusive create.** `OpenFile("manifest.json", O_CREATE|O_EXCL)` is
 atomic, replaces the atomicity lost with `Mkdir`, and writes the same marker pruning keys on.
@@ -264,7 +271,9 @@ $ revmux new --task pr-123 --run 01-initial
 
 ```
 tasksRoot = OpenRoot(tasksDir)              opened, never created
-taskRoot  = tasksRoot.OpenRoot(task)        opened, never created; HELD for the run (Prune uses it)
+taskRoot  = tasksRoot.OpenRoot(task)        opened, never created; closed inside New, nothing below
+                                            it needs the handle once pruning is gone (History takes a
+                                            path, not the handle)
   Lstat(round) through taskRoot             refuse a symlink outright
 roundRoot = taskRoot.OpenRoot(round)        opened, never created
   checkHandle(taskRoot, roundRoot)          os.SameFile against the entry that was read
@@ -331,8 +340,7 @@ Exports (justification per item: who outside the package calls this?):
 - [ ] write a test that a round containing only `input/` is accepted
 - [ ] write a test that a missing round errors with a message naming the round to create
 - [ ] write a test that a missing `input/` errors naming the path the caller must create
-- [ ] write a test that a task-level directory without `manifest.json` is never pruned at `--keep-runs=0`
-- [ ] write a test that `task.md` survives `--keep-runs=0`
+- [ ] write a test that `New` refuses the old layout (`scope.md` or `runs/` at task level)
 - [ ] run tests — they MUST fail, proving they exercise the new behaviour before it exists
 
 ### Task 3: archive — `New` for the round layout
@@ -342,7 +350,7 @@ Exports (justification per item: who outside the package calls this?):
 - Modify: `app/artifacts.go`
 
 - [ ] drop `runsDir`; the round is a direct child of the task directory
-- [ ] hold the task handle for the archive's lifetime; `Close` releases task + round handles
+- [ ] close the task handle inside `New` as today; with pruning gone nothing below needs it
 - [ ] `Lstat` the round entry through the task handle and refuse a symlink before opening
 - [ ] `OpenRoot` the round, then `checkHandle` it against the task handle
 - [ ] require `input/` to exist, erroring with the path the caller must create
@@ -353,23 +361,29 @@ Exports (justification per item: who outside the package calls this?):
 - [ ] delegate `checkComponent` to `task.CheckName`
 - [ ] replace `manifestFileName` in `app/artifacts.go` with `task.ManifestFile`; `reportFileName` and
       `findingsFileName` stay local, since only `package main` writes them
-- [ ] refresh godoc naming `runs/`: package doc, `Opts`, `Archive` (including the handle field comment),
-      `runEntry`, `New`, `Close`
+- [ ] refresh godoc naming `runs/`: package doc, `Opts`, `Archive` (including the handle field
+      comment), `New`, `Close`
 - [ ] run the Task 2 tests — must now pass
 
-### Task 4: archive — `Prune` by ownership
+### Task 4: remove pruning entirely
+
+Deletes revmux's only destructive primitive. Everything here is removal — nothing replaces it.
 
 **Files:**
 - Modify: `app/archive/archive.go`
+- Modify: `app/archive/archive_test.go`
+- Modify: `app/config.go`
+- Modify: `app/main.go`
+- Modify: `app/defaults/config`
 
-- [ ] enumerate the task handle instead of the removed `runs/` handle
-- [ ] skip non-directories, and skip any directory without `manifest.json`
-- [ ] keep the identity exclusion of the run being written, unchanged
-- [ ] keep `clear` → `enumerated` → non-recursive `Remove`, with the task handle as parent
-- [ ] apply the Overview's open decision on whether `input/` is deleted with the round
-- [ ] refresh `Prune`, `remove` and `clear` godoc — they describe `runs/` and the positional guarantee
-- [ ] run the Task 2 pruning tests — must now pass
-- [ ] re-run the existing archive suite: symlink, rename and containment tests must still pass
+- [ ] delete `Prune`, `remove`, `clear`, `clearDir`, `clearSub`, `enumerated`, `runPath` and `runEntry`
+- [ ] drop the `keep` field from `Archive` and `Keep` from `Opts`
+- [ ] delete the `--keep-runs` flag, its `ini-name`, and its entry in `app/defaults/config`
+- [ ] remove the `Prune()` call site and its warn-but-do-not-fail error handling from `app/main.go`
+- [ ] delete the pruning tests rather than adapting them — the primitive is gone, so a test kept alive
+      against a shim tests the harness
+- [ ] confirm the remaining archive suite still covers symlink refusal and handle identity in `New`
+- [ ] run tests — must pass before task 5
 
 ### Task 5: context resolution from `input/`
 
@@ -491,24 +505,27 @@ Exports (justification per item: who outside the package calls this?):
 - Modify: `.claude/rules/prompts.md`
 - Modify: `README.md`
 - Modify: `app/defaults/config`
-- Modify: `app/config.go` (the `--keep-runs` struct-tag description)
 
 - [ ] `CLAUDE.md` — the task-directory hard rule, the archive rule, keep-in-sync conventions, **plus
       three sections the first draft missed**: "Findings go to stdout as JSON" (`revmux config` is no
       longer the single stdout exception), "Prior rounds are injected" (describes the `runs/` path), and
       Project structure (needs `app/task/`, `app/newcmd.go`, and the `app/archive/` line naming `runs/`)
-- [ ] rewrite the "revmux writes only under `runs/`… never modified or pruned" hard rule per the
-      Overview's open decision
-- [ ] `.claude/rules/config.md` — context resolution, `--task`/`--run`, and the entire pruning argument,
-      written in terms of `runs/` throughout; state the ownership guarantee that replaced it; fix the
+- [ ] rewrite the "revmux writes only under `runs/`… never modified or pruned" hard rule: revmux writes
+      only inside a round, and deletes nothing at all
+- [ ] `.claude/rules/config.md` — context resolution, `--task`/`--run`, and **delete** the entire
+      pruning argument (the "Enumerating by identity" reasoning, the `RemoveAll`-on-a-name warning, the
+      concurrent-prune note); it defends a primitive that no longer exists. Fix the
       `reviewContext.TaskDir` paragraph
+- [ ] document manual cleanup: `rm -rf <tasks-dir>/<task>/<round>` reclaims space, and removing a round
+      is safe because nothing links rounds together. Say it in README and in the skill's
+      `references/invocation.md`
+- [ ] remove the `Prune` carve-out from the exit-code section — there is no prune to fail
 - [ ] `.claude/rules/prompts.md` — `task.md` as a fourth front-matter kind, and that revmux never
       resolves `branch`/`base`
 - [ ] `README.md` — task directory, run archive, configuration, `revmux config` output, `revmux new`,
-      **and the flag table**: `--run` default column (:289) and `--keep-runs` (:313), the "Pruning only
-      ever reads `runs/`" line (:166), and the exit-code row naming "a `--run` name that already exists" (:374)
-- [ ] `app/defaults/config` — the `keep-runs` comment, whose semantics change from "revmux artifacts"
-      to "the whole round including caller input"
+      **and the flag table**: `--run` default column (:289), delete the `--keep-runs` row (:313), delete
+      the "Pruning only ever reads `runs/`" paragraph (:166), and the exit-code row naming "a `--run`
+      name that already exists" (:374)
 - [ ] verify no doc still describes `runs/` or task-level `scope.md`
 
 ### Task 10: both skill trees
@@ -525,7 +542,7 @@ Exports (justification per item: who outside the package calls this?):
       fallback for naming a *new* task, not a way to find an existing one
 - [ ] `references/task-dir.md`: rewrite around what each file should contain, not where it lives
 - [ ] `references/output.md`: new archive layout
-- [ ] `references/invocation.md`: `--run` now required, and the `--keep-runs` behaviour decided above
+- [ ] `references/invocation.md`: `--run` now required, `--keep-runs` gone, plus the manual-cleanup note
 - [ ] `scripts/task-state.sh`: report rounds and their `input/` state, and read `task.md`
 - [ ] mirror into `plugins/codex/`; `diff -r` of both `references/` and `scripts/` must be empty
 - [ ] run `shellcheck` on all four scripts — must be clean
@@ -567,5 +584,6 @@ refusal moved to the reachable path; `task.CheckName` named as the single owner 
 refresh bullets added to Tasks 3, 4 and 6; `reviewContext.TaskDir` disambiguation plus its
 silent-failure regression test added; const-block godoc, `Meta` yaml+json tags and a `taskInfo` Design
 Contract added; `checkRunsEntry` rename added; three unnamed CLAUDE.md sections and the README flag
-table added to Task 9. One item raised as an open decision rather than fixed: `--keep-runs` now deleting
-caller-authored `input/` (see Overview).
+table added to Task 9. The one item raised as an open decision — `--keep-runs` deleting caller-authored
+`input/` — was resolved by removing pruning entirely (see Overview); Task 4 changed from "prune by
+ownership" to deletion of the primitive and its 283 lines.
