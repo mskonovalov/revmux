@@ -19,14 +19,18 @@ type CompletedMsg struct {
 }
 
 // findingsState is the findings browser: the run's findings ordered by severity, which of them the
-// filter admits, where the cursor sits and which rows are expanded.
+// filter admits, where the cursor sits and which rows the reader has folded away.
+//
+// Folded rather than expanded, so the zero value shows a finding in full. A finding is a body, a fix
+// and its attribution; the one-line summary is an index entry, and a browser opening on nothing but
+// index entries hides the review behind a keypress per row.
 type findingsState struct {
-	rows     []finding.Finding
-	matches  []int
-	expanded map[int]bool
-	cursor   int
-	query    string
-	typing   bool
+	rows      []finding.Finding
+	matches   []int
+	collapsed map[int]bool
+	cursor    int
+	query     string
+	typing    bool
 }
 
 // severityRank orders the browser's groups; anything unrecognized sorts last rather than being
@@ -37,7 +41,7 @@ var severityRank = map[finding.Severity]int{finding.Critical: 0, finding.Major: 
 // pre-existing and immaterial findings are deliberately not listed: the report on stdout carries
 // them, and mixing them in would put unranked material above a critical bug.
 func newFindings(rep finding.Report) *findingsState {
-	f := &findingsState{rows: slices.Clone(rep.Findings), expanded: map[int]bool{}}
+	f := &findingsState{rows: slices.Clone(rep.Findings), collapsed: map[int]bool{}}
 	slices.SortStableFunc(f.rows, func(a, b finding.Finding) int { return f.rank(a.Severity) - f.rank(b.Severity) })
 	f.filter("")
 	return f
@@ -48,14 +52,14 @@ func (f *findingsState) move(delta int) {
 	f.cursor = min(max(f.cursor+delta, 0), max(len(f.matches)-1, 0))
 }
 
-// toggle expands or collapses the finding under the cursor. Expansion is keyed on the finding rather
-// than on its position, so narrowing the filter cannot leave a different row expanded.
+// toggle folds the finding under the cursor away, or opens it back up. The fold is keyed on the
+// finding rather than on its position, so narrowing the filter cannot leave a different row folded.
 func (f *findingsState) toggle() {
 	if f.cursor >= len(f.matches) {
 		return
 	}
 	row := f.matches[f.cursor]
-	f.expanded[row] = !f.expanded[row]
+	f.collapsed[row] = !f.collapsed[row]
 }
 
 // filter narrows the list to findings whose title, file or body carry q, case-insensitively. The
@@ -118,7 +122,7 @@ func (f *findingsState) render() (lines []string, rows []int) {
 		}
 		rows = append(rows, len(lines))
 		lines = append(lines, f.row(i, v))
-		if f.expanded[f.matches[i]] {
+		if !f.collapsed[f.matches[i]] {
 			lines = append(lines, f.detail(v)...)
 		}
 	}
@@ -155,11 +159,10 @@ func (f *findingsState) row(i int, v finding.Finding) string {
 	if i == f.cursor {
 		mark = "> "
 	}
-	return mark + v.Location() + "  " + v.Title + "  [" + strconv.Itoa(v.Confidence) + "]"
+	return mark + v.Location() + "  " + markdown(v.Title) + "  [" + strconv.Itoa(v.Confidence) + "]"
 }
 
-// detail is what expanding a row adds: the body, the fix, and the attribution the single line has no
-// room for.
+// detail is everything the summary line has no room for: the body, the fix, and the attribution.
 func (f *findingsState) detail(v finding.Finding) []string {
 	out := []string{}
 	if v.Body != "" {
@@ -191,7 +194,7 @@ func (f *findingsState) meta(v finding.Finding) string {
 func (f *findingsState) indent(text string) []string {
 	out := []string{}
 	for l := range strings.SplitSeq(text, "\n") {
-		out = append(out, "    "+l)
+		out = append(out, "    "+markdown(l))
 	}
 	return out
 }

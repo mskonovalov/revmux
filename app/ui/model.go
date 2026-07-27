@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"io"
 	"strconv"
 	"time"
 
@@ -22,7 +23,22 @@ const (
 	// sizes used until the first tea.WindowSizeMsg arrives, and whenever the terminal reports none.
 	defaultCols = 100
 	defaultRows = 30
+
+	// chromeLines is what the frame spends on everything that is not the pane or an agent row: the
+	// header, the column heading, the rule closing the table, the tab bar, and the rule under it.
+	chromeLines = 5
 )
+
+// ProgressInterval is how often a tool call earns a line of its own in a log.
+//
+// Neither extreme works. Logging every one buries the model's reasoning under pages of "Read";
+// logging none leaves an agent that opens by reading twenty files looking dead for minutes. One
+// heartbeat every few seconds says the run is alive without competing with the prose, which is never
+// throttled.
+//
+// Exported because the plain renderer in package main throttles on the same cadence. Two constants
+// would drift, and a reviewer switching renderers would get two different ideas of how busy a run is.
+const ProgressInterval = 10 * time.Second
 
 // agent states as the status table shows them.
 const (
@@ -42,6 +58,16 @@ const (
 type ModelConfig struct {
 	Roster []prompt.AgentSpec
 	Events <-chan pipeline.Event
+
+	// AutoExit closes the browser on its own that long after the report arrives, counting down in the
+	// header, and any key cancels it. Zero waits for the reader instead, which is the default: a run
+	// left unattended should still be readable when someone comes back to it.
+	AutoExit time.Duration
+
+	// Output is the surface the frame is written to, and it is what the palette is profiled against.
+	// It has to be the tty rather than stdout: see newStyles. Nil is allowed and falls back to
+	// lipgloss's default renderer, which is what a test wants.
+	Output io.Writer
 }
 
 // Model is the bubbletea model: a status table over one focused detail pane.
@@ -53,12 +79,15 @@ type ModelConfig struct {
 // render.
 type Model struct {
 	cfg      ModelConfig
+	style    styles
 	view     viewState
 	agents   []*agentState
 	combined *combinedState
 	findings *findingsState
 	stage    string
 	found    int
+	done     bool          // the run is over and the report is in
+	exitIn   time.Duration // what is left of the auto-exit countdown, zero when nothing is counting
 }
 
 // viewState is where the reader is looking: the focused tab, the scroll offset within it and the
@@ -70,12 +99,14 @@ type viewState struct {
 	rows   int
 }
 
-// agentState is one agent's status row plus its full scrollback, thinking included.
+// agentState is one agent's status row plus its full scrollback.
 type agentState struct {
 	spec    prompt.AgentSpec
 	state   string
 	started time.Time
 	updated time.Time
+	beat    time.Time // when this agent last put anything in the log, heartbeat or prose
+	pending string    // the newest tool call, held for the next heartbeat
 	last    string
 	lines   []string
 }
@@ -83,9 +114,18 @@ type agentState struct {
 // eventsDone says the pipeline closed its channel, so the run is over and no further events arrive.
 type eventsDone struct{}
 
+// exitTick is one second of the auto-exit countdown.
+type exitTick struct{}
+
+// tick schedules the next second of the countdown.
+func (m Model) tick() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return exitTick{} })
+}
+
 // New builds the model over the resolved roster, one row per agent in roster order.
 func New(cfg ModelConfig) Model {
-	m := Model{cfg: cfg, combined: &combinedState{}, view: viewState{cols: defaultCols, rows: defaultRows}}
+	m := Model{cfg: cfg, style: newStyles(cfg.Output), combined: &combinedState{},
+		view: viewState{cols: defaultCols, rows: defaultRows}}
 	m.agents = make([]*agentState, 0, len(cfg.Roster))
 	for _, spec := range cfg.Roster {
 		m.agents = append(m.agents, &agentState{spec: spec, state: stateWaiting})
@@ -105,7 +145,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.view.scroll = min(m.view.scroll, m.maxScroll())
 		return m, nil
 	case tea.KeyMsg:
+		// any key cancels the countdown: a reader who reached for the keyboard is reading, and closing
+		// the report out from under him is the one thing the countdown must not do
+		m.exitIn = 0
 		return m.key(msg)
+	case exitTick:
+		if m.exitIn <= 0 {
+			return m, nil // canceled by a keypress between ticks
+		}
+		if m.exitIn -= time.Second; m.exitIn <= 0 {
+			return m, tea.Quit
+		}
+		return m, m.tick()
 	case pipeline.Event:
 		m.apply(msg)
 		return m, m.next()
@@ -113,6 +164,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case CompletedMsg:
 		m.complete(msg.Report)
+		if m.exitIn > 0 {
+			return m, m.tick()
+		}
 		return m, nil
 	}
 	return m, nil
@@ -123,6 +177,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // tabs stay reachable so he can check why a finding was raised.
 func (m *Model) complete(rep finding.Report) {
 	m.findings = newFindings(rep)
+	m.done = true
+	m.exitIn = m.cfg.AutoExit
 	m.focus(m.findingsTab())
 }
 
@@ -168,14 +224,24 @@ func (m *Model) apply(ev pipeline.Event) {
 	if ev.Kind == pipeline.EventFindings {
 		m.count(ev)
 	}
+	if ev.Kind == pipeline.EventAgentProgress {
+		// track has already put this in the status cell, where it belongs. It earns a line only when
+		// the agent has been quiet long enough that the log would otherwise look stalled.
+		a.note(ev.Text)
+		if !a.due(ev.At) {
+			return
+		}
+		text = a.takeNote()
+	}
 	if text == "" {
 		return
 	}
-	a.push(ev.At.Format(timeFormat) + " " + text)
-	if ev.Kind == pipeline.EventAgentActivity && text == thinkingActivity {
-		return
-	}
+	a.push(m.style.muted.Render(ev.At.Format(timeFormat)) + " " + text)
 	m.combined.push(combinedEntry{agent: a.spec.Name, at: ev.At, text: text})
+	// **any** line counts as life, not just a heartbeat. An agent that narrates steadily — codex
+	// streams a reasoning headline every few seconds — is visibly alive already, so charging it a
+	// tool-call line every interval on top just buries what it is saying under "exec".
+	a.beat = ev.At
 }
 
 // agent returns the named agent's state, opening a row for one the roster never mentioned.
@@ -186,7 +252,9 @@ func (m *Model) agent(name string) *agentState {
 	if a := m.find(name); a != nil {
 		return a
 	}
-	a := &agentState{spec: prompt.AgentSpec{Name: name}, state: stateRunning}
+	// a stage or verify group is not in the roster, so its color comes from prompt.DerivedSpec — this
+	// package never picks one, or the plain --no-tui renderer would color the same agent differently
+	a := &agentState{spec: prompt.DerivedSpec(name), state: stateRunning}
 	m.agents = append(m.agents, a)
 	return a
 }
@@ -242,6 +310,12 @@ func (a *agentState) track(ev pipeline.Event) string {
 		}
 	case pipeline.EventAgentActivity, pipeline.EventAgentState:
 		a.state, a.last = stateRunning, ev.Text
+	case pipeline.EventAgentProgress:
+		// the one kind that updates the row without writing a line: it is liveness, and the next
+		// tool call replaces it a second later. Returning it would put "Read" in the scrollback
+		// dozens of times and drown the prose the reader is actually there for.
+		a.state, a.last = stateRunning, ev.Text
+		return ""
 	case pipeline.EventAgentDone:
 		a.state, a.last = stateDone, "done"
 		if ev.Text != "" {
@@ -252,13 +326,40 @@ func (a *agentState) track(ev pipeline.Event) string {
 	case pipeline.EventAgentDegraded:
 		a.state, a.last = stateDegraded, "degraded: "+ev.Text
 	case pipeline.EventFindings:
+		// the status cell only. The done event lands a moment later carrying the same count, so
+		// logging both prints the number twice in consecutive lines
 		a.last = strconv.Itoa(len(ev.Findings)) + " findings emitted"
+		return ""
 	case pipeline.EventRateLimit:
 		a.state, a.last = stateLimited, "rate limited: "+ev.Text
 	default:
 		return ""
 	}
 	return a.last
+}
+
+// due reports whether this agent has been quiet long enough that a tool call is worth a line. It only
+// asks — the clock is reset by whatever line actually gets logged, so prose counts as life too.
+func (a *agentState) due(at time.Time) bool {
+	return a.beat.IsZero() || at.Sub(a.beat) >= ProgressInterval
+}
+
+// note remembers the newest tool call, which is what the next heartbeat reports.
+// Whichever call lands last before the interval boundary is what the line says, which is the most
+// recent thing the agent was doing.
+func (a *agentState) note(text string) {
+	if text == "" {
+		return
+	}
+	a.pending = text
+}
+
+// takeNote hands over the remembered tool call and forgets it, so the next heartbeat reports what
+// happened since rather than repeating this one.
+func (a *agentState) takeNote() string {
+	text := a.pending
+	a.pending = ""
+	return text
 }
 
 // push appends one scrollback line, dropping the oldest once the pane's budget is spent.

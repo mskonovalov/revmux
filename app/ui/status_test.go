@@ -22,8 +22,10 @@ func TestModel_statusTable(t *testing.T) {
 	)
 
 	rows := strings.Split(m.statusTable(), "\n")
-	require.Len(t, rows, 4, "a header, a rule and one row per agent")
+	require.Len(t, rows, 5, "a header, a column heading, one row per agent, and the closing rule")
 	assert.Equal(t, "revmux · 2 agents · stage find", rows[0])
+	assert.Contains(t, rows[1], "AGENT", "the column heading names what each column holds")
+	assert.Contains(t, rows[1], "ACTIVITY")
 	assert.Contains(t, rows[2], "running")
 	assert.Contains(t, rows[2], "9s", "elapsed comes off the event timestamps, not a clock")
 	assert.Contains(t, rows[2], "tool: Read", "the row shows the last activity")

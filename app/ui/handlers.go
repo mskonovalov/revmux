@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"strconv"
-
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -61,8 +59,10 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, keys.bottom):
 		m.view.scroll = 0
 	default:
-		if n, err := strconv.Atoi(msg.String()); err == nil {
-			m.focus(n)
+		// the token a tab shows is what selects it, digits first and then letters, so the bar itself
+		// documents the keys and nothing has to be counted
+		if idx := m.tabIndex(msg.String()); idx >= 0 {
+			m.focus(idx)
 		}
 	}
 	return m, nil

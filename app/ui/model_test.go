@@ -147,8 +147,20 @@ func TestModel_apply_unknownAgent(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, row, "the unrostered agent still gets a status row")
-	assert.NotContains(t, row, "\x1b[", "an unrostered name renders in the default foreground")
-	assert.Equal(t, "16:02:11 stranger: tool: Read", m.combinedLines()[0])
+
+	// a stage or verify group is unrostered but still worth telling apart in the combined log, so it
+	// gets a color from prompt.DerivedSpec. This package must not pick one itself — the plain renderer
+	// would then paint the same agent differently — so the assertion is that the row carries exactly
+	// what prompt derived, never merely that it is colored
+	// the name is padded before it is painted, so the row does not hold Paint("stranger") verbatim —
+	// what it must hold is the sequence prompt resolved, applied to the name
+	open, _, _ := strings.Cut(prompt.DerivedSpec("stranger").Paint("stranger"), "stranger")
+	require.NotEmpty(t, open, "prompt must resolve a color for a derived agent")
+	assert.Contains(t, row, open+"stranger",
+		"the color comes from the spec, and both renderers take it from there")
+	// padded out to the widest name like any other, so one unrostered agent does not break the column
+	assert.Equal(t, "16:02:11 "+prompt.DerivedSpec("stranger").Paint("stranger")+"   tool: Read",
+		m.combinedLines()[0])
 }
 
 func TestModel_apply_afterDone(t *testing.T) {
@@ -251,4 +263,62 @@ func TestAgentState_runtime(t *testing.T) {
 			assert.Equal(t, tt.want, a.runtime())
 		})
 	}
+}
+
+func TestModel_autoExit(t *testing.T) {
+	t.Run("without the option the browser waits for a keypress", func(t *testing.T) {
+		m := New(ModelConfig{Roster: roster()})
+		next, cmd := m.Update(CompletedMsg{Report: report()})
+		m = next.(Model)
+		assert.True(t, m.done)
+		assert.Zero(t, m.exitIn, "nothing is counting down")
+		assert.Nil(t, cmd, "and no tick was scheduled")
+	})
+
+	t.Run("the countdown runs down a second per tick and then quits", func(t *testing.T) {
+		m := New(ModelConfig{Roster: roster(), AutoExit: 3 * time.Second})
+		next, cmd := m.Update(CompletedMsg{Report: report()})
+		m = next.(Model)
+		require.Equal(t, 3*time.Second, m.exitIn)
+		require.NotNil(t, cmd, "completion schedules the first tick")
+
+		for want := 2 * time.Second; want > 0; want -= time.Second {
+			next, cmd = m.Update(exitTick{})
+			m = next.(Model)
+			require.Equal(t, want, m.exitIn)
+			require.NotNil(t, cmd, "each tick schedules the next one")
+		}
+
+		next, cmd = m.Update(exitTick{})
+		m = next.(Model)
+		assert.LessOrEqual(t, m.exitIn, time.Duration(0))
+		require.NotNil(t, cmd)
+		assert.IsType(t, tea.QuitMsg{}, cmd(), "the last tick quits")
+	})
+
+	t.Run("a keypress cancels it, and a tick already in flight does not quit", func(t *testing.T) {
+		m := feed(t, New(ModelConfig{Roster: roster(), AutoExit: time.Second}), CompletedMsg{Report: report()})
+		m = feed(t, m, press("j"))
+		assert.Zero(t, m.exitIn, "the reader is reading")
+
+		_, cmd := m.Update(exitTick{})
+		assert.Nil(t, cmd, "the stale tick neither quits nor reschedules")
+	})
+}
+
+func TestModel_closing(t *testing.T) {
+	m := New(ModelConfig{Roster: roster()})
+	assert.Empty(t, m.closing(), "a running review says nothing about closing")
+
+	t.Run("a finished review says it is finished and how to leave", func(t *testing.T) {
+		done := feed(t, m, CompletedMsg{Report: report()})
+		assert.Contains(t, done.View(), "complete")
+		assert.Contains(t, done.View(), "q to quit")
+	})
+
+	t.Run("a counting-down one shows the seconds left and how to stop it", func(t *testing.T) {
+		auto := feed(t, New(ModelConfig{Roster: roster(), AutoExit: 5 * time.Second}), CompletedMsg{Report: report()})
+		assert.Contains(t, auto.View(), "closing in 5s")
+		assert.Contains(t, auto.View(), "any key to stay")
+	})
 }

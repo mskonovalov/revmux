@@ -11,15 +11,16 @@ import (
 func TestModel_agentLines(t *testing.T) {
 	m := feed(t, New(ModelConfig{Roster: roster()}),
 		event(pipeline.EventAgentStarted, "bugs+impl", "bugs, impl"),
-		event(pipeline.EventAgentActivity, "bugs+impl", thinkingActivity),
-		event(pipeline.EventAgentActivity, "codex", "tool: Grep"),
+		event(pipeline.EventAgentActivity, "bugs+impl", "Reading the executor first."),
+		event(pipeline.EventAgentActivity, "codex", "Checking the teardown path."),
 	)
 
 	t.Run("the focused agent's own scrollback", func(t *testing.T) {
 		m.view.tab = 1
-		assert.Equal(t, []string{"16:02:11 started [bugs, impl]", "16:02:11 " + thinkingActivity}, m.agentLines())
+		assert.Equal(t, []string{"16:02:11 started [bugs, impl]", "16:02:11 Reading the executor first."}, m.agentLines())
 		m.view.tab = 2
-		assert.Equal(t, []string{"16:02:11 tool: Grep"}, m.agentLines(), "one pane never shows another agent's lines")
+		assert.Equal(t, []string{"16:02:11 Checking the teardown path."}, m.agentLines(),
+			"one pane never shows another agent's lines")
 	})
 
 	t.Run("an agent that has not reported yet", func(t *testing.T) {

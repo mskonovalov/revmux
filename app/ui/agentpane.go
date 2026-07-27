@@ -1,6 +1,6 @@
 package ui
 
-// agentLines is the focused agent's full scrollback, thinking included. These are the forensic views:
+// agentLines is the focused agent's full scrollback. These are the forensic views:
 // the combined log answers what is happening, a pane answers what one agent actually did.
 func (m Model) agentLines() []string {
 	a := m.focused()

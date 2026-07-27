@@ -2,6 +2,7 @@ package ui
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,26 +24,94 @@ func TestModel_combinedLines(t *testing.T) {
 	)
 
 	lines := m.combinedLines()
-	require.Len(t, lines, 5, "tool calls, state changes and findings each get one line")
-	assert.Equal(t, "16:02:11 stage find", lines[0], "a stage change carries no agent prefix")
-	assert.Equal(t, "16:02:11 "+roster()[0].Paint("bugs+impl")+": started [bugs, impl]", lines[1])
-	assert.Equal(t, "16:02:12 "+roster()[1].Paint("codex")+": tool: Grep", lines[2], "chronological, not grouped by agent")
-	assert.Contains(t, lines[3], "1 findings emitted")
-	assert.Contains(t, lines[4], "done, 1 findings")
+	// four, not five: the findings event feeds the header count and the browser, but the done event a
+	// moment later carries the same number, and printing both puts it on consecutive lines
+	require.Len(t, lines, 4, "the stage, the start, one activity and the done line")
+	assert.Contains(t, lines[0], "stage find",
+		"a stage change names no agent and is indented to the same column as one that does")
+	assert.Equal(t, "16:02:11 "+roster()[0].Paint("bugs+impl")+"  started [bugs, impl]", lines[1])
+	assert.Equal(t, "16:02:12 "+roster()[1].Paint("codex")+"      tool: Grep", lines[2],
+		"chronological, not grouped by agent, and the shorter name is padded out to the longest")
+	assert.Contains(t, lines[3], "done, 1 findings")
+	assert.Equal(t, 1, m.found, "the findings event still feeds the header count")
 }
 
-func TestModel_combinedLines_noThinking(t *testing.T) {
+func TestModel_combinedLines_alignsOnTheWidestName(t *testing.T) {
 	m := feed(t, New(ModelConfig{Roster: roster()}),
-		event(pipeline.EventAgentActivity, "bugs+impl", thinkingActivity),
-		event(pipeline.EventAgentActivity, "bugs+impl", "tool: Read"),
+		pipeline.Event{Kind: pipeline.EventStage, Stage: "find", At: at},
+		event(pipeline.EventAgentActivity, "bugs+impl", "the long name"),
+		event(pipeline.EventAgentActivity, "codex", "the short one"),
 	)
 
-	require.Len(t, m.combinedLines(), 1, "thinking would scroll the situational-awareness view past reading speed")
-	assert.Contains(t, m.combinedLines()[0], "tool: Read")
+	// every line starts its text at one column, whatever the agent is called, so the log reads as a
+	// column of prose rather than a ragged edge
+	starts := make([]int, 0, 3)
+	for _, line := range m.combinedLines() {
+		starts = append(starts, strings.Index(stripColor(line), "the "))
+	}
+	assert.Equal(t, starts[1], starts[2], "a short agent name is padded out to the longest")
+	assert.Positive(t, starts[1])
+}
 
-	m.view.tab = 1
-	assert.Equal(t, []string{"16:02:11 " + thinkingActivity, "16:02:11 tool: Read"}, m.agentLines(),
-		"the forensic pane keeps it")
+func TestModel_combinedLines_progressIsThrottled(t *testing.T) {
+	m := feed(t, New(ModelConfig{Roster: roster()}),
+		event(pipeline.EventAgentProgress, "bugs+impl", "thinking"),
+		pipeline.Event{Kind: pipeline.EventAgentProgress, Agent: "bugs+impl", Text: "Read", At: at.Add(time.Second)},
+		pipeline.Event{Kind: pipeline.EventAgentProgress, Agent: "bugs+impl", Text: "Grep", At: at.Add(2 * time.Second)},
+		pipeline.Event{Kind: pipeline.EventAgentActivity, Agent: "bugs+impl",
+			Text: "Six real problems across both lenses.", At: at.Add(3 * time.Second)},
+		pipeline.Event{Kind: pipeline.EventAgentProgress, Agent: "bugs+impl", Text: "Bash", At: at.Add(4 * time.Second)},
+	)
+
+	lines := m.combinedLines()
+	require.Len(t, lines, 2, "the first tool call shows life, the burst behind it is held back")
+	assert.Contains(t, lines[0], "thinking", "the first one goes through immediately")
+	assert.Contains(t, lines[1], "Six real problems across both lenses.", "and prose is never throttled")
+	assert.Equal(t, "Bash", m.agents[0].last,
+		"a throttled tool call still reaches the status cell - being held back from the log is the only thing it means")
+
+	t.Run("prose resets the clock, so a talker is never charged a tool line", func(t *testing.T) {
+		// the prose landed at +3s, so a tool call at +11s is only eight seconds after the last line
+		quiet := feed(t, m, pipeline.Event{Kind: pipeline.EventAgentProgress, Agent: "bugs+impl",
+			Text: "Bash", At: at.Add(ProgressInterval + time.Second)})
+		assert.Len(t, quiet.combinedLines(), 2, "an agent narrating steadily is visibly alive already")
+	})
+
+	t.Run("another heartbeat once it has genuinely gone quiet", func(t *testing.T) {
+		later := feed(t, m, pipeline.Event{Kind: pipeline.EventAgentProgress, Agent: "bugs+impl",
+			Text: "Bash", At: at.Add(3*time.Second + ProgressInterval)})
+		require.Len(t, later.combinedLines(), 3)
+		assert.Contains(t, later.combinedLines()[2], "Bash", "silence for a full interval earns a line")
+	})
+
+	t.Run("the heartbeat reports the newest tool call, not the one that opened the interval", func(t *testing.T) {
+		fresh := feed(t, New(ModelConfig{Roster: roster()}),
+			event(pipeline.EventAgentStarted, "bugs+impl", "bugs"),
+			pipeline.Event{Kind: pipeline.EventAgentProgress, Agent: "bugs+impl", Text: "Read codex.go", At: at.Add(time.Second)},
+			pipeline.Event{Kind: pipeline.EventAgentProgress, Agent: "bugs+impl", Text: "Read proc.go", At: at.Add(2 * time.Second)},
+			pipeline.Event{Kind: pipeline.EventAgentProgress, Agent: "bugs+impl", Text: "Read proc.go", At: at.Add(ProgressInterval + time.Second)},
+		)
+		lines := fresh.combinedLines()
+		require.Len(t, lines, 2, "the started line, then one heartbeat")
+		assert.Contains(t, lines[1], "Read proc.go",
+			"thinking says nothing; the tool call says what the agent is looking at")
+	})
+}
+
+// stripColor removes SGR sequences so a test can measure where visible text actually starts. Agent
+// names are painted with raw ANSI, and those bytes carry no display width.
+func stripColor(s string) string {
+	var out strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != 0x1b {
+			out.WriteByte(s[i])
+			continue
+		}
+		for i < len(s) && s[i] != 'm' {
+			i++
+		}
+	}
+	return out.String()
 }
 
 func TestModel_combinedLines_empty(t *testing.T) {

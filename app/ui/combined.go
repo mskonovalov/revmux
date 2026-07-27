@@ -1,14 +1,14 @@
 package ui
 
-import "time"
+import (
+	"strings"
+	"time"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // combinedLimit bounds the compact log the same way scrollbackLimit bounds a pane.
 const combinedLimit = 2000
-
-// thinkingActivity is how an executor summarizes a thinking block. The combined view drops it on
-// purpose: four concurrent agents thinking scroll it faster than anyone can read, and it stops being
-// the situational-awareness view it exists to be. The per-agent panes keep it.
-const thinkingActivity = "thinking"
 
 // combinedEntry is one compact line. It takes a struct rather than adjacent strings because agent and
 // text are both in scope where it is pushed, which is where a transposition would go unnoticed.
@@ -38,13 +38,30 @@ func (m Model) combinedLines() []string {
 	}
 	out := make([]string, 0, len(m.combined.entries))
 	for _, e := range m.combined.entries {
-		line := e.at.Format(timeFormat) + " "
-		if e.agent != "" {
-			line += m.paint(e.agent) + ": "
+		line := m.style.muted.Render(e.at.Format(timeFormat)) + " " + m.prefix(e.agent)
+		if e.agent == "" {
+			// a stage change is the coarsest thing that happens in a run and the one line worth finding
+			// while scrolling, so it is banded rather than left to read as another agent line
+			out = append(out, line+m.style.stage.Render(" "+e.text+" "))
+			continue
 		}
 		out = append(out, line+e.text)
 	}
 	return out
+}
+
+// prefix is the agent column: the name padded to the widest in the roster and colored, with the
+// column itself doing the separating. A stage line names no agent and is indented to the same column.
+//
+// Padding happens before painting and the width is measured on the plain name, because a color
+// sequence has no display width — pad the painted string and every line indents by however many bytes
+// that agent's color happens to take, which is what left the log ragged.
+func (m Model) prefix(agent string) string {
+	if agent == "" {
+		return strings.Repeat(" ", m.nameWidth()+2)
+	}
+	pad := strings.Repeat(" ", max(0, m.nameWidth()-lipgloss.Width(agent)))
+	return m.paint(agent) + pad + "  "
 }
 
 // paint colors an agent's name from its own resolved spec, which is the same value the plain renderer

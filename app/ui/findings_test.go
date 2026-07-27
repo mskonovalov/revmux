@@ -32,7 +32,9 @@ func report() finding.Report {
 func browsed(t *testing.T, rep finding.Report) Model {
 	t.Helper()
 	m := New(ModelConfig{Roster: roster()})
-	m = feed(t, m, tea.WindowSizeMsg{Width: 100, Height: 10}, CompletedMsg{Report: rep})
+	// same five-line pane the scroll tests use, so the cursor-follow expectations stay in screenfuls
+	m = feed(t, m, tea.WindowSizeMsg{Width: 100, Height: len(roster()) + chromeLines + 5},
+		CompletedMsg{Report: rep})
 	return m
 }
 
@@ -51,11 +53,11 @@ func TestModel_complete(t *testing.T) {
 	})
 
 	t.Run("the agent tabs stay reachable", func(t *testing.T) {
-		back := feed(t, m, press("1"))
+		back := feed(t, m, press("2")) // tabs are labeled from one, so 2 is the first agent
 		assert.Equal(t, 1, back.view.tab)
 		assert.False(t, back.browsing())
-		assert.Contains(t, back.tabBar(), "1 · bugs+impl", "and so does the browser's own tab")
-		assert.Contains(t, back.tabBar(), "f · findings")
+		assert.Contains(t, back.tabBar(), "2 bugs+impl", "and so does the browser's own tab")
+		assert.Contains(t, back.tabBar(), "f findings")
 	})
 
 	t.Run("there is no browser tab before the report arrives", func(t *testing.T) {
@@ -80,7 +82,7 @@ func TestModel_findingsPane(t *testing.T) {
 	assert.Contains(t, pane, "── MINOR ──")
 	assert.Contains(t, pane, "> app/main.go:42-48  unchecked error  [95]", "the cursor starts on the worst finding")
 	assert.Contains(t, pane, "  app/ui/view.go  pane clipping  [80]", "a file-level finding renders as the bare path")
-	assert.NotContains(t, pane, "the write error is dropped", "a collapsed row is one line")
+	assert.Contains(t, pane, "    the write error is dropped", "a finding opens showing its body, not just its summary")
 	assert.NotContains(t, pane, "is the retry budget right", "open questions are the report's, not the browser's")
 
 	t.Run("an unrecognized severity is grouped rather than dropped", func(t *testing.T) {
@@ -132,7 +134,7 @@ func TestFindingsState_move(t *testing.T) {
 	})
 
 	t.Run("outside the browser the same keys still scroll", func(t *testing.T) {
-		m := feed(t, filled(t, 20), CompletedMsg{Report: report()}, press("1"), press("k"))
+		m := feed(t, filled(t, 20), CompletedMsg{Report: report()}, press("2"), press("k"))
 		assert.Equal(t, 1, m.view.scroll, "a pane is scrolled, not a cursor")
 		assert.Equal(t, 0, m.findings.cursor)
 	})
@@ -140,34 +142,39 @@ func TestFindingsState_move(t *testing.T) {
 
 func TestFindingsState_toggle(t *testing.T) {
 	// every case builds its own model: Model copies share one findingsState pointer, so a subtest
-	// reusing another's would inherit its cursor and expansion
-	expanded := func(t *testing.T) Model {
+	// reusing another's would inherit its cursor and its folds
+	folded := func(t *testing.T) Model {
 		t.Helper()
 		return feed(t, browsed(t, report()), press("enter"))
 	}
 
-	pane := strings.Join(expanded(t).findingsPane(), "\n")
-	assert.Contains(t, pane, "    the write error is dropped", "the body is indented under its row")
-	assert.Contains(t, pane, "    so a short write reads as success", "and keeps its own line breaks")
-	assert.Contains(t, pane, "    fix: check it")
-	assert.Contains(t, pane, "    sources: bugs+impl, codex | lenses: bugs | verdict: confirmed")
+	open := strings.Join(browsed(t, report()).findingsPane(), "\n")
+	assert.Contains(t, open, "    the write error is dropped", "the body is indented under its row")
+	assert.Contains(t, open, "    so a short write reads as success", "and keeps its own line breaks")
+	assert.Contains(t, open, "    fix: check it")
+	assert.Contains(t, open, "    sources: bugs+impl, codex | lenses: bugs | verdict: confirmed")
 
-	t.Run("enter again collapses it", func(t *testing.T) {
-		back := feed(t, expanded(t), press("enter"))
-		assert.NotContains(t, strings.Join(back.findingsPane(), "\n"), "the write error is dropped")
+	assert.NotContains(t, strings.Join(folded(t).findingsPane(), "\n"), "the write error is dropped",
+		"enter folds the finding under the cursor down to its summary")
+
+	t.Run("enter again opens it back up", func(t *testing.T) {
+		back := feed(t, folded(t), press("enter"))
+		assert.Contains(t, strings.Join(back.findingsPane(), "\n"), "the write error is dropped")
 	})
 
-	t.Run("expansion follows the finding, not the row it sat on", func(t *testing.T) {
-		filtered := feed(t, expanded(t), press("/"), press("s"), press("t"), press("a"), press("enter"))
+	t.Run("the fold follows the finding, not the row it sat on", func(t *testing.T) {
+		filtered := feed(t, folded(t), press("/"), press("s"), press("t"), press("a"), press("enter"))
 		require.Len(t, filtered.findings.matches, 1, "only the stale comment matches")
-		assert.NotContains(t, strings.Join(filtered.findingsPane(), "\n"), "the comment names the old field",
-			"the expanded critical finding is filtered out, and its row does not expand a stranger")
+		assert.Contains(t, strings.Join(filtered.findingsPane(), "\n"), "the comment names the old field",
+			"the folded critical finding is filtered out, and its row does not fold a stranger")
 	})
 
-	t.Run("a row with nothing to expand adds no lines", func(t *testing.T) {
-		bare := feed(t, browsed(t, finding.Report{Findings: []finding.Finding{
-			{File: "a.go", Line: 1, Severity: finding.Minor, Title: "terse"}}}), press("enter"))
-		assert.Equal(t, []string{"── MINOR ──", "> a.go:1  terse  [0]"}, bare.findingsPane())
+	t.Run("a row with nothing to show is one line either way", func(t *testing.T) {
+		terse := finding.Report{Findings: []finding.Finding{
+			{File: "a.go", Line: 1, Severity: finding.Minor, Title: "terse"}}}
+		want := []string{"── MINOR ──", "> a.go:1  terse  [0]"}
+		assert.Equal(t, want, browsed(t, terse).findingsPane())
+		assert.Equal(t, want, feed(t, browsed(t, terse), press("enter")).findingsPane())
 	})
 
 	t.Run("an empty browser tolerates the key", func(t *testing.T) {
