@@ -1,20 +1,35 @@
-# The task directory
+# The review context — what to write
 
 All review context reaches revmux as files the caller wrote. revmux does no scope detection.
 
-## Layout
+## Where the files go
 
-```
-<tasks-dir>/<task-id>/          caller-owned; revmux never writes or prunes here
-├── scope.md                    → {{SCOPE}}    REQUIRED. Missing or empty = exit 2
-├── goal.md                     → {{GOAL}}     optional
-├── profile.md                  → {{PROFILE}}  optional
-├── context/                    → {{CONTEXT}}  optional directory
-└── runs/                       revmux-owned
+`revmux new --task <id> --run <name>` prints the absolute path of every file to write:
+
+```console
+$ revmux new --task pr-123 --run 01-initial
+{
+  "task_dir": "/abs/.revmux/tasks/pr-123",
+  "task_file": "/abs/.revmux/tasks/pr-123/task.md",
+  "round_dir": "/abs/.revmux/tasks/pr-123/01-initial",
+  "input_dir": "/abs/.revmux/tasks/pr-123/01-initial/input",
+  "scope": "/abs/.revmux/tasks/pr-123/01-initial/input/scope.md",
+  "goal": "/abs/.revmux/tasks/pr-123/01-initial/input/goal.md",
+  "profile": "/abs/.revmux/tasks/pr-123/01-initial/input/profile.md",
+  "context": "/abs/.revmux/tasks/pr-123/01-initial/input/context",
+  "created": ["task_dir", "task_file", "round_dir", "input_dir"]
+}
 ```
 
-`<tasks-dir>` defaults to `./.revmux/tasks` but is a config knob. Resolve it with
-`scripts/task-state.sh <task-id>`, never hardcode it.
+**Write to those paths and no others.** Never join a path and never create a directory the output did
+not name. The layout is revmux's own detail.
+
+`created` names what this call made, so a second round on an existing task reports `round_dir` and
+`input_dir` alone. `context` is reported but never created — create it only when filling it.
+
+**Each round carries its own scope, goal, profile and context.** Round 2 reviews the fixes for what
+round 1 found, so it gets its own `scope.md` at its own `input/` path; round 1's is left as the record
+of what round 1 reviewed.
 
 ## Variables expand to paths, never contents
 
@@ -23,6 +38,28 @@ All review context reaches revmux as files the caller wrote. revmux does no scop
 - a large `scope.md` costs nothing at launch — length is bounded by what is worth reading
 - prefer text in `context/`; an agent still has to read it
 - an absent optional file expands to the literal `none provided`, not a broken path
+
+## task.md — how the next session finds this task
+
+At `task_file`, about the task rather than any one round. `revmux new` writes it commented out; fill it
+when the task is new:
+
+```yaml
+---
+description: OAuth token exchange rework
+url: https://github.com/umputun/revmux/pull/123
+branch: feature/oauth
+base: 4ed3259
+---
+
+Reviewing the token exchange path after the provider swap.
+```
+
+Every key is optional. Set the ones that identify the subject: `url` and `branch` are what a later
+session matches on exactly.
+
+Leave an existing `task.md` alone. revmux stores these strings and resolves none of them — no git runs
+against `branch` or `base`, nothing is fetched from `url`.
 
 ## scope.md — required
 
@@ -123,6 +160,8 @@ What kind of software this is and what counts as a real failure. Without it the 
 - **Which languages the change actually touches** — a Go repo's conventions are not the bar for a
   commit of shell and markdown
 
+Copy it forward into each round of a task; it is the one input that rarely changes between rounds.
+
 ## context/ — optional directory
 
 Ticket text, design notes, spec excerpts, a commit list. `{{CONTEXT}}` expands to the directory path.
@@ -134,24 +173,20 @@ Keep it curated — every file is a tool call an agent may spend.
 
 ## Task and run names
 
-Caller-chosen, and both become filesystem paths: no separators, no `..`, not absolute, no leading dot.
+Both become path components: no separators, no `..`, not absolute, no leading dot.
 
-### Task ids must be reproducible
-
-Every round after the first depends on landing in the **same** directory, and nothing enforces it. A
-later session writing `pr123` where an earlier one wrote `pr-123` gets a new directory and runs as a
-first round with no history — the prior-rounds block is simply omitted, exactly as on a genuine first
-round.
-
-**List before creating:**
+### Match a task before minting an id
 
 ```bash
-revmux config | jq -r '.paths.tasks[]'
+revmux config | jq '.paths.tasks'
 ```
 
-Reuse a match verbatim. `task-state.sh` cannot help here — it answers "does *this exact id* exist".
+Each entry carries `id`, `description`, `url`, `branch`, `base` and the `rounds` already reviewed under
+it. Match on `url` or `branch` exactly; failing that, on `description` against the subject in hand.
+Reuse the matched `id` verbatim — a second id for one subject forks the history and the next round runs
+with none.
 
-**Derive the id:**
+Name a new task only when nothing matches:
 
 | reviewing | task id |
 |---|---|
@@ -161,35 +196,51 @@ Reuse a match verbatim. `task-state.sh` cannot help here — it answers "does *t
 | a commit range | `since-<short-sha>` |
 | working-tree changes | `wip-<branch>` |
 
-Prefer the most stable identifier: a branch name outlives a sha, a PR number outlives a rename.
+Prefer the most stable identifier: a branch name outlives a sha, a PR number outlives a rename. Then
+write that task's `task.md`, so the next session matches instead of deriving.
 
-Branch names commonly contain `/`, which revmux rejects — replace it. `task-state.sh` validates and
-refuses a bad id before any context file is written to a path revmux will not accept.
+`scripts/task-state.sh <task-id>` validates an id and reports what the task holds — its `task.md`
+anchors, every round, and each round's `input/` state. Each round comes back `prepared`, `claimed` or
+`ran`; `revmux config` lists only the `ran` ones, so the script is how a round that is still open —
+never reviewed, or reviewed by a run that never finished — becomes visible. A `claimed` round is only
+re-runnable while that run left nothing in it; revmux refuses the name and says so if it did not.
 
 ### Run names: `NN-label`
 
-`01-initial`, `02-after-fix`, `03-final`. Sorts lexically, so `ls runs/` reads in order. Take `NN`
-from `task-state.sh`'s `runs:` count.
+`01-initial`, `02-after-fix`, `03-final`. Sorts lexically, so rounds read in order. `NN` is one past
+the highest round already there.
 
 Do not mix vocabularies inside one task — `round-1` next to `after-fix` shares no ordering axis.
 
-Omitted, `--run` defaults to a UTC timestamp: sorts correctly, says nothing about why the round ran.
+`--run` is required and has no default. A round that has already run is an error, not an overwrite. A
+round whose review never finished is not one of those: re-run it under the same name, with the same
+`input/`, as long as that review had not already written artifacts into the round — if it had, revmux
+refuses the name and names what it found, and the answer is a new round with the `input/` copied
+across. `task.md`, `scope.md` and `runs` are reserved and cannot name a round.
 
-**An existing `--run` name is an error, not an overwrite.**
+## Rounds
 
-## Reusing a task across rounds
-
-```
+```bash
+revmux new --task pr-123 --run 01-initial      # then write its input/
 revmux --task pr-123 --run 01-initial
 <fix findings>
+revmux new --task pr-123 --run 02-after-fix    # then write its own input/
 revmux --task pr-123 --run 02-after-fix
 ```
 
-On later rounds revmux injects the `runs/` path plus a one-line inventory per round — name, when it
-ran, counts by severity, which sources degraded. It carries its own re-evaluate-independently
+revmux injects the prior rounds into every composed prompt: one line per round with its name, when it
+ran, counts by severity and which sources degraded, carrying its own re-evaluate-independently
 instruction.
 
 **Never paste prior findings into `scope.md`** — it duplicates the injection and anchors the agents.
 
-Update `scope.md` between rounds only when the scope moved. Leave it when only the code changed under
-a fixed range.
+Round 2's `scope.md` describes what round 2 reviews: the fixes, and the range they land in.
+
+## Removing a round
+
+```bash
+rm -rf <round_dir>
+```
+
+revmux deletes nothing itself, so rounds accumulate until removed by hand. Nothing links rounds
+together: removing one loses that round's own record and affects nothing else.

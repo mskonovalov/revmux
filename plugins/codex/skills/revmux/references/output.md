@@ -11,7 +11,8 @@ Prefer JSON when a model consumes it. Use `--markdown` only for output going str
 
 ```json
 {
-  "scope": {"task": "pr-123", "run": "02-after-fix", "scope_path": "/abs/.revmux/tasks/pr-123/scope.md"},
+  "scope": {"task": "pr-123", "run": "02-after-fix",
+            "scope_path": "/abs/.revmux/tasks/pr-123/02-after-fix/input/scope.md"},
   "sources": {
     "expected": 4, "reported": 3, "degraded": ["docs+tests"],
     "agents": [
@@ -116,10 +117,12 @@ Do not paraphrase a body down to its title — the body carries the trigger and 
 
 ## The run archive
 
-Under `<task-dir>/runs/<run>/`:
+Every artifact lands in the round directory — the `round_dir` `revmux new` reported — beside the
+`input/` the round was reviewed against:
 
 ```
-runs/02-after-fix/
+02-after-fix/
+├── input/                    the scope, goal, profile and context this round was reviewed against
 ├── manifest.json             roster, prompt provenance + hashes, requested vs actual model, timings
 ├── prompts/
 │   ├── agents/               composed prompt per agent, post-substitution
@@ -137,6 +140,8 @@ runs/02-after-fix/
 └── findings.json
 ```
 
+A round read on its own shows both what was reviewed and what came back.
+
 Both `report.md` and `findings.json` are always written, whichever renderer went to stdout. This is
 the recovery path when a run's stdout was lost.
 
@@ -151,8 +156,17 @@ the recovery path when a run's stdout was lost.
 
 A failed archive write fails the run. The exception is a per-agent tee, which degrades that source.
 
-`--keep-runs` (default 10) prunes old rounds by mtime, so archived reports are not permanent. Pruning
-only reads `runs/`; the caller-owned files are never candidates.
+`manifest.json` also marks the round as run: revmux refuses to reuse a round that finished. It is
+created empty when the run starts and filled in when it ends, so a round holding an **empty** one was
+claimed by a review that never came back. That round is still open, and re-running it under the same
+`--run` name is the way to recover it — but only while the dead review wrote nothing else into it. A
+round that already holds `stages/`, `agents/`, `prompts/`, `events.jsonl` or a report is refused under
+its own name, because a second run there would leave one round holding two runs' artifacts. Nothing is
+deleted to make it usable: open the next round and copy the `input/` across. A directory with no
+`manifest.json` at all is a round prepared but never reviewed.
+
+Rounds are permanent. revmux deletes nothing, so reclaiming space is `rm -rf <round_dir>` run by hand,
+safe at any time because nothing links rounds together.
 
 ## The plain progress renderer
 

@@ -53,19 +53,19 @@ ln -s "$PWD/plugins/codex/skills/revmux" ~/.codex/skills/revmux
 /revmux watch              run with the TUI in a terminal overlay
 ```
 
-The skill resolves the scope, writes the task directory, runs revmux, reads the JSON back, and
-presents the findings. Re-running after fixes is a new `--run` name against the same `--task`; revmux
-carries the prior rounds into every prompt itself.
+The skill resolves the scope, opens a round with `revmux new`, writes the context at the paths it
+reports, runs revmux, reads the JSON back, and presents the findings. Re-running after fixes is a new
+round on the same task; revmux carries the prior rounds into every prompt itself.
 
 ## Differences from the Claude Code plugin
 
-- Script paths resolve through the repo root, falling back to `$CODEX_HOME` (or `~/.codex`), instead
-  of `$CLAUDE_SKILL_DIR`
+- Script paths resolve from the installed skill under `$CODEX_HOME` (or `~/.codex`), instead of
+  `$CLAUDE_SKILL_DIR`
 - `AskUserQuestion` is replaced by numbered-list prompts, the Codex convention
 - `EnterPlanMode` is replaced by an inline markdown plan plus an explicit confirmation before any
   file is modified
 
-Everything else — the task directory format, the flags, the JSON shape, the exit codes, the overlay
+Everything else — the round's context files, the flags, the JSON shape, the exit codes, the overlay
 launcher and every reference file — is identical between the two.
 
 ## Notes

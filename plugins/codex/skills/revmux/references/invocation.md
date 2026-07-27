@@ -3,11 +3,13 @@
 ## The shape of a call
 
 ```
-revmux --task <id> [--run <name>] [--profile <name> | --lenses a,b] [--no-tui] [flags] > findings.json
+revmux new  --task <id> --run <name>                                          > paths.json
+revmux      --task <id> --run <name> [--profile <name> | --lenses a,b] [--no-tui] [flags] > findings.json
 ```
 
-Everything except `--task` has a working default. `--task` names a directory the caller has already
-filled; see `task-dir.md`.
+`--task` and `--run` are both required and neither has a default; everything else does. `revmux new`
+creates the round and reports the paths to fill; the review reads what was written there and creates
+nothing. See `task-dir.md`.
 
 ## Run it in the background, and do not poll
 
@@ -103,9 +105,17 @@ user's behalf, that blocks the launcher indefinitely if nobody returns to it, so
 
 ### Recovering a report when the launcher dies
 
-The report is never only in flight. revmux archives every run, so it is on disk at
-`<task-dir>/runs/<run>/findings.json` and `report.md` whatever happened to the launcher — a timeout,
-a killed process, a closed terminal. Read from there rather than re-running a completed review.
+A run that **completed** archives itself before anything reaches stdout, so its `findings.json` and
+`report.md` are in the round directory whatever happened to the launcher afterwards — a timeout on the
+launcher, a closed terminal, a lost pipe. Read from there rather than re-running a completed review.
+
+A run that was **killed or failed** wrote no report at all: archiving happens after the pipeline
+returns, so there is nothing on disk to recover. Re-run it under the **same** `--run` name only while
+nothing else was written into that round — interrupted before an agent reported, it is still yours,
+with the `input/` you wrote in it. One that had already written stage snapshots, agent tees or composed
+prompts is refused under its own name, because a second run there would leave one round holding two
+runs' artifacts under a manifest describing only the second. The error names what it found; nothing is
+deleted to make the round usable. Open the next round and copy the `input/` across.
 
 ## Exit codes — `1` is a normal outcome
 
@@ -129,9 +139,10 @@ caller is told not to re-run on `1`.
 the most common way to misuse revmux: a caller treats nonzero as an error, discards a complete report,
 and re-runs a fifteen-minute review to get the same answer.
 
-Exit `2` covers: bad config, an unreadable prompt tree, a missing or empty `scope.md`, a `--run` name
-that already exists, an unwritable run artifact, and the case where every source degraded. It also
-covers a delivered `SIGINT`/`SIGTERM`. On `2`, read stderr — the message names which of these it was.
+Exit `2` covers: bad config, an unreadable prompt tree, an omitted `--run`, a round with no `input/` or
+an empty `scope.md`, a round that has already run, an unwritable run artifact, and the case where every
+source degraded. It also covers a delivered `SIGINT`/`SIGTERM`. On `2`, read stderr — the message names
+which of these it was.
 
 ## Choosing a profile
 
@@ -256,8 +267,8 @@ revmux config                       # what a bare invocation resolves to
 revmux --profile focused config     # what THAT invocation would resolve to
 ```
 
-Prints the resolved configuration as JSON and exits `0`. It runs no pipeline, writes no run directory
-and touches nothing under the tasks root, so it is always safe to call.
+Prints the resolved configuration as JSON and exits `0`. It runs no pipeline and creates nothing; it
+reads the tasks root to list what is there, and writes nothing anywhere, so it is always safe to call.
 
 It reports what **resolved**, not what ships: a user who overrode a lens sees his own text's
 description. Use it to answer, without guessing:
@@ -266,11 +277,36 @@ description. Use it to answer, without guessing:
 - what a lens covers — `.lenses[].description`
 - which model and executor the stages use — `.stages[]`
 - what `effort` and `executor` accept — `.vocabulary`
-- where the tasks root resolved to, and which tasks already exist — `.paths.tasks_dir`, `.paths.tasks`
+- which tasks already exist, what each covers and which rounds ran — `.paths.tasks`, whose entries carry
+  `id`, `description`, `url`, `branch`, `base` and `rounds`; match on `url` or `branch` before minting
+  a new id
 - whether a knob came from a flag, the project config, the user config or the default —
   `.knobs[].source`
 
 That last one distinguishes a deliberate setting from a default, which `--help` cannot.
+
+`rounds` lists the rounds that ran to completion, so neither a round prepared but not yet reviewed nor
+one whose review never finished is in it — both are still open under their own name, the interrupted
+one only while its review left nothing behind.
+`scripts/task-state.sh <task-id>` reports those, with each round's `input/` state.
+A task whose `task.md` will not parse is still listed, with `meta_error` saying why its anchors are
+empty; fix the file rather than minting a second id for the same subject.
+
+An empty list always means empty. If the tasks root could not be read the reason is `.paths.tasks_error`,
+if one task's directory could not be read it is `rounds_error` on that entry, and a `--workdir` that would
+not resolve is `.paths.workdir_error`. Treat any of them as "unknown", never as "nothing is there".
+
+## `revmux new` — the only call that creates anything
+
+```bash
+revmux new --task pr-123 --run 01-initial
+```
+
+Creates the round and prints, as JSON on stdout, every path to write plus a `created` list naming which
+of them this call made. Take the paths from that output; see `task-dir.md`.
+
+It never overwrites: an existing `task.md` is left alone and a round that has already run is refused.
+The review path creates nothing, so a typo'd `--task` there is an error rather than an empty task.
 
 ## Environment
 
@@ -292,8 +328,8 @@ each process group down itself rather than leaving model CLIs running unsupervis
 
 | Flag | Default | Description |
 |---|---|---|
-| `--task=<id>` | | name of the task directory holding the review context |
-| `--run=<name>` | UTC timestamp | name for this round of the review |
+| `--task=<id>` | required | name of the task directory holding the review context |
+| `--run=<name>` | required | name for this round of the review |
 | `--lenses=<a,b>` | | lens set replacing the profile roster |
 | `--workdir=<dir>` | working directory | directory the review subprocesses run in |
 | `--min-confidence=<n>` | `0` | drop findings below this confidence |
@@ -317,9 +353,19 @@ These also read from the config file, under the same name as the flag:
 | `--max-parallel=<n>` | `max-parallel` | `4` | how many agents run at once |
 | `--verify-groups=<n>` | `verify-groups` | `6` | cap on the number of verifier groups |
 | `--tasks-dir=<dir>` | `tasks-dir` | `./.revmux/tasks` | root directory holding task directories |
-| `--keep-runs=<n>` | `keep-runs` | `10` | how many runs to keep per task |
 | `--auto-exit=<d>` | `auto-exit` | `0s` | close the TUI this long after the report arrives; `0` waits for a key |
 | `--profile=<name>` | `profile` | `comprehensive` | profile naming the roster to run |
 
-`--keep-runs` prunes old rounds by modification time. Pruning only ever reads `runs/`, so `scope.md`,
-`goal.md`, `profile.md` and `context/` are never candidates however aggressive the setting is.
+`--task` and `--run` are not config keys: a config file naming the round to write would make the same
+command review different context in different directories.
+
+## Cleaning up
+
+revmux deletes nothing and rounds accumulate. Reclaim space by removing round directories:
+
+```bash
+rm -rf <tasks-dir>/<task>/<round>
+```
+
+Safe at any time. Nothing links rounds together — the prior-round inventory is rebuilt from whichever
+round directories are present.

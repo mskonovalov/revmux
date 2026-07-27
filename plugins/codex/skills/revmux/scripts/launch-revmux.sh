@@ -3,7 +3,7 @@
 #
 # Two ways exist to run a review, and this script is the second one:
 #
-#   headless  revmux --task X --no-tui > findings.json     agent launches it in the background,
+#   headless  revmux --task X --run Y --no-tui > findings.json   agent launches it in the background,
 #             reads the JSON when it finishes. Nothing to watch.
 #   overlay   this script                                  the TUI runs on screen in an overlay
 #             (agterm, tmux popup, zellij float, kitty overlay, ...) so the user watches agents
@@ -12,7 +12,7 @@
 # Same review either way. The overlay exists because a review takes minutes and a live view of
 # which agent is doing what is the difference between waiting and watching.
 #
-# usage: launch-revmux.sh --task <id> [--run <name>] [any other revmux flag]
+# usage: launch-revmux.sh --task <id> --run <name> [any other revmux flag]
 # output: the report (JSON by default, markdown with --markdown) on stdout
 # exit:   0 no findings, 1 findings reported, 2 tool error (all three are revmux's own)
 #         3 launcher failure - revmux never ran, or the overlay died before it finished
@@ -48,7 +48,7 @@ if [ -z "$REVMUX_BIN" ]; then
 fi
 
 if [ "$#" -eq 0 ]; then
-    echo "error: no arguments - revmux needs at least --task <id>" >&2
+    echo "error: no arguments - revmux needs --task <id> and --run <name>" >&2
     exit 2
 fi
 

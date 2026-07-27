@@ -32,7 +32,7 @@ It does no scope detection, no git, no PR fetching, no source modification. This
 
 If asked **about** revmux rather than for a review, answer from the references and do not launch a run.
 
-- `references/task-dir.md` — composing the four context inputs
+- `references/task-dir.md` — the round's context files, task and run naming
 - `references/invocation.md` — flags, profiles, lenses, overlay backends, config precedence
 - `references/output.md` — JSON shape, verdicts, exit codes, run archive
 
@@ -92,20 +92,21 @@ Run the git commands here to learn scale and file list.
 Ask only when genuinely ambiguous — a feature branch with uncommitted work is the standard case. Use
 AskUserQuestion, here and at the headless-versus-overlay choice in Step 4.
 
-### Step 2: Compose the task directory
+### Step 2: Open a round and write its context
 
 Read `references/task-dir.md` first.
 
-**List existing tasks before creating one.** A task accumulates rounds; every round after the first
-depends on landing in the same directory, and nothing enforces it.
+**Match an existing task before minting an id.** A second id for one subject runs as a first round with
+no history.
 
 ```bash
-revmux config | jq -r '.paths.tasks[]'
+revmux config | jq '.paths.tasks'
 ```
 
-Reuse a match verbatim. Only mint a new id when none matches.
+Entries carry `id`, `description`, `url`, `branch`, `base` and `rounds`. Match on `url` or `branch`
+exactly; failing that, on `description` against the subject in hand. Reuse the matched `id` verbatim.
 
-**Derive the id:**
+Derive an id only when nothing matches:
 
 | reviewing | task id |
 |---|---|
@@ -121,24 +122,46 @@ No path separators, no `..`, no leading dot, not absolute — revmux rejects tho
 ${CLAUDE_SKILL_DIR}/scripts/task-state.sh <task-id>
 ```
 
-Resolves the tasks root from `revmux config` — never hardcode `./.revmux/tasks` — validates the id,
-and lists which context files and run names exist.
+Validates the id and reports the task's `task.md` anchors, every round, and each round's `input/`
+state. Each round is `prepared` (never reviewed), `claimed` (a review started and never finished) or
+`ran`. `revmux config` lists only the `ran` ones; a `prepared` round is open under its own name, and a
+`claimed` one only while that review left nothing in it — revmux refuses the name and says what it
+found if it did not.
 
-**Name runs `NN-label`:** `01-initial`, `02-after-fix`, `03-final`. Take `NN` from the `runs:` count.
-Do not mix vocabularies across rounds of one task.
+**Name the round `NN-label`:** `01-initial`, `02-after-fix`, `03-final`. `NN` is one past the highest
+round already there. Do not mix vocabularies across rounds of one task.
 
-Then write, under the reported `task_dir`:
+```bash
+revmux new --task <id> --run <NN-label>
+```
 
-- **`scope.md`** — required. What changed, the commands to see it, its scale, which files to read in
+It prints the absolute path of every file to write, plus which of them it created:
+
+```json
+{"task_dir": "…", "task_file": "…/task.md", "round_dir": "…/01-initial",
+ "input_dir": "…/01-initial/input", "scope": "…/input/scope.md", "goal": "…/input/goal.md",
+ "profile": "…/input/profile.md", "context": "…/input/context",
+ "created": ["task_dir", "task_file", "round_dir", "input_dir"]}
+```
+
+**Write to those paths and no others.** Never join a path and never create a directory the output did
+not name.
+
+- **`scope`** — required. What changed, the commands to see it, its scale, which files to read in
   full, what to ignore. Write commands in plainest form: `git diff master...HEAD`, never
   `git -c core.pager=cat diff ...` — a leading option defeats the child's permission prefix matching.
-- **`goal.md`** — optional. What the change is for, plus a "this is correct only if…" list.
-- **`profile.md`** — optional, reusable across the repo. What the software is, what a real failure
-  looks like, where the project's rules live, which conventions are deliberate.
-- **`context/`** — optional. Ticket text, design notes, commit list.
+- **`goal`** — optional. What the change is for, plus a "this is correct only if…" list.
+- **`profile`** — optional, reusable across the repo. What the software is, what a real failure
+  looks like, where the project's rules live, which conventions are deliberate. Copy it into each
+  round of the task.
+- **`context`** — optional. Ticket text, design notes, commit list. The path is reported but not
+  created.
+- **`task_file`** — when `created` lists it, write the task's `task.md`: `description`, plus `url`,
+  `branch` and `base` when known. That front matter is what the next session matches on.
 
-If `scope.md` exists and this is a re-review, leave it unless the scope moved. Never overwrite
-caller-owned files silently.
+Each round holds its own context, so a re-review writes a fresh `scope` in its own round rather than
+editing an earlier one's. When `task-state.sh` reports the round as `scope=present`, read it before
+writing over it.
 
 ### Step 3: Choose profile and flags
 
@@ -171,7 +194,7 @@ Launch in the background, wait for the notification.
 2. the stderr log path, and that `tail -f <path>` shows live per-agent progress
 3. that they can ask for status any time
 
-On a status request, read the tail of the stderr log and `<task-dir>/runs/<run>/events.jsonl`. Report
+On a status request, read the tail of the stderr log and `events.jsonl` in the round directory. Report
 the stage, which agents are active, and elapsed. Never guess.
 
 **Overlay — when the user wants to watch:**
@@ -192,17 +215,23 @@ panel at 80% of the pane. Do not pass `--no-tui`; the script rejects it.
 
 **Choose headless** unless the user asked to watch or is clearly at the terminal.
 
-**If the launcher dies the report is not lost** — it is at `<task-dir>/runs/<run>/findings.json` and
-`report.md`. Read from there rather than re-running.
+**If the launcher dies after a run completed, the report is not lost** — it is in the round directory
+as `findings.json` and `report.md`. Read from there rather than re-running. A run that was killed or
+exited `2` wrote no report, so there is nothing to read: re-run it instead.
 
-`--run` defaults to a UTC timestamp. A name that already exists is an error, not an overwrite.
+`--run` is required. A round that has already run is an error, not an overwrite — but a round whose
+review never finished is not one of those, so a retry after exit `2` reuses the same name and the same
+`input/`. That holds only while the dead review wrote nothing into the round; one that had already
+written stages, tees or prompts is refused under its own name, and the answer is a new round with the
+`input/` copied across. It may not be named `task.md`, `scope.md` or `runs`.
 
 ### Step 5: Read the result
 
 Read `references/output.md` for the full shape.
 
-1. **Exit code.** `2` means nothing usable — read the stderr log, which names the cause. `0` and `1`
-   both completed.
+1. **Exit code.** `2` means nothing usable and no report — read the stderr log, which names the cause,
+   fix it and re-run: the same `--run` while that round holds nothing but its `input/`, a new round
+   with the `input/` copied across once revmux refuses the name. `0` and `1` both completed.
 2. **`sources`.** Non-empty `degraded` means partial; lead with that.
 3. **`findings`.** Group by severity.
 4. **`open_questions`** and **`pre_existing`** — report separately.
@@ -223,21 +252,23 @@ Stop here unless fixing was requested.
 
 1. Agree which findings to act on. A `rejected` or `immaterial` verdict means revmux already dismissed it.
 2. Make the fixes.
-3. Re-run the same task under the next run name:
+3. Open the next round on the same task and write its own `scope` — the fixes and the range they land
+   in — then run it:
 
 ```bash
+revmux new --task <id> --run 02-after-fix
 revmux --task <id> --run 02-after-fix --no-tui \
     > /tmp/revmux-<id>-02-after-fix.json 2> /tmp/revmux-<id>-02-after-fix.log
 ```
 
-revmux injects the prior rounds itself. **Do not paste prior findings into `scope.md`** — it
+revmux injects the prior rounds itself. **Do not paste prior findings into the scope** — it
 duplicates the injection and anchors agents on conclusions they should re-derive.
 
 `--profile final` is a good last round.
 
 ## Debugging a review that looks wrong
 
-Archive is at `<task-dir>/runs/<run>/`:
+The archive is the round directory `revmux new` reported, beside the `input/` it was run against:
 
 | question | where |
 |---|---|
@@ -254,9 +285,10 @@ Archive is at `<task-dir>/runs/<run>/`:
 User: "revmux this branch"
 → preflight.sh → all present
 → git: on tui-rework, 7 commits vs master, 22 files, +840/-310
-→ revmux config → no matching task; derive `tui-rework`
-→ task-state.sh tui-rework → does not exist
-→ write scope.md, goal.md, profile.md
+→ revmux config → .paths.tasks has no url or branch match; derive `tui-rework`
+→ task-state.sh tui-rework → exists: false
+→ revmux new --task tui-rework --run 01-initial → paths, created all four
+→ write task.md, scope, goal, profile at the reported paths
 → revmux --task tui-rework --run 01-initial --no-tui > /tmp/…json  (background)
 → tell user: ~9 min, tail -f /tmp/…log for live progress
 → exit 1, sources 4/4, degraded []
@@ -266,12 +298,15 @@ User: "revmux this branch"
 ```
 User: "fix the major one and run it again"
 → fix applied
+→ revmux config → branch matches task `tui-rework`, rounds ["01-initial"]
+→ revmux new --task tui-rework --run 02-after-fix → write its own scope
 → revmux --task tui-rework --run 02-after-fix --no-tui
 → exit 0, nothing above threshold
 ```
 
 ```
 User: "revmux the branch, I want to watch it"
+→ revmux new --task tui-rework --run 01-initial → write its input
 → launch-revmux.sh --task tui-rework --run 01-initial > /tmp/…json  (background)
 → agterm: floating overlay at 80%, TUI live, self-closes 30s after the report
 → same JSON, same exit code, Step 5 onward identical
