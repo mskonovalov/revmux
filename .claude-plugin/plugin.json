@@ -1,0 +1,19 @@
+{
+  "name": "revmux",
+  "version": "0.1.0",
+  "description": "Run a supervised multi-agent code review with parallel claude and codex subprocesses, and act on the findings",
+  "author": {
+    "name": "umputun",
+    "email": "umputun@gmail.com"
+  },
+  "repository": "https://github.com/umputun/revmux",
+  "license": "MIT",
+  "keywords": [
+    "code-review",
+    "multi-agent",
+    "supervision",
+    "claude",
+    "codex"
+  ],
+  "skills": "./.claude-plugin/skills/"
+}

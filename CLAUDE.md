@@ -27,6 +27,7 @@ If a note would be equally true of any Go project, it does not belong here.
 ## Build and test commands
 
 - Build: `make build` (output: `.bin/revmux`)
+- Install: `make install` (symlinks `.bin/revmux` into `$BINDIR`, default `/usr/local/bin`; `make uninstall` removes it)
 - Test: `make test` (race detector + coverage, excludes mocks)
 - Lint: `make lint` or `golangci-lint run --max-issues-per-linter=0 --max-same-issues=0`
 - Format: `make fmt`
@@ -51,6 +52,13 @@ If a note would be equally true of any Go project, it does not belong here.
 - `app/archive/` — per-run artifacts under the task directory's `runs/<run>/`
 - `app/ui/` — bubbletea TUI, single `Model` with state grouped into sub-structs, files split by concern
 - `app/*/mocks/` — moq-generated, never edited by hand
+
+`.claude-plugin/` and `plugins/codex/` ship the **caller** as a skill, one tree per harness.
+They contain no Go and are not built; they are documentation plus four shell scripts.
+The two trees carry duplicate copies of `references/` and `scripts/` on purpose — a plugin has to be
+self-contained once installed, so a shared directory is not available to them.
+**A change to one must be made to the other**, and the only intended divergence is in `SKILL.md`:
+script-path resolution and the harness's own way of asking a question.
 
 ## Hard rules
 
@@ -228,6 +236,10 @@ Stamping happens in `find`, not synthesis, or `--no-synthesis` runs carry invent
   for an agent-scoped kind, or in `Model.apply` for one that is not, since `apply` dispatches everything
   else to `track` and both switches end in a `default` that renders nothing.
 - A new lens file needs an entry in at least one shipped profile, or nothing will ever run it.
+- Anything the shipped skill documents — a flag, a profile, the JSON shape, an exit code, the task
+  directory layout — needs the same edit in **both** skill trees, since they hold duplicate copies of
+  `references/` and `scripts/`. A `diff -r` of the two `references/` and `scripts/` directories must
+  come back empty; only `SKILL.md` differs.
 - A new prompt input — a variable, an injected block, a per-agent knob — needs a matching record in
   `manifest.json` or the archived prompt, or a reflection agent cannot tell what shaped the review.
 - Changing any of the three stage schemas means changing the embedded JSON under `app/finding/`

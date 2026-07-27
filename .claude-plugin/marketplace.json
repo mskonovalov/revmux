@@ -1,0 +1,18 @@
+{
+  "name": "revmux",
+  "owner": {
+    "name": "umputun",
+    "email": "umputun@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "revmux",
+      "source": "./",
+      "description": "Run a supervised multi-agent code review with parallel claude and codex subprocesses, and act on the findings",
+      "version": "0.1.0",
+      "author": {
+        "name": "umputun"
+      }
+    }
+  ]
+}

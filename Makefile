@@ -6,11 +6,25 @@ TIMESTAMP=$(shell git log -1 --format=%ct HEAD 2>/dev/null | xargs -I{} date -u 
 GIT_REV=$(shell printf "%s-%s-%s" "$(BRANCH)" "$(HASH)" "$(TIMESTAMP)")
 REV=$(if $(filter --,$(GIT_REV)),latest,$(GIT_REV))
 
+# where `make install` links the binary; override for a prefix that needs no privileges
+BINDIR ?= /usr/local/bin
+
 all: test build
 
 build:
 	go build -ldflags "-X main.revision=$(REV) -s -w" -o .bin/revmux.$(BRANCH) ./app
 	cp .bin/revmux.$(BRANCH) .bin/revmux
+
+# symlink rather than copy, so every subsequent `make build` is picked up without reinstalling.
+# rm before ln instead of `ln -sf`: with an existing symlink to a directory, BSD ln follows it and
+# creates the link inside it rather than replacing it.
+install: build
+	rm -f $(BINDIR)/revmux
+	ln -s $(CURDIR)/.bin/revmux $(BINDIR)/revmux
+	@echo "$(BINDIR)/revmux -> $(CURDIR)/.bin/revmux"
+
+uninstall:
+	rm -f $(BINDIR)/revmux
 
 test:
 	go clean -testcache
@@ -35,4 +49,4 @@ version:
 	@echo "branch: $(BRANCH), hash: $(HASH), timestamp: $(TIMESTAMP)"
 	@echo "revision: $(REV)"
 
-.PHONY: all build test lint fmt race version
+.PHONY: all build install uninstall test lint fmt race version

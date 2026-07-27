@@ -1,0 +1,316 @@
+# Invoking revmux — flags, profiles, timing and trust
+
+## The shape of a call
+
+```
+revmux --task <id> [--run <name>] [--profile <name> | --lenses a,b] [--no-tui] [flags] > findings.json
+```
+
+Everything except `--task` has a working default. `--task` names a directory the caller has already
+filled; see `task-dir.md`.
+
+## Run it in the background, and do not poll
+
+A review is not a fast command. The find stage runs several agents in parallel with a launch stagger,
+then synthesis is one more model call, then verification is another fan-out. **Three to fifteen
+minutes is normal**, and the `comprehensive` profile with a codex peer sits at the upper end of that.
+
+Most agent harnesses cap a foreground shell command well below that, so a foreground call will be cut
+off partway through. Launching it in the background is the only reliable pattern:
+
+```bash
+revmux --task pr-123 --run round-1 --no-tui > /tmp/revmux-pr-123.json 2> /tmp/revmux-pr-123.log
+```
+
+- run it with the harness's background flag, then wait for the completion notification
+- **do not poll in a loop** and do not sleep-and-check; a background launch reports its own exit
+- redirect stdout to a file — that is the report, and it is the only thing on stdout
+- redirect stderr to a second file — that is the progress renderer, useful for diagnosing a bad run
+- `--no-tui` explicitly, so the plain stderr renderer is what runs rather than depending on whether a
+  tty happened to be openable
+
+Timeouts are configurable if a run is genuinely stuck rather than slow: `--idle-timeout` (default
+`2m`) kills and retries an agent that has produced no output for that long, and `--hard-timeout`
+(default `20m`) caps a single attempt. Raising them makes a stalled run take longer to fail, not more
+likely to succeed.
+
+## Overlay mode — running it with the TUI on screen
+
+revmux ships a live TUI: a status table with one row per supervised process (name, state, elapsed,
+last activity), a per-agent scrollback tab for each, and a findings browser once the report arrives.
+It renders to the **tty**, and is gated on the tty being openable — never on stdout being a terminal,
+which is false in exactly the `> findings.json` case where a user is most likely watching.
+
+An agent's own shell has no tty, so the TUI never appears there. `scripts/launch-revmux.sh` runs
+revmux in a terminal overlay instead:
+
+```bash
+scripts/launch-revmux.sh --task pr-123 --run round-1 > findings.json
+```
+
+It takes every revmux flag, forwards them unchanged, and returns the report on stdout with revmux's
+own exit code — so it is a drop-in substitute for the direct call, differing only in that the review
+is visible while it runs.
+
+### Backends, in detection order
+
+| backend | detected by | how it opens |
+|---|---|---|
+| agterm | `$AGTERM_SESSION_ID` + `agtermctl` | floating panel at 80% of the pane, blocking |
+| tmux window | `$TMUX` + `REVMUX_TMUX_WINDOW=1`, or agent-deck | server-owned window, survives a client drop |
+| tmux popup | `$TMUX` | `display-popup -E` at 90% |
+| zellij | `$ZELLIJ` | floating pane at 90% |
+| herdr | `$HERDR_ENV=1` | new fullscreen tab in the caller's workspace |
+| kitty | `$KITTY_LISTEN_ON` | overlay window |
+| wezterm / kaku | `$WEZTERM_PANE` | bottom split at 90% |
+| cmux | `$CMUX_SURFACE_ID` and friends | downward split |
+| ghostty | `$TERM_PROGRAM=ghostty` | zoomed split via AppleScript |
+| iTerm2 | `$ITERM_SESSION_ID` | split, direction chosen from pane geometry |
+| Emacs vterm | `$INSIDE_EMACS=vterm` | new vterm buffer in its own frame |
+
+Order matters where environments overlap: herdr is checked before kitty because herdr-in-kitty sets
+`KITTY_LISTEN_ON`, and cmux before ghostty because cmux can expose Ghostty's environment variables.
+
+### Environment overrides
+
+| variable | default | effect |
+|---|---|---|
+| `REVMUX_AGTERM_PERCENT` | `80` | agterm floating panel size, 1-100 |
+| `REVMUX_POPUP_WIDTH` | `90%` | tmux and zellij popup width |
+| `REVMUX_POPUP_HEIGHT` | `90%` | tmux, zellij and wezterm popup height |
+| `REVMUX_AUTO_EXIT` | `30s` | TUI self-close delay; `0` waits for a keypress |
+| `REVMUX_TMUX_WINDOW` | unset | `1` forces window mode, `0` forces the popup |
+
+### Why the launcher forwards PATH
+
+revmux does not just need to be found itself — **it spawns `claude` and `codex`**. Overlay backends
+start children from a server or app process whose environment predates the user's shell rc files, so
+a Homebrew or `~/.local/bin` claude is simply absent from `PATH` there. Without forwarding, every
+agent degrades on a binary that is plainly installed, and the run exits `2` with every source dead.
+
+`HOME`, `XDG_CONFIG_HOME`, `CODEX_HOME` and `TMPDIR` are forwarded for the same reason — they decide
+where the CLIs and revmux look for configuration and auth.
+
+`ANTHROPIC_API_KEY` is **not** forwarded. An `env KEY=VAL` prefix places the value in the process
+argv, where any `ps` on the machine can read it. revmux strips that variable from its children by
+default anyway, so overlay runs use interactive subscription auth. Use headless mode for key-based
+auth, where the variable is inherited normally rather than passed on a command line.
+
+### Auto-exit
+
+revmux leaves the TUI open until a key is pressed (`--auto-exit=0s`). In an overlay opened on the
+user's behalf, that blocks the launcher indefinitely if nobody returns to it, so the launcher injects
+`--auto-exit=30s` unless a value was passed. `REVMUX_AUTO_EXIT=0` restores waiting for a keypress.
+
+### Recovering a report when the launcher dies
+
+The report is never only in flight. revmux archives every run, so it is on disk at
+`<task-dir>/runs/<run>/findings.json` and `report.md` whatever happened to the launcher — a timeout,
+a killed process, a closed terminal. Read from there rather than re-running a completed review.
+
+## Exit codes — `1` is a normal outcome
+
+| Code | Meaning |
+|---|---|
+| `0` | ran fine, no findings above `--min-confidence` |
+| `1` | ran fine, **findings were reported** |
+| `2` | tool error — nothing usable was produced |
+
+**Exit `1` is success with findings. It is not a failure and must never be retried as one.** This is
+the most common way to misuse revmux: a caller treats nonzero as an error, discards a complete report,
+and re-runs a fifteen-minute review to get the same answer.
+
+Exit `2` covers: bad config, an unreadable prompt tree, a missing or empty `scope.md`, a `--run` name
+that already exists, an unwritable run artifact, and the case where every source degraded. It also
+covers a delivered `SIGINT`/`SIGTERM`. On `2`, read stderr — the message names which of these it was.
+
+## Choosing a profile
+
+| profile | roster | when |
+|---|---|---|
+| `comprehensive` | `bugs+impl`, `arch+quality`, `docs+tests` on claude, plus an adversarial codex peer | default; a real change with real risk |
+| `focused` | one `bugs` agent plus the codex peer | small or time-boxed change, correctness is the concern |
+| `final` | `bugs+impl` plus the codex peer, nothing below major reported | last look before merging |
+
+`--profile <name>`. The default is `comprehensive` and is itself a config knob.
+
+## Lenses
+
+| lens | covers |
+|---|---|
+| `bugs` | correctness defects — logic and boundaries, nil and bounds, concurrency, resource lifetime, error handling |
+| `impl` | goal fit — whether the change does what it set out to do, is wired up, and is proportionate |
+| `architecture` | conventions and organization — the project's own rules, established patterns, dependency and interface shape |
+| `quality` | style, over-engineering, error handling and accidental duplication in code that already works |
+| `docs` | documentation accuracy — doc comments against the code, and project docs the change leaves stale |
+| `tests` | whether tests exist where a defect can hide, actually exercise the code, and survive concurrency |
+| `adversarial` | attacks the change looking for what a sympathetic reader would accept |
+
+`--lenses bugs,impl` replaces the profile's roster while keeping its body. Two things about it are
+easy to get wrong:
+
+- it produces **one** agent carrying every named lens, not one agent per lens. A caller naming two
+  lenses is asking for a viewpoint, not for two corroborating votes.
+- the synthesized entry runs on **claude**, so a profile's codex peer does not survive the override.
+  Losing the second source also loses every cross-source confidence boost.
+
+Prefer a profile unless there is a specific reason to narrow. `--lenses docs` on a documentation-only
+change is a good use; `--lenses bugs` to "go faster" is what `--profile focused` is for, and that
+keeps the codex peer.
+
+Ask `revmux config` for the authoritative list — it reports what resolved, including user overrides,
+with each lens's own one-line description.
+
+## Stages, and skipping them
+
+1. **find** — the roster runs in parallel, staggered. Each agent returns structured findings.
+2. **synthesize** — one model call. Merges every source, dedupes on `(file, line ±2)`, boosts
+   confidence where distinct sources corroborate, splits out open questions and pre-existing issues,
+   drops weak singletons.
+3. **verify** — parallel agents grouped by directory, each seeing only its own group so it cannot
+   anchor on a neighbour. Every finding comes back with a verdict.
+
+`--no-synthesis` passes findings through with attribution intact — raw, duplicated across sources, no
+confidence boost. Useful when the question is "what did each source actually say".
+
+`--no-verify` marks every finding `unverified` rather than silently claiming it was checked. Faster,
+and appropriate when a human is going to read every finding anyway.
+
+Skipping both makes revmux a parallel agent launcher with an archive. That is a legitimate use, but
+the review quality is not comparable.
+
+## Filtering
+
+`--min-confidence=<n>` drops findings below that confidence. It filters **once, before anything
+renders**, so the report, the findings browser and the exit code all agree — a finding the exit code
+says is absent is never listed anywhere. Open questions, pre-existing and immaterial findings pass
+through untouched.
+
+`70` is a reasonable floor for "only show me things worth acting on". `0` (the default) shows
+everything that survived verification.
+
+## Where paths resolve from
+
+Two distinct roots, and conflating them is a common failure:
+
+- **the process working directory** governs the project config layer (`./.revmux/`) and the
+  `./.revmux/tasks` default for `--tasks-dir`
+- **`--workdir`** sets where the review subprocesses run and what `{{WORKDIR}}` expands to
+
+Reviewing a repository from outside it therefore means passing `--workdir`, `--tasks-dir` **and**
+`--config-dir` — otherwise the first resolves to the repo and the other two to wherever the caller
+happens to be standing.
+
+## `.revmux/` in a repository is executable trust
+
+Prompt and lens files resolve per file: `./.revmux/`, then `~/.config/revmux/`, then the embedded
+defaults. A checked-in `.revmux/lenses/bugs.md` replaces the shipped lens, and **that text becomes the
+instructions a headless agent with a shell executes**.
+
+So `.revmux/` is code, and running revmux inside a repository trusts it the way a `Makefile` there is
+trusted.
+
+**Before reviewing a branch or repository someone else wrote:** either read `.revmux/` first, or run
+revmux from outside the tree. The project layer is read from the process working directory and never
+from `--workdir`, so an invocation that stays outside never picks up the reviewed repository's own
+`.revmux/`:
+
+```bash
+cd ~/reviews                        # outside the repo under review
+revmux --task pr-123 \
+       --workdir ~/src/untrusted-repo \
+       --tasks-dir ~/reviews/.revmux/tasks \
+       --config-dir ~/.config/revmux
+```
+
+This is worth doing unprompted for any review of code from an untrusted author.
+
+## Config precedence
+
+**Runtime knobs** — command line, then `./.revmux/config`, then `~/.config/revmux/config`, then the
+built-in default. Layers merge per key, so a project config that sets one knob leaves the rest alone.
+The project layer is auto-detected; no flag selects it and its absence simply drops it.
+
+**Prompt and lens files** — `./.revmux/`, then `~/.config/revmux/`, then `go:embed` defaults, resolved
+per file. Overriding one lens does not orphan the others, and deleting an override falls back to the
+embedded copy rather than disabling the lens. To actually drop a lens, remove it from the profile
+roster.
+
+`--init` writes the commented-out config template to `./.revmux/`. `--dump-defaults <dir>` extracts
+the embedded prompt tree so it can be edited. Neither overwrites a customized file, and a normal run
+writes no config at all.
+
+## `revmux config` — ask rather than guess
+
+```bash
+revmux config                       # what a bare invocation resolves to
+revmux --profile focused config     # what THAT invocation would resolve to
+```
+
+Prints the resolved configuration as JSON and exits `0`. It runs no pipeline, writes no run directory
+and touches nothing under the tasks root, so it is always safe to call.
+
+It reports what **resolved**, not what ships: a user who overrode a lens sees his own text's
+description. Use it to answer, without guessing:
+
+- which profiles exist and what roster each one runs — `.profiles[]`
+- what a lens covers — `.lenses[].description`
+- which model and executor the stages use — `.stages[]`
+- what `effort` and `executor` accept — `.vocabulary`
+- where the tasks root resolved to, and which tasks already exist — `.paths.tasks_dir`, `.paths.tasks`
+- whether a knob came from a flag, the project config, the user config or the default —
+  `.knobs[].source`
+
+That last one distinguishes a deliberate setting from a default, which `--help` cannot.
+
+## Environment
+
+revmux drives the model CLIs as subprocesses, so both must already be installed and authenticated:
+
+- `claude` — every lens agent and both model stages run on it by default
+- `codex` — needed when a roster entry or a stage declares `executor: codex`, which every shipped
+  profile does
+
+`ANTHROPIC_API_KEY` is stripped from the child environment by default so `claude` uses interactive
+subscription auth; `--preserve-anthropic-api-key` passes it through for key-based auth. `CLAUDECODE`
+is always stripped — a `claude` child refuses to start when it believes it is a nested session, which
+is exactly the situation when an agent invokes revmux.
+
+Agent processes start in their own session, so the terminal never signals them directly; revmux tears
+each process group down itself rather than leaving model CLIs running unsupervised after it exits.
+
+## Full flag list
+
+| Flag | Default | Description |
+|---|---|---|
+| `--task=<id>` | | name of the task directory holding the review context |
+| `--run=<name>` | UTC timestamp | name for this round of the review |
+| `--lenses=<a,b>` | | lens set replacing the profile roster |
+| `--workdir=<dir>` | working directory | directory the review subprocesses run in |
+| `--min-confidence=<n>` | `0` | drop findings below this confidence |
+| `--no-synthesis` | | skip the synthesis stage |
+| `--no-verify` | | skip the verification stage |
+| `--no-tui` | | disable the terminal UI |
+| `--markdown` | | write the report as markdown instead of JSON |
+| `--preserve-anthropic-api-key` | | pass `ANTHROPIC_API_KEY` to the model CLIs |
+| `--config-dir=<dir>` | `~/.config/revmux` | directory holding the config file and the prompt tree |
+| `--init` | | write the commented-out config template to `./.revmux/` |
+| `--dump-defaults=<dir>` | | extract the embedded prompt tree into a directory |
+| `--version` | | show version and exit |
+
+These also read from the config file, under the same name as the flag:
+
+| Flag | Config key | Default | Description |
+|---|---|---|---|
+| `--idle-timeout=<d>` | `idle-timeout` | `2m` | kill and retry an agent after this long with no output |
+| `--hard-timeout=<d>` | `hard-timeout` | `20m` | kill an agent after this long, per attempt |
+| `--stagger-delay=<d>` | `stagger-delay` | `30s` | how long to wait for the first agent before releasing the rest |
+| `--max-parallel=<n>` | `max-parallel` | `4` | how many agents run at once |
+| `--verify-groups=<n>` | `verify-groups` | `6` | cap on the number of verifier groups |
+| `--tasks-dir=<dir>` | `tasks-dir` | `./.revmux/tasks` | root directory holding task directories |
+| `--keep-runs=<n>` | `keep-runs` | `10` | how many runs to keep per task |
+| `--auto-exit=<d>` | `auto-exit` | `0s` | close the TUI this long after the report arrives; `0` waits for a key |
+| `--profile=<name>` | `profile` | `comprehensive` | profile naming the roster to run |
+
+`--keep-runs` prunes old rounds by modification time. Pruning only ever reads `runs/`, so `scope.md`,
+`goal.md`, `profile.md` and `context/` are never candidates however aggressive the setting is.

@@ -24,7 +24,12 @@ The binary is installed as `app`; rename it to `revmux`, or build from a clone i
 ```
 git clone https://github.com/umputun/revmux.git && cd revmux
 make build        # produces .bin/revmux
+make install      # and symlinks it to /usr/local/bin/revmux
 ```
+
+`make install` links rather than copies, so a later `make build` is picked up without reinstalling.
+Override the location with `BINDIR` when `/usr/local/bin` is not writable — `make install BINDIR=~/bin`.
+`make uninstall` removes the link.
 
 revmux drives the model CLIs as subprocesses, so both must already be installed and authenticated:
 
@@ -482,10 +487,43 @@ The output is abbreviated above — a real run lists every profile, every lens a
 lists the task directories that already exist, since a `--run` name collides with an existing round and a
 caller cannot avoid that blind.
 
+## Agent skills
+
+revmux is built to be driven by a caller model, and this repository ships that caller as a skill for
+two harnesses. The skill does the half revmux deliberately does not: it resolves what is being
+reviewed, runs the git commands, writes the task directory, launches revmux, reads the JSON back, and
+re-runs the same task under a new round name after fixes.
+
+| harness | location | install |
+|---|---|---|
+| Claude Code | `.claude-plugin/skills/revmux/` | `/plugin marketplace add umputun/revmux` then `/plugin install revmux@revmux` |
+| Codex CLI | `plugins/codex/skills/revmux/` | `cp -r plugins/codex/skills/revmux ~/.codex/skills/revmux` |
+
+Both carry the same reference material — how to compose `scope.md`, `goal.md`, `profile.md` and
+`context/`, the full flag and lens tables, the JSON shape and the run archive layout — and the same
+scripts:
+
+- `preflight.sh` — check revmux plus the executors the chosen profile's roster and stages need
+- `task-state.sh` — resolve the tasks root from `revmux config` and report which context files and
+  run names a task already has
+- `launch-revmux.sh` — run revmux **with its TUI** in a terminal overlay (agterm, tmux, Zellij, herdr,
+  kitty, wezterm, cmux, ghostty, iTerm2, Emacs vterm), returning the report on stdout and revmux's own
+  exit code
+
+That last one exists because an agent's shell has no tty, so the TUI never appears there. The overlay
+is how a user watches a review happen; everything else about the run is identical. Under agterm it
+opens as a floating panel at 80% of the pane.
+
+The launcher forwards `PATH` into the overlay deliberately: revmux spawns `claude` and `codex` itself,
+and an overlay shell inherits a server-process environment that predates the user's shell rc files, so
+without it every agent degrades on a binary that is plainly installed. `ANTHROPIC_API_KEY` is not
+forwarded, since an `env KEY=VAL` prefix would put it in the process argv.
+
 ## Development
 
 ```
 make build    # build .bin/revmux
+make install  # symlink .bin/revmux into $BINDIR (default /usr/local/bin)
 make test     # race detector plus coverage, mocks excluded
 make lint     # golangci-lint
 make fmt      # gofmt and goimports
