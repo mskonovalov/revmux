@@ -1,8 +1,9 @@
-// Package archive writes the artifacts of one review run under the task directory's runs/<run>/.
+// Package archive writes the artifacts of one review run into the round directory the caller prepared.
 //
-// Everything above runs/ was written by the caller and is never modified or pruned. The artifacts
-// exist so a review can be audited without re-running it: the composed prompt each process actually
-// received, the findings after each stage, revmux's own decisions, and every agent's verbatim stream.
+// A round holds the caller's own input/ beside them, which is what makes the review auditable from the
+// round alone: the composed prompt each process actually received, the findings after each stage,
+// revmux's own decisions, and every agent's verbatim stream. Nothing above the round is written, and
+// nothing anywhere is deleted.
 package archive
 
 import (
@@ -12,65 +13,42 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
+
+	"github.com/umputun/revmux/app/task"
 )
 
-// runsDir is the one directory revmux owns inside a task directory.
-const runsDir = "runs"
-
-// Opts is what an archive needs. The names travel as fields rather than positionally: New(tasksDir,
-// task, run) would put three same-typed strings side by side, and swapping any two compiles clean while
-// writing the run somewhere else entirely.
+// Archive is one round's artifact directory.
 //
-// The task is named by its root and its own name rather than as one joined path, because that is what
-// lets New anchor the whole chain at the tasks root instead of trusting a path string it would have to
-// reopen by name.
-type Opts struct {
-	TasksDir string
-	Task     string
-	Run      string
-	Keep     int
-}
-
-// Archive is one run's artifact directory.
+// The round is held as an open handle rather than re-opened by name on every write, and the chain down
+// to it starts at the tasks root. A path validated once and then reopened is a path another process can
+// swap for a symlink in between, and every artifact of this round would follow it. A handle keeps
+// pointing at the directory it was opened on, and refuses any name that leaves it.
 //
-// Every directory on the way down is held as an open handle rather than re-opened by name on every
-// write, and the chain starts at the tasks root. A path validated once and then reopened is a path
-// another process can swap for a symlink in between, and what would follow that symlink is Prune, the
-// one destructive primitive in the tool. A handle keeps pointing at the directory it was opened on, and
-// refuses any name that leaves it.
+// The marker is held open and locked for the same duration, which is what says this round is one run's.
 type Archive struct {
-	dir  string   // this run's directory, for error messages
-	root *os.Root // handle on dir, every artifact is written through it, and what Prune excludes by identity
-	runs *os.Root // handle on runs/, what Prune enumerates and deletes from
-	keep int
+	dir    string   // this round's directory, for error messages
+	root   *os.Root // handle on dir, every artifact is written through it
+	marker *os.File // manifest.json, held locked so no second run claims this round
 }
 
-// runEntry is one prior run directory as Prune sees it, named relative to runs/ because that is what
-// the handle deleting it takes. The identity travels with the name: RemoveAll takes a name, so the name
-// alone would let the pass delete whatever carries it by the time the deletion runs.
-type runEntry struct {
-	name string
-	info fs.FileInfo
-}
-
-// New creates <TasksDir>/<Task>/runs/<Run> and fails when it already exists rather than overwriting it: a
-// round that went badly is exactly the one a later reflection agent wants to read.
+// New opens the round <TasksDir>/<Task>/<Run> and claims it by creating manifest.json exclusively, so a
+// round that has already run is refused rather than overwritten: a round that went badly is exactly the
+// one a later reflection agent wants to read.
 //
 // It walks down from the tasks root as nested os.Roots rather than opening the joined path, so every hop
-// is contained by the one above it however a symlink got there. Only runs/ and the run directory are
-// created; the tasks root and the task directory must already be there, since everything above runs/ is
-// the caller's and revmux never authors a task it did not receive.
-func New(opts Opts) (*Archive, error) {
+// is contained by the one above it however a symlink got there. Nothing on the way is created — the
+// tasks root, the task directory and the round with the input/ the caller filled are all his, and revmux
+// authors no part of the context it reviews.
+func New(opts task.Round) (*Archive, error) {
 	if opts.TasksDir == "" {
 		return nil, errors.New("tasks directory is empty")
 	}
-	if err := checkComponent("task name", opts.Task); err != nil {
-		return nil, err
+	if err := task.CheckName("--task", opts.Task); err != nil {
+		return nil, fmt.Errorf("open archive: %w", err)
 	}
-	if err := checkComponent("run name", opts.Run); err != nil {
-		return nil, err
+	if err := task.CheckRoundName("--run", opts.Run); err != nil {
+		return nil, fmt.Errorf("open archive: %w", err)
 	}
 
 	tasks, err := filepath.Abs(opts.TasksDir)
@@ -81,68 +59,69 @@ func New(opts Opts) (*Archive, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open tasks directory %s: %w", tasks, err)
 	}
-	defer tasksRoot.Close() // nothing was written through it, only the run's own handles outlive New
+	defer tasksRoot.Close() // nothing was written through it, only the round's own handle outlives New
 
 	// opened, never created: the caller writes the task directory, so a missing one is his error to fix and
 	// not a directory for revmux to author. Opening also resolves a task legitimately reached through a
 	// relative symlink inside the tasks root, which a MkdirAll on the same name would refuse outright.
-	task := filepath.Join(tasks, opts.Task)
+	taskPath := filepath.Join(tasks, opts.Task)
 	taskRoot, err := tasksRoot.OpenRoot(opts.Task)
 	if err != nil {
-		return nil, fmt.Errorf("open task directory %s inside the tasks root %s: %w", task, tasks, err)
+		return nil, fmt.Errorf("open task directory %s inside the tasks root %s: %w", taskPath, tasks, err)
 	}
-	defer taskRoot.Close() // same, it only carries the walk down to runs/
+	defer taskRoot.Close() // same, it only carries the walk down to the round
 
-	runsPath := filepath.Join(task, runsDir)
-	if runsErr := checkRunsEntry(taskRoot, runsPath); runsErr != nil {
-		return nil, runsErr
-	}
-	if mkErr := taskRoot.MkdirAll(runsDir, 0o750); mkErr != nil {
-		return nil, fmt.Errorf("create %s: %w", runsPath, mkErr)
-	}
-	runs, err := taskRoot.OpenRoot(runsDir)
-	if err != nil {
-		return nil, fmt.Errorf("runs directory escapes the task directory %s: %w", task, err)
-	}
-	if err = checkHandle(taskRoot, runs, runsPath); err != nil {
-		runs.Close() //nolint:gosec // the handle is being refused, and nothing was ever written through it
-		return nil, err
+	if layoutErr := checkOldLayout(taskRoot, taskPath); layoutErr != nil {
+		return nil, layoutErr
 	}
 
-	dir := filepath.Join(runsPath, opts.Run)
-	if err = runs.Mkdir(opts.Run, 0o750); err != nil {
-		runs.Close() //nolint:gosec // the run was never created, so there is nothing to report about the handle
-		return nil, fmt.Errorf("create run directory %s: %w", dir, err)
+	dir := filepath.Join(taskPath, opts.Run)
+	if entryErr := checkRoundEntry(taskRoot, opts.Run, dir); entryErr != nil {
+		return nil, entryErr
 	}
-	root, err := runs.OpenRoot(opts.Run)
+	root, err := taskRoot.OpenRoot(opts.Run)
 	if err != nil {
-		runs.Close() //nolint:gosec // same, the run directory is unusable and the error names why
-		return nil, fmt.Errorf("open run directory %s: %w", dir, err)
+		return nil, fmt.Errorf("open round directory %s: %w", dir, err)
 	}
-	if err = checkHandle(runs, root, dir); err != nil {
-		root.Close() //nolint:gosec // both handles are refused, and nothing was ever written through either
-		runs.Close() //nolint:gosec // same
+	if err = checkHandle(taskRoot, root, opts.Run, dir); err != nil {
+		root.Close() //nolint:gosec // the handle is being refused, and nothing was ever written through it
 		return nil, err
 	}
-	return &Archive{dir: dir, root: root, runs: runs, keep: opts.Keep}, nil
+	if err = requireInput(root, dir); err != nil {
+		root.Close() //nolint:gosec // same, the round is unusable and the error names why
+		return nil, err
+	}
+	marker, err := claimRound(root, dir)
+	if err != nil {
+		root.Close() //nolint:gosec // same, and the round this refused keeps every artifact it had
+		return nil, err
+	}
+	return &Archive{dir: dir, root: root, marker: marker}, nil
 }
 
-// Close releases the two directory handles. The artifacts are already on disk by then; this only drops
-// the descriptors that kept the run directory and runs/ pinned for the duration of the run.
+// Close releases the round's directory handle and the claim on its marker. The artifacts are already on
+// disk by then; this only drops the descriptors that kept the round pinned for the duration of the run,
+// and dropping the marker is what lets a later run re-claim a round this one never finished.
 func (a *Archive) Close() error {
-	if err := errors.Join(a.root.Close(), a.runs.Close()); err != nil {
+	if a.marker != nil {
+		if err := a.marker.Close(); err != nil {
+			return fmt.Errorf("close %s: %w", filepath.Join(a.dir, task.ManifestFile), err)
+		}
+		a.marker = nil // run defers Close, so a caller closing early must not fail the run
+	}
+	if err := a.root.Close(); err != nil {
 		return fmt.Errorf("close archive %s: %w", a.dir, err)
 	}
 	return nil
 }
 
 // Writer opens one artifact for writing, creating parent directories as needed. name is a path
-// relative to the run directory, so one method serves the per-agent tees, the composed prompts, the
+// relative to the round directory, so one method serves the per-agent tees, the composed prompts, the
 // per-stage findings, the manifest and the rendered report without the archive knowing what any of
 // them mean.
 //
 // A separator is legal — prompts/agents/, stages/ and agents/ all need one — and only a path leaving
-// the run directory is rejected. The handle settles that: a symlink inside the run pointing anywhere
+// the round directory is rejected. The handle settles that: a symlink inside the round pointing anywhere
 // else is refused when it is traversed, not when it was last looked at.
 func (a *Archive) Writer(name string) (io.WriteCloser, error) {
 	clean, err := a.resolve(name)
@@ -161,200 +140,7 @@ func (a *Archive) Writer(name string) (io.WriteCloser, error) {
 	return f, nil
 }
 
-// Prune drops the oldest runs beyond Keep. It reads only runs/, so scope.md, goal.md, profile.md and
-// context/ are never candidates however aggressive Keep is, and the run being written is never one.
-//
-// That last exclusion goes by the directory the run handle is on, not by the name the run was created
-// under. The two differ the moment something renames the run directory mid-run, and then a name match
-// excludes nothing: this run's own archive becomes an ordinary candidate, and at Keep 0 or 1 Prune
-// deletes the artifacts it was called to make room for. The handle is the same authority every other
-// check in this package leans on.
-//
-// Enumerating by identity settles only half of it, because what deletes a candidate is its name. Each
-// one therefore carries the directory it was enumerated as, and remove empties it through a handle
-// before unlinking the name — see there for what a rename in between would otherwise cost.
-func (a *Archive) Prune() error {
-	self, err := a.root.Stat(".")
-	if err != nil {
-		return fmt.Errorf("stat %s: %w", a.dir, err)
-	}
-
-	d, err := a.runs.Open(".")
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("open %s: %w", filepath.Dir(a.dir), err)
-	}
-	entries, err := d.ReadDir(-1)
-	d.Close() //nolint:gosec // read-only, and the entries are already in hand
-	// an absent runs directory has to be tolerated at BOTH calls, not just at the open above. The
-	// handle was taken when the archive was built, so a directory unlinked since then still opens
-	// fine through the live fd and only reports itself gone when it is read — and the two platforms
-	// disagree about that: linux fails the getdents with ENOENT where macOS returns an empty listing.
-	// Guarding only the open passes locally and fails on linux.
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read %s: %w", filepath.Dir(a.dir), err)
-	}
-
-	old := make([]runEntry, 0, len(entries))
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		info, infoErr := e.Info()
-		if infoErr != nil {
-			return fmt.Errorf("stat %s: %w", a.runPath(e.Name()), infoErr)
-		}
-		if os.SameFile(info, self) {
-			continue // the run being written, under whatever name it now carries
-		}
-		old = append(old, runEntry{name: e.Name(), info: info})
-	}
-
-	// the run being written counts toward keep, so one slot is already taken
-	allowed := max(a.keep-1, 0)
-	if len(old) <= allowed {
-		return nil
-	}
-
-	slices.SortFunc(old, func(x, y runEntry) int { return x.info.ModTime().Compare(y.info.ModTime()) })
-	for _, r := range old[:len(old)-allowed] {
-		if err := a.remove(r); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// remove drops one prior run. The exclusion in Prune is by identity, but a deletion takes a name and there
-// is no unlink-by-handle to take instead, so a name that changed hands between the enumeration and the
-// deletion carries the deletion to whatever now answers to it — including the run being written, the one
-// directory the identity check exists to spare.
-//
-// RemoveAll on that name would take the whole tree under it. So the recursive part happens first and
-// through a handle opened on the candidate itself, and what the name is left to do is a single
-// non-recursive removal: an entry that changed hands in that last window is at worst an empty directory,
-// never a populated one, and a live run directory refuses the unlink outright because it is not empty.
-func (a *Archive) remove(r runEntry) error {
-	if err := a.clear(r); err != nil {
-		return err
-	}
-	ok, err := a.enumerated(r)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return nil // gone already, or some other directory answers to the name now
-	}
-	if err := a.runs.Remove(r.name); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("remove %s: %w", a.runPath(r.name), err)
-	}
-	return nil
-}
-
-// clear empties one candidate through a handle opened on it, and only when that handle landed on the
-// directory the pass enumerated. A handle keeps referring to the directory it was opened on however the
-// name moves afterwards, so every recursive step below is anchored on the candidate rather than on a name
-// another process can redirect. Entries are read as they are on disk: a symlink is unlinked, never
-// followed, so nothing outside the candidate is reachable from here.
-func (a *Archive) clear(r runEntry) error {
-	ok, err := a.enumerated(r)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return nil
-	}
-
-	path := a.runPath(r.name)
-	dir, err := a.runs.OpenRoot(r.name)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("open %s: %w", path, err)
-	}
-	defer dir.Close()
-
-	got, err := dir.Stat(".")
-	if err != nil {
-		return fmt.Errorf("stat open %s: %w", path, err)
-	}
-	if !os.SameFile(got, r.info) {
-		return nil // the name was redirected between the look and the open
-	}
-	return a.clearDir(dir, path)
-}
-
-// clearDir deletes everything under one open directory, depth first, naming entries only relative to the
-// handle they were read from. path is for error messages.
-func (a *Archive) clearDir(dir *os.Root, path string) error {
-	d, err := dir.Open(".")
-	if err != nil {
-		return fmt.Errorf("open %s: %w", path, err)
-	}
-	entries, err := d.ReadDir(-1)
-	d.Close() //nolint:gosec // read-only, and the entries are already in hand
-	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
-	}
-
-	for _, e := range entries {
-		child := filepath.Join(path, e.Name())
-		if e.IsDir() { // a symlink is never one here, ReadDir reports the entry rather than its target
-			if err := a.clearSub(dir, e.Name(), child); err != nil {
-				return err
-			}
-		}
-		if err := dir.Remove(e.Name()); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("remove %s: %w", child, err)
-		}
-	}
-	return nil
-}
-
-// clearSub descends into one subdirectory, opening it before deleting anything inside so the recursion
-// stays anchored the same way clear is. Contained by the handle above it, so the worst a swap underneath
-// can reach is another entry of the candidate being deleted anyway.
-func (a *Archive) clearSub(dir *os.Root, name, path string) error {
-	sub, err := dir.OpenRoot(name)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("open %s: %w", path, err)
-	}
-	defer sub.Close()
-
-	return a.clearDir(sub, path)
-}
-
-// enumerated reports whether the candidate's name still leads to the directory this pass enumerated under
-// it. Lstat rather than Stat: a symlink swapped in carries its own identity and must not answer for what
-// it points at, since unlinking the name would then leave the directory behind.
-func (a *Archive) enumerated(r runEntry) (bool, error) {
-	fi, err := a.runs.Lstat(r.name)
-	if errors.Is(err, fs.ErrNotExist) {
-		return false, nil // already gone, which is what this pass wanted of it
-	}
-	if err != nil {
-		return false, fmt.Errorf("stat %s: %w", a.runPath(r.name), err)
-	}
-	// identity alone does not settle it: a directory removed and replaced by a symlink can be handed
-	// the very inode it just freed, and SameFile then answers true for a link that was never the
-	// directory this pass enumerated. The type check is what actually holds — whatever the name leads
-	// to now, a symlink is not the directory, so the run handle is never opened through it.
-	if !fi.IsDir() || fi.Mode()&fs.ModeSymlink != 0 {
-		return false, nil
-	}
-	return os.SameFile(fi, r.info), nil
-}
-
-// resolve reduces a run-relative artifact path to the clean name the run handle takes. The handle
+// resolve reduces a round-relative artifact path to the clean name the round handle takes. The handle
 // rejects an escape through a symlink on its own; what it cannot judge is a name that was never an
 // artifact path to begin with — absolute, empty, or climbing out lexically.
 func (a *Archive) resolve(name string) (string, error) {
@@ -366,55 +152,71 @@ func (a *Archive) resolve(name string) (string, error) {
 	}
 	clean := filepath.Clean(filepath.FromSlash(name))
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("artifact %q escapes the run directory", name)
+		return "", fmt.Errorf("artifact %q escapes the round directory", name)
 	}
 	return clean, nil
 }
 
-// runPath names a sibling run for an error message: the handles work on names, the messages on paths.
-func (a *Archive) runPath(name string) string {
-	return filepath.Join(filepath.Dir(a.dir), name)
+// checkOldLayout refuses a task written for the layout that kept one scope.md beside a runs/ directory.
+// That scope described N rounds at once, so there is no round to assign it to and no correct migration
+// to make — reading such a task half-way would review round 2 against round 1's recorded scope.
+//
+// What identifies that shape is task.OldLayoutEntry, judged through this archive's own handle on the task —
+// the review path and `revmux new` ask it the same question, so an archive is never opened on a task either
+// of them would turn away.
+func checkOldLayout(taskRoot *os.Root, path string) error {
+	entry, err := task.OldLayoutEntry(path, taskRoot.Lstat)
+	if err != nil {
+		return err //nolint:wrapcheck // it is the stat that failed, and it already names the entry's full path
+	}
+	if entry == "" {
+		return nil
+	}
+	return fmt.Errorf("task directory %s uses the old layout: %s sits beside the rounds rather than inside one",
+		path, entry)
 }
 
-// checkRunsEntry reads the runs entry under the task directory and refuses a symlink: this run would be
-// written wherever it points and Prune would delete from there. Containment alone does not settle that —
-// os.Root follows a link landing back inside the root, so runs -> context passes every containment check
-// and still hands Prune the caller's own directories. A missing entry is fine, MkdirAll creates it.
-func checkRunsEntry(taskRoot *os.Root, path string) error {
-	fi, err := taskRoot.Lstat(runsDir)
+// checkRoundEntry reads the round entry under the task directory and refuses a symlink: every artifact
+// of this round would be written wherever it points. Containment alone does not settle that — os.Root
+// follows a link landing back inside the root, so a round linked to a sibling round passes every
+// containment check and still truncates that round's artifacts.
+//
+// A missing entry is the caller's to fix rather than revmux's to create, since the round carries the
+// input/ this review reads.
+func checkRoundEntry(taskRoot *os.Root, name, path string) error {
+	fi, err := taskRoot.Lstat(name)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil // absent is not an entry and not a fault, the caller creates it next
+		return fmt.Errorf("round directory %s is not there: it holds this round's %s/, so the caller creates it",
+			path, task.InputDir)
 	}
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", path, err)
 	}
 	if fi.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%s is a symlink, and revmux writes and prunes only a real directory it owns", path)
+		return fmt.Errorf("%s is a symlink, and revmux writes only a real directory it was handed", path)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("%s is not a directory", path)
 	}
 	return nil
 }
 
 // checkHandle proves an open handle is the entry it was opened by name from, rather than whatever a
-// symlink resolved to. Creating or looking at an entry and opening it are two operations, so it can be
-// swapped in between and the handle would pin the link's target for the rest of the run — the one thing
-// checkRunsEntry exists to refuse, reached by racing it. Reading the entry again and matching it against
+// symlink resolved to. Looking at an entry and opening it are two operations, so it can be swapped in
+// between and the handle would pin the link's target for the rest of the run — the one thing
+// checkRoundEntry exists to refuse, reached by racing it. Reading the entry again and matching it against
 // the directory actually opened closes that window: a swap after this point leaves the handle on what
 // this check accepted.
 //
-// Both hops below runs/ need it. A swapped runs/ hands Prune the caller's own directories; a swapped run
-// directory pins an earlier round, and every artifact this run writes truncates one of its own.
-//
-// path is the joined path the handle was opened at, and the entry name is its last component rather than a
-// fourth parameter: the two are the same string at both call sites, and passing them separately puts a
-// second same-typed pair next to the two roots for nothing.
-func checkHandle(parent, opened *os.Root, path string) error {
-	name := filepath.Base(path)
+// A round swapped for a link to an earlier one pins that round, and every artifact this run writes
+// truncates one of its own — destroying exactly the bad round a reflection agent wants to read.
+func checkHandle(parent, opened *os.Root, name, path string) error {
 	entry, err := parent.Lstat(name)
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", path, err)
 	}
 	if entry.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%s is a symlink, and revmux writes and prunes only a real directory it owns", path)
+		return fmt.Errorf("%s is a symlink, and revmux writes only a real directory it was handed", path)
 	}
 	got, err := opened.Stat(".")
 	if err != nil {
@@ -426,21 +228,165 @@ func checkHandle(parent, opened *os.Root, path string) error {
 	return nil
 }
 
-// checkComponent rejects a caller-supplied name before it becomes one path component. It is the same
-// rule package main applies to --task and --run, repeated here because Archive is reachable on its
-// own and a run named `..` would write over the caller's context.
-func checkComponent(what, name string) error {
-	switch {
-	case name == "":
-		return fmt.Errorf("%s is empty", what)
-	case filepath.IsAbs(name):
-		return fmt.Errorf("%s %q is absolute", what, name)
-	case strings.ContainsAny(name, `/\`):
-		return fmt.Errorf("%s %q contains a path separator", what, name)
-	case strings.Contains(name, ".."):
-		return fmt.Errorf("%s %q references a parent directory", what, name)
-	case strings.HasPrefix(name, "."):
-		return fmt.Errorf("%s %q starts with a dot", what, name)
+// requireInput refuses a round the caller has not filled. input/ is the only channel review context
+// travels through, so a round without one carries no scope and there is nothing to review.
+//
+// The entry is read with Lstat, and a symlink is refused rather than followed: os.Root resolves a link
+// landing back inside the round, so an input/ aliased onto another directory passes containment and makes
+// this round's archived context a pointer at somebody else's. `revmux new` refuses the same shape, and the
+// two have to agree about which rounds are usable.
+func requireInput(round *os.Root, dir string) error {
+	path := filepath.Join(dir, task.InputDir)
+	fi, err := round.Lstat(task.InputDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%s is not there, and it is what carries this round's review context", path)
+	}
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink, and revmux reads only a real directory it was handed", path)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("%s is not a directory", path)
 	}
 	return nil
+}
+
+// claimRound takes the round for this run and returns the marker it holds it by, open and locked until
+// Close. The exclusive create is what detects a round that has already run — atomic where a look followed
+// by a write is not, and it leaves every artifact of the earlier round exactly as it was.
+//
+// The lock is taken on the marker this run just created as well, because creating it and locking it are
+// two operations: a racer reading the fresh marker in between finds it empty and would otherwise reclaim
+// it. Both callers lock, so whichever gets there first owns the round and the other is refused.
+//
+// A marker already there is reclaim's question.
+func claimRound(round *os.Root, dir string) (*os.File, error) {
+	path := filepath.Join(dir, task.ManifestFile)
+	f, err := round.OpenFile(task.ManifestFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		return reclaim(round, dir, path)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("create %s: %w", path, err)
+	}
+	if err := hold(f, dir, path); err != nil {
+		f.Close() //nolint:gosec // the round is refused, and the marker this created carries nothing
+		return nil, err
+	}
+	return f, nil
+}
+
+// hold takes this run's claim on an open marker and keeps it for as long as the descriptor lives. A lock
+// already held means another run is writing this round right now, and sharing it would have both runs
+// truncate the same artifacts until the last manifest won.
+func hold(f *os.File, dir, path string) error {
+	ok, err := tryLock(f)
+	if err != nil {
+		return fmt.Errorf("claim %s: %w", path, err)
+	}
+	if !ok {
+		return fmt.Errorf("round %s is being written by a run holding it: two runs sharing a round truncate "+
+			"each other's artifacts, so open a new round instead", dir)
+	}
+	return nil
+}
+
+// reclaim decides whether a round already carrying a marker may be taken over by this run.
+//
+// The marker is classified by task.CheckMarker, the one definition `revmux new` gates on too. A filled one
+// is a round that ran and is refused. An empty one means the round was claimed and says nothing about
+// whether that run is still going, so the lock settles it: taken means a live run owns the round, free
+// means the run that claimed it never came back and the round is re-claimed rather than burnt — the
+// caller's own input/ lives in it. Only while that run left nothing else behind, which task.CheckReclaim
+// decides, and it is asked under the lock so two racers cannot both pass it.
+//
+// The entry is read with Lstat: os.Root.Stat follows a link that lands back inside the round, so a
+// manifest.json pointing at the caller's own goal.md would read as its size here and be truncated by the
+// write that fills the marker in. The same read is repeated once the lock is held, against the descriptor
+// as well as the entry, since everything looked at before it could be swapped in between.
+func reclaim(round *os.Root, dir, path string) (*os.File, error) {
+	ran, err := readMarker(round, path)
+	if err != nil {
+		return nil, err
+	}
+	if ran {
+		return nil, alreadyRan(dir)
+	}
+
+	f, err := round.OpenFile(task.ManifestFile, os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	if err = takeOver(round, f, dir, path); err != nil {
+		f.Close()       //nolint:gosec // the round is refused, nothing was written through this, and every
+		return nil, err // artifact it already had is left exactly where it was
+	}
+	return f, nil
+}
+
+// takeOver holds the claim on an open marker and re-establishes under the lock everything the decision to
+// reclaim rested on. Each of those was read before the lock was held, so each could have changed while it
+// was being waited for: the run that claimed the round may have finished, the marker may have been
+// swapped, and another reclaimer may have started writing into the round.
+func takeOver(round *os.Root, f *os.File, dir, path string) error {
+	if err := hold(f, dir, path); err != nil {
+		return err
+	}
+	if err := checkMarkerHandle(round, f, path, dir); err != nil {
+		return err
+	}
+	entries, err := fs.ReadDir(round.FS(), ".")
+	if err != nil {
+		return fmt.Errorf("read %s: %w", dir, err)
+	}
+	if err = task.CheckReclaim(dir, entries); err != nil {
+		return fmt.Errorf("open archive: %w", err)
+	}
+	return nil
+}
+
+// readMarker reads the round's own manifest.json entry and reports whether it is a round that ran.
+func readMarker(round *os.Root, path string) (ran bool, err error) {
+	fi, err := round.Lstat(task.ManifestFile)
+	if err != nil {
+		return false, fmt.Errorf("stat %s: %w", path, err)
+	}
+	ran, err = task.CheckMarker(path, fi)
+	if err != nil {
+		return false, fmt.Errorf("open archive: %w", err)
+	}
+	return ran, nil
+}
+
+// checkMarkerHandle re-reads the marker once the lock is held and proves the descriptor is still the entry
+// it was opened by name from. The run that claimed the round may have finished between the read above and
+// the lock, which makes this a round that ran; and the entry may have been swapped for a link, which the
+// write filling the marker in would follow.
+func checkMarkerHandle(round *os.Root, f *os.File, path, dir string) error {
+	ran, err := readMarker(round, path)
+	if err != nil {
+		return err
+	}
+	if ran {
+		return alreadyRan(dir)
+	}
+	entry, err := round.Lstat(task.ManifestFile)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	got, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("stat open %s: %w", path, err)
+	}
+	if !os.SameFile(entry, got) {
+		return fmt.Errorf("%s was replaced while the round was being claimed", path)
+	}
+	return nil
+}
+
+func alreadyRan(dir string) error {
+	return fmt.Errorf("round %s has already run, %s is in place: a round that went badly is exactly the one "+
+		"a later reflection agent reads", dir, task.ManifestFile)
 }

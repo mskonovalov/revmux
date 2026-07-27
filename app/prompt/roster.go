@@ -225,7 +225,7 @@ func (a AgentSpec) validate(known map[string]struct{}) error {
 
 // checkName rejects a name that cannot become one path component. The archive turns it into
 // agents/<name>.jsonl and prompts/agents/<name>.md, so a separator or a parent reference would let a
-// profile write outside the run directory — the same rule package main applies to --task and --run.
+// profile write outside the round directory — the same rule package main applies to --task and --run.
 func (a AgentSpec) checkName() error {
 	switch {
 	case a.Name == "":

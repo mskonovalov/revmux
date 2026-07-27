@@ -83,7 +83,7 @@ func TestProfile_Compose_UnknownLens(t *testing.T) {
 }
 
 func TestCompose_History(t *testing.T) {
-	inventory := "Prior rounds for this task: /abs/runs/\n  round-1  2026-07-26T14:30Z  8 findings  sources 4/4"
+	inventory := "Prior rounds for this task: /abs/tasks/pr-123/\n  round-1  2026-07-26T14:30Z  8 findings  sources 4/4"
 
 	t.Run("reaches a prompt that never mentions it", func(t *testing.T) {
 		set := composeTree(t, nil)

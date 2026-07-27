@@ -16,6 +16,7 @@ import (
 
 	"github.com/umputun/revmux/app/executor"
 	"github.com/umputun/revmux/app/prompt"
+	"github.com/umputun/revmux/app/task"
 )
 
 // defaultConfig is the commented-out INI template --init materializes. It lives in package main rather
@@ -39,11 +40,6 @@ const (
 const (
 	projectDirName = ".revmux"
 	configFileName = "config"
-	scopeFileName  = "scope.md"
-	goalFileName   = "goal.md"
-	profFileName   = "profile.md"
-	contextDirName = "context"
-	runTimeFormat  = "20060102T150405Z"
 )
 
 // options is the full CLI surface. Only the runtime knobs carry an ini-name; everything shaping a
@@ -66,7 +62,6 @@ type options struct {
 	MaxParallel  int           `long:"max-parallel" ini-name:"max-parallel" default:"4" description:"how many agents run at once"`
 	VerifyGroups int           `long:"verify-groups" ini-name:"verify-groups" default:"6" description:"cap on the number of verifier groups"`
 	TasksDir     string        `long:"tasks-dir" ini-name:"tasks-dir" default:"./.revmux/tasks" description:"root directory holding task directories"`
-	KeepRuns     int           `long:"keep-runs" ini-name:"keep-runs" default:"10" description:"how many runs to keep per task"`
 	AutoExit     time.Duration `long:"auto-exit" ini-name:"auto-exit" default:"0s" description:"close the terminal UI this long after the report arrives"`
 	Profile      string        `long:"profile" ini-name:"profile" default:"comprehensive" description:"profile naming the roster to run"`
 
@@ -285,15 +280,6 @@ func (o options) executorOpts(rc reviewContext, clk executor.Clock) executor.Opt
 	}
 }
 
-// runName resolves --run to its UTC-timestamp default. The resolved value travels down; nothing
-// downstream re-derives it.
-func (o options) runName(clk executor.Clock) string {
-	if o.Run != "" {
-		return o.Run
-	}
-	return clk.Now().UTC().Format(runTimeFormat)
-}
-
 // promptSet loads the prompt tree and confirms the selected profile resolves.
 func (o options) promptSet() (*prompt.Set, error) {
 	set, err := prompt.Load(o.promptOpts())
@@ -306,8 +292,12 @@ func (o options) promptSet() (*prompt.Set, error) {
 	return set, nil
 }
 
-// resolveContext stats the task directory and returns its absolute paths. Nothing here opens a file:
+// resolveContext stats the round's input/ and returns its absolute paths. Nothing here opens a file:
 // scope emptiness is a size check, so a large scope can never reach a prompt.
+//
+// TaskDir stays the task directory even though every context file now sits two levels below it: it is
+// what archive.History enumerates rounds from, and pointing it at the round finds none and drops the
+// prior-round block from every prompt without an error.
 func (o options) resolveContext() (reviewContext, error) {
 	if err := o.checkNames(); err != nil {
 		return reviewContext{}, err
@@ -317,21 +307,29 @@ func (o options) resolveContext() (reviewContext, error) {
 	if err != nil {
 		return reviewContext{}, err
 	}
+	if layoutErr := o.checkOldLayout(dir); layoutErr != nil {
+		return reviewContext{}, layoutErr
+	}
 
+	if roundErr := o.checkRound(filepath.Join(dir, o.Run)); roundErr != nil {
+		return reviewContext{}, roundErr
+	}
+
+	input := filepath.Join(dir, o.Run, task.InputDir)
 	rc := reviewContext{TaskDir: dir}
-	if rc.Scope, err = o.contextFile(filepath.Join(dir, scopeFileName)); err != nil {
+	if rc.Scope, err = o.contextFile(filepath.Join(input, task.ScopeFile)); err != nil {
 		return reviewContext{}, err
 	}
 	if rc.Scope == "" {
-		return reviewContext{}, fmt.Errorf("%s is required and must not be empty", filepath.Join(dir, scopeFileName))
+		return reviewContext{}, fmt.Errorf("%s is required and must not be empty", filepath.Join(input, task.ScopeFile))
 	}
-	if rc.Goal, err = o.contextFile(filepath.Join(dir, goalFileName)); err != nil {
+	if rc.Goal, err = o.contextFile(filepath.Join(input, task.GoalFile)); err != nil {
 		return reviewContext{}, err
 	}
-	if rc.Profile, err = o.contextFile(filepath.Join(dir, profFileName)); err != nil {
+	if rc.Profile, err = o.contextFile(filepath.Join(input, task.ProfileFile)); err != nil {
 		return reviewContext{}, err
 	}
-	if rc.Context, err = o.contextDir(filepath.Join(dir, contextDirName)); err != nil {
+	if rc.Context, err = o.contextDir(filepath.Join(input, task.ContextDir)); err != nil {
 		return reviewContext{}, err
 	}
 	if rc.WorkDir, err = o.workDir(); err != nil {
@@ -340,8 +338,23 @@ func (o options) resolveContext() (reviewContext, error) {
 	return rc, nil
 }
 
-// taskDir joins the task name onto the tasks root and verifies the result stays inside it. Containment
-// is re-checked on the resolved path because a symlink inside the root defeats the lexical test.
+// checkOldLayout refuses a task written for the layout that kept one scope.md beside a runs/ directory.
+// That scope described N rounds at once, so there is no round to assign it to and no correct migration.
+//
+// The refusal is task.CheckOldLayout, which `revmux new` returns as well, and this is where a review reaches
+// it: resolveContext runs before archive.New, so a check only in the archive is never reached from a review.
+// Here the task is a resolved path rather than an open root, so the entries are read with os.Lstat.
+func (o options) checkOldLayout(dir string) error {
+	//nolint:wrapcheck // the refusal already opens with the task directory, so a prefix here repeats it
+	return task.CheckOldLayout(dir, filepath.Join(dir, o.Run, task.InputDir), func(name string) (fs.FileInfo, error) {
+		return os.Lstat(filepath.Join(dir, name))
+	})
+}
+
+// taskDir joins the task name onto the tasks root and verifies the result stays inside it. Containment is
+// re-checked on the resolved path because a symlink inside the root defeats the lexical test, and
+// task.CheckContained is the single definition of that check — app/task applies the same one to what
+// `revmux new` writes.
 func (o options) taskDir() (string, error) {
 	root, err := filepath.Abs(o.TasksDir)
 	if err != nil {
@@ -356,19 +369,28 @@ func (o options) taskDir() (string, error) {
 	if !fi.IsDir() {
 		return "", fmt.Errorf("task directory %s is not a directory", dir)
 	}
-
-	realDir, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		return "", fmt.Errorf("resolve task directory %s: %w", dir, err)
-	}
-	realRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", fmt.Errorf("resolve tasks dir %s: %w", root, err)
-	}
-	if !strings.HasPrefix(realDir, realRoot+string(filepath.Separator)) {
-		return "", fmt.Errorf("task directory %s escapes the tasks root %s", realDir, realRoot)
+	if err := task.CheckContained(root, dir); err != nil {
+		return "", fmt.Errorf("task directory: %w", err)
 	}
 	return dir, nil
+}
+
+// checkRound refuses a round the caller never created, naming the call that creates one. Without it a
+// missing round is reported as a missing scope.md, which names a path inside a directory that is not
+// there — archive.New has the right message and never runs, since resolveContext fails first.
+func (o options) checkRound(dir string) error {
+	fi, err := os.Stat(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("round %s is not there: this round's review context lives in %s, so create it with "+
+			"`revmux new --task %s --run %s` and fill it", dir, filepath.Join(dir, task.InputDir), o.Task, o.Run)
+	}
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", dir, err)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("round %s is not a directory", dir)
+	}
+	return nil
 }
 
 // contextFile returns the path of a context file, an empty string when it is absent or empty, and an
@@ -438,28 +460,20 @@ func (o options) workDir() (string, error) {
 
 // checkNames rejects a task or run name before it is joined into any path. Both are caller-supplied and
 // become filesystem paths, so a separator or a `..` would let revmux write over caller-authored context.
+// task.CheckName is the single definition of that rule; app/archive applies the same one.
+//
+// An omitted --run has no default to fall back on: the round is where the caller's own review context
+// lives, so revmux cannot name one he has not filled.
 func (o options) checkNames() error {
-	if err := o.checkName("--task", o.Task); err != nil {
-		return err
+	if err := task.CheckName("--task", o.Task); err != nil {
+		return fmt.Errorf("task directory name: %w", err)
 	}
 	if o.Run == "" {
-		return nil
+		return fmt.Errorf("--run is empty: this round's review context lives in it, so create one with "+
+			"`revmux new --task %s --run <round>` and fill its %s/", o.Task, task.InputDir)
 	}
-	return o.checkName("--run", o.Run)
-}
-
-func (o options) checkName(flag, name string) error {
-	switch {
-	case name == "":
-		return fmt.Errorf("%s is empty", flag)
-	case filepath.IsAbs(name):
-		return fmt.Errorf("%s %q is absolute", flag, name)
-	case strings.ContainsAny(name, `/\`):
-		return fmt.Errorf("%s %q contains a path separator", flag, name)
-	case strings.Contains(name, ".."):
-		return fmt.Errorf("%s %q references a parent directory", flag, name)
-	case strings.HasPrefix(name, "."):
-		return fmt.Errorf("%s %q starts with a dot", flag, name)
+	if err := task.CheckRoundName("--run", o.Run); err != nil {
+		return fmt.Errorf("round directory name: %w", err)
 	}
 	return nil
 }

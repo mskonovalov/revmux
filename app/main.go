@@ -18,6 +18,7 @@ import (
 	"github.com/umputun/revmux/app/finding"
 	"github.com/umputun/revmux/app/pipeline"
 	"github.com/umputun/revmux/app/prompt"
+	"github.com/umputun/revmux/app/task"
 	"github.com/umputun/revmux/app/ui"
 )
 
@@ -100,7 +101,6 @@ func run(o runOpts) int {
 	if err := o.write(rep); err != nil {
 		return o.fail(err)
 	}
-	o.prune(arc)
 	return rep.ExitCode()
 }
 
@@ -129,10 +129,6 @@ func (o runOpts) pipelineConfig() (pipeline.Config, *archive.Archive, error) {
 	if o.opts.Task == "" {
 		return pipeline.Config{}, nil, errors.New("--task is required")
 	}
-	runName := o.opts.runName(o.clock)
-	if err := o.opts.checkName("--run", runName); err != nil {
-		return pipeline.Config{}, nil, err
-	}
 
 	rc, err := o.opts.resolveContext()
 	if err != nil {
@@ -151,8 +147,7 @@ func (o runOpts) pipelineConfig() (pipeline.Config, *archive.Archive, error) {
 		return pipeline.Config{}, nil, fmt.Errorf("resolve roster: %w", err)
 	}
 
-	// resolved before the run directory exists, and before Prune ever runs: a round read after
-	// pruning is a round that no longer exists
+	// resolved before this round is claimed, so the round being written is never in its own inventory
 	history, err := archive.History(rc.TaskDir)
 	if err != nil {
 		return pipeline.Config{}, nil, fmt.Errorf("read prior rounds: %w", err)
@@ -160,9 +155,7 @@ func (o runOpts) pipelineConfig() (pipeline.Config, *archive.Archive, error) {
 	// the tasks root and the task name rather than the joined path resolveContext already checked: a
 	// path string handed over here is one archive.New would have to reopen by name, which is the
 	// check-then-open window its os.Root chain exists to remove
-	arc, err := archive.New(archive.Opts{
-		TasksDir: o.opts.TasksDir, Task: o.opts.Task, Run: runName, Keep: o.opts.KeepRuns,
-	})
+	arc, err := archive.New(task.Round{TasksDir: o.opts.TasksDir, Task: o.opts.Task, Run: o.opts.Run})
 	if err != nil {
 		return pipeline.Config{}, nil, fmt.Errorf("open run archive: %w", err)
 	}
@@ -172,7 +165,7 @@ func (o runOpts) pipelineConfig() (pipeline.Config, *archive.Archive, error) {
 		Archive:   arc,
 		Clock:     o.clock,
 		Set:       set, Profile: profile, Roster: roster, Vars: rc.vars(), History: history,
-		Task: o.opts.Task, Run: runName, ScopePath: rc.Scope,
+		Task: o.opts.Task, Run: o.opts.Run, ScopePath: rc.Scope,
 		NoSynthesis: o.opts.NoSynthesis, NoVerify: o.opts.NoVerify,
 		StaggerDelay: o.opts.StaggerDelay, MaxParallel: o.opts.MaxParallel,
 		VerifyGroups: o.opts.VerifyGroups,
@@ -316,15 +309,6 @@ func (o runOpts) write(rep finding.Report) error {
 		return fmt.Errorf("report to stdout: %w", err)
 	}
 	return nil
-}
-
-// prune drops the oldest rounds beyond keep-runs, after the report has been written so a failed run
-// keeps its artifacts. A failure is reported and the review's own exit code kept: an undeletable old
-// round is housekeeping, not a missing artifact of this run.
-func (o runOpts) prune(a *archive.Archive) {
-	if err := a.Prune(); err != nil {
-		_, _ = fmt.Fprintf(o.stderr, "warning: %v\n", err)
-	}
 }
 
 func (o runOpts) fail(err error) int {

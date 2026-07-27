@@ -9,7 +9,7 @@ import (
 	"github.com/umputun/revmux/app/finding"
 )
 
-// artifact locations inside the run directory. Composed prompts are split by producer so a roster
+// artifact locations inside the round directory. Composed prompts are split by producer so a roster
 // agent named verify cannot overwrite the verify stage's own prompt — the same collision class
 // agents/ already handles for the verbatim tees.
 const (

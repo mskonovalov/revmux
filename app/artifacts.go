@@ -10,13 +10,7 @@ import (
 	"github.com/umputun/revmux/app/finding"
 	"github.com/umputun/revmux/app/pipeline"
 	"github.com/umputun/revmux/app/prompt"
-)
-
-// the artifacts package main owns. The pipeline writes everything else while the run is in flight.
-const (
-	reportFileName   = "report.md"
-	findingsFileName = "findings.json"
-	manifestFileName = "manifest.json"
+	"github.com/umputun/revmux/app/task"
 )
 
 // manifest is what makes a finished run auditable: which roster ran, what each agent actually
@@ -45,13 +39,13 @@ type manifest struct {
 // The archived report is the filtered one, byte for byte what the caller was shown, so a later reader
 // sees the round as it was reported. The unfiltered set is still in stages/3-verified.json.
 func (o runOpts) archiveRun(a *archive.Archive, cfg pipeline.Config, rep finding.Report) error {
-	if err := o.writeArtifact(a, reportFileName, rep.Markdown); err != nil {
+	if err := o.writeArtifact(a, task.ReportFile, rep.Markdown); err != nil {
 		return err
 	}
-	if err := o.writeArtifact(a, findingsFileName, rep.JSON); err != nil {
+	if err := o.writeArtifact(a, task.FindingsFile, rep.JSON); err != nil {
 		return err
 	}
-	return o.writeArtifact(a, manifestFileName, o.manifest(cfg, rep).write)
+	return o.writeArtifact(a, task.ManifestFile, o.manifest(cfg, rep).write)
 }
 
 func (o runOpts) writeArtifact(a *archive.Archive, name string, render func(io.Writer) error) error {

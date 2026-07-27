@@ -27,6 +27,7 @@ import (
 	"github.com/umputun/revmux/app/pipeline"
 	pmocks "github.com/umputun/revmux/app/pipeline/mocks"
 	"github.com/umputun/revmux/app/prompt"
+	"github.com/umputun/revmux/app/task"
 )
 
 func TestPrintVersion(t *testing.T) {
@@ -179,8 +180,10 @@ func TestRun_config(t *testing.T) {
 		c, _ := emitted(t, options{TasksDir: root, Task: "pr-1", Run: "round-1"})
 
 		assert.Equal(t, before, treeOf(t, root), "the catalog runs before any archive exists")
-		assert.NoDirExists(t, filepath.Join(root, "pr-1", "runs"))
-		assert.Equal(t, []string{"pr-1"}, c.Paths.Tasks, "a caller picks a --run name from what is already there")
+		assert.NoFileExists(t, filepath.Join(root, "pr-1", "round-1", task.ManifestFile),
+			"the catalog claims no round, so a later review of it still runs")
+		assert.Equal(t, []taskInfo{{ID: "pr-1", Rounds: []string{}}}, c.Paths.Tasks,
+			"a caller picks a --run name from what is already there, and round-1 has not run")
 	})
 
 	t.Run("an unreadable prompt tree exits 2", func(t *testing.T) {
@@ -217,11 +220,13 @@ func TestRun_reviewGate(t *testing.T) {
 		wantErr string
 	}{
 		{name: "no task", opts: options{TasksDir: root, Profile: "focused"}, wantErr: "--task is required"},
-		{name: "bad task name", opts: options{Task: "../out", TasksDir: root, Profile: "focused"}, wantErr: "path separator"},
+		{name: "bad task name", opts: options{Task: "../out", Run: "round-1", TasksDir: root, Profile: "focused"}, wantErr: "path separator"},
 		{name: "bad run name", opts: options{Task: "pr-1", Run: "a/b", TasksDir: root, Profile: "focused"}, wantErr: "--run"},
-		{name: "missing task dir", opts: options{Task: "pr-2", TasksDir: root, Profile: "focused"}, wantErr: "task directory"},
-		{name: "unknown profile", opts: options{Task: "pr-1", TasksDir: root, Profile: "nope"}, wantErr: "resolve profile"},
-		{name: "unknown lens", opts: options{Task: "pr-1", TasksDir: root, Profile: "focused", Lenses: []string{"nope"}}, wantErr: "resolve roster"},
+		{name: "no run", opts: options{Task: "pr-1", TasksDir: root, Profile: "focused"}, wantErr: "revmux new --task pr-1"},
+		{name: "missing round", opts: options{Task: "pr-1", Run: "round-9", TasksDir: root, Profile: "focused"}, wantErr: "round-9"},
+		{name: "missing task dir", opts: options{Task: "pr-2", Run: "round-1", TasksDir: root, Profile: "focused"}, wantErr: "task directory"},
+		{name: "unknown profile", opts: options{Task: "pr-1", Run: "round-1", TasksDir: root, Profile: "nope"}, wantErr: "resolve profile"},
+		{name: "unknown lens", opts: options{Task: "pr-1", Run: "round-1", TasksDir: root, Profile: "focused", Lenses: []string{"nope"}}, wantErr: "resolve roster"},
 	}
 
 	for _, tt := range tests {
@@ -241,7 +246,7 @@ func TestRun_review(t *testing.T) {
 		t.Helper()
 		return options{
 			Task: "pr-1", Run: "round-1", TasksDir: taskRoot(t), Profile: "focused", Lenses: []string{"bugs"},
-			StaggerDelay: 30 * time.Second, MaxParallel: 4, KeepRuns: 10,
+			StaggerDelay: 30 * time.Second, MaxParallel: 4,
 			NoSynthesis: true, // these assert rendering and exit codes; the merge has its own case below
 			// most cases here read the rendered report, so they ask for it; stdout is JSON by default
 			// because the caller is a program, and the case below that checks that says so itself
@@ -286,7 +291,7 @@ func TestRun_review(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(r.stdout.String()), &rep))
 		assert.Equal(t, "pr-1", rep.Scope.Task)
 		assert.Equal(t, "round-1", rep.Scope.Run)
-		assert.Equal(t, filepath.Join(o.TasksDir, "pr-1", scopeFileName), rep.Scope.ScopePath)
+		assert.Equal(t, filepath.Join(o.TasksDir, "pr-1", "round-1", task.InputDir, task.ScopeFile), rep.Scope.ScopePath)
 		require.Len(t, rep.Findings, 1)
 		assert.Equal(t, []string{"lenses"}, rep.Findings[0].Sources)
 	})
@@ -425,21 +430,22 @@ func TestRun_promptsCarryPathsNotContents(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, strings.HasPrefix(root, cwd+string(os.PathSeparator)), "the tasks root must be outside the repo")
 
-	dir := filepath.Join(root, "pr-1")
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, contextDirName), 0o750))
+	round := filepath.Join(root, "pr-1", "round-1")
+	input := filepath.Join(round, task.InputDir)
+	require.NoError(t, os.MkdirAll(filepath.Join(input, task.ContextDir), 0o750))
 	contents := map[string]string{
-		scopeFileName: "SENTINEL-SCOPE run git diff master...HEAD",
-		goalFileName:  "SENTINEL-GOAL make the watchdog observable",
-		profFileName:  "SENTINEL-PROFILE go, tests with testify",
-		filepath.Join(contextDirName, "ticket.md"): "SENTINEL-CONTEXT the ticket body",
+		task.ScopeFile:   "SENTINEL-SCOPE run git diff master...HEAD",
+		task.GoalFile:    "SENTINEL-GOAL make the watchdog observable",
+		task.ProfileFile: "SENTINEL-PROFILE go, tests with testify",
+		filepath.Join(task.ContextDir, "ticket.md"): "SENTINEL-CONTEXT the ticket body",
 	}
 	for name, body := range contents {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(input, name), []byte(body), 0o600))
 	}
 
 	r := newRunOpts(t, options{
 		Task: "pr-1", Run: "round-1", TasksDir: root, Profile: "focused", Lenses: []string{"bugs"},
-		StaggerDelay: 30 * time.Second, MaxParallel: 4, KeepRuns: 10, VerifyGroups: 4, NoSynthesis: true,
+		StaggerDelay: 30 * time.Second, MaxParallel: 4, VerifyGroups: 4, NoSynthesis: true,
 	})
 	r.result = executor.Result{StructuredOutput: json.RawMessage(
 		`{"findings":[{"file":"app/main.go","line":42,"severity":"major","confidence":90,"title":"unchecked error"}]}`)}
@@ -449,14 +455,14 @@ func TestRun_promptsCarryPathsNotContents(t *testing.T) {
 	require.Len(t, prompts, 2, "the finder and the verifier its finding produced")
 
 	for _, want := range []string{
-		filepath.Join(dir, scopeFileName), filepath.Join(dir, goalFileName),
-		filepath.Join(dir, profFileName), filepath.Join(dir, contextDirName),
+		filepath.Join(input, task.ScopeFile), filepath.Join(input, task.GoalFile),
+		filepath.Join(input, task.ProfileFile), filepath.Join(input, task.ContextDir),
 	} {
 		assert.Contains(t, prompts[0], want, "the agent is handed the path and reads the file itself")
 	}
 
 	// the archived prompt is the bytes the process received, so a leak would show up in both
-	archived, err := os.ReadFile(filepath.Join(dir, "runs", "round-1", "prompts", "agents", "lenses.md")) //nolint:gosec // path built from t.TempDir
+	archived, err := os.ReadFile(filepath.Join(round, "prompts", "agents", "lenses.md")) //nolint:gosec // path built from t.TempDir
 	require.NoError(t, err)
 	assert.Equal(t, prompts[0], string(archived))
 
@@ -474,7 +480,7 @@ func TestRun_degradedSourceDoesNotAbortTheRun(t *testing.T) {
 	// runner emits no activity and the fake clock fires no timer, so nothing would open the gate
 	r := newRunOpts(t, options{
 		Task: "pr-1", Run: "round-1", TasksDir: taskRoot(t), Profile: "focused",
-		MaxParallel: 4, KeepRuns: 10, NoSynthesis: true, NoVerify: true, Markdown: true,
+		MaxParallel: 4, NoSynthesis: true, NoVerify: true, Markdown: true,
 	})
 	r.result = executor.Result{
 		StructuredOutput: json.RawMessage(`{"findings":[{"file":"app/main.go","line":42,"severity":"major",` +
@@ -526,7 +532,7 @@ func TestRun_configComposesARunnableInvocation(t *testing.T) {
 		t.Helper()
 		root := taskRoot(t)
 		o.Task, o.Run, o.TasksDir = "pr-1", "round-1", root
-		o.MaxParallel, o.KeepRuns, o.NoSynthesis, o.NoVerify = 4, 10, true, true
+		o.MaxParallel, o.NoSynthesis, o.NoVerify = 4, true, true
 		r := newRunOpts(t, o)
 		r.result = executor.Result{StructuredOutput: json.RawMessage(
 			`{"findings":[{"file":"a.go","line":1,"severity":"minor","confidence":55,"title":"x"}]}`)}
@@ -555,7 +561,7 @@ func TestRun_configComposesARunnableInvocation(t *testing.T) {
 				_, root := review(t, options{Profile: p.Name})
 
 				// the agents that ran, read back from the prompt each one was archived under
-				entries, err := os.ReadDir(filepath.Join(root, "pr-1", "runs", "round-1", "prompts", "agents"))
+				entries, err := os.ReadDir(filepath.Join(root, "pr-1", "round-1", "prompts", "agents"))
 				require.NoError(t, err)
 				dispatched := make([]string, 0, len(entries))
 				for _, e := range entries {
@@ -686,7 +692,7 @@ func TestRun_reportWrittenOnce(t *testing.T) {
 		t.Helper()
 		return options{
 			Task: "pr-1", Run: "round-1", TasksDir: taskRoot(t), Profile: "focused", Lenses: []string{"bugs"},
-			StaggerDelay: 30 * time.Second, MaxParallel: 4, KeepRuns: 10, NoSynthesis: true,
+			StaggerDelay: 30 * time.Second, MaxParallel: 4, NoSynthesis: true,
 			Markdown: true, // this reads the rendered banner off stdout
 		}
 	}
@@ -730,7 +736,7 @@ func TestRun_reportWrittenOnce(t *testing.T) {
 func TestRun_archivesItsOwnArtifacts(t *testing.T) {
 	o := options{
 		Task: "pr-1", Run: "round-1", TasksDir: taskRoot(t), Profile: "focused", Lenses: []string{"bugs"},
-		StaggerDelay: 30 * time.Second, MaxParallel: 4, KeepRuns: 10, NoSynthesis: true, MinConfidence: 80,
+		StaggerDelay: 30 * time.Second, MaxParallel: 4, NoSynthesis: true, MinConfidence: 80,
 		Markdown: true,
 	}
 	r := newRunOpts(t, o)
@@ -743,25 +749,25 @@ func TestRun_archivesItsOwnArtifacts(t *testing.T) {
 
 	assert.Equal(t, 1, run(r.opts()))
 
-	runDir := filepath.Join(o.TasksDir, "pr-1", "runs", "round-1")
-	assert.Subset(t, treeOf(t, runDir), []string{reportFileName, findingsFileName, manifestFileName})
+	runDir := filepath.Join(o.TasksDir, "pr-1", "round-1")
+	assert.Subset(t, treeOf(t, runDir), []string{task.ReportFile, task.FindingsFile, task.ManifestFile})
 
 	// the archived report is the filtered one, byte for byte what the caller was shown
-	md, err := os.ReadFile(filepath.Join(runDir, reportFileName)) //nolint:gosec // path from t.TempDir
+	md, err := os.ReadFile(filepath.Join(runDir, task.ReportFile)) //nolint:gosec // path from t.TempDir
 	require.NoError(t, err)
 	assert.Equal(t, r.stdout.String(), string(md))
 	assert.Contains(t, string(md), "above the bar")
 	assert.NotContains(t, string(md), "below the bar", "the filter runs before the archive, not after it")
 
 	var archived finding.Report
-	fj, err := os.ReadFile(filepath.Join(runDir, findingsFileName)) //nolint:gosec // path from t.TempDir
+	fj, err := os.ReadFile(filepath.Join(runDir, task.FindingsFile)) //nolint:gosec // path from t.TempDir
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(fj, &archived))
 	require.Len(t, archived.Findings, 1)
 	assert.Equal(t, []string{"lenses"}, archived.Findings[0].Sources)
 
 	var m manifest
-	mj, err := os.ReadFile(filepath.Join(runDir, manifestFileName)) //nolint:gosec // path from t.TempDir
+	mj, err := os.ReadFile(filepath.Join(runDir, task.ManifestFile)) //nolint:gosec // path from t.TempDir
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(mj, &m))
 	assert.Equal(t, "pr-1", m.Task)
@@ -779,7 +785,7 @@ func TestRun_ttyGate(t *testing.T) {
 		t.Helper()
 		return options{
 			Task: "pr-1", Run: "round-1", TasksDir: taskRoot(t), Profile: "focused", Lenses: []string{"bugs"},
-			StaggerDelay: 30 * time.Second, MaxParallel: 4, KeepRuns: 10, NoSynthesis: true,
+			StaggerDelay: 30 * time.Second, MaxParallel: 4, NoSynthesis: true,
 		}
 	}
 
@@ -935,14 +941,23 @@ func treeOf(t *testing.T, dir string) []string {
 	return out
 }
 
-// taskRoot builds a tasks root holding one filled task directory, never the real ./.revmux/tasks.
+// taskRoot builds a tasks root holding one task with its first round prepared, never the real
+// ./.revmux/tasks.
 func taskRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	dir := filepath.Join(root, "pr-1")
-	require.NoError(t, os.MkdirAll(dir, 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, scopeFileName), []byte("review the diff"), 0o600))
+	roundIn(t, root, "round-1")
 	return root
+}
+
+// roundIn prepares one round of the pr-1 task the way a caller leaves it: a directory under the task
+// holding the input/ this round's review context lives in. revmux opens it and creates none of it, so a
+// review against a round nothing prepared has no scope to read.
+func roundIn(t *testing.T, root, run string) {
+	t.Helper()
+	input := filepath.Join(root, "pr-1", run, task.InputDir)
+	require.NoError(t, os.MkdirAll(input, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(input, task.ScopeFile), []byte("review the diff"), 0o600))
 }
 
 // runHarness holds the writers a run wrote to, so a test can assert on each stream separately, plus

@@ -25,9 +25,6 @@
 # root directory holding task directories
 # tasks-dir = ./.revmux/tasks
 
-# how many runs to keep per task
-# keep-runs = 10
-
 # close the terminal UI this long after the report arrives; 0 leaves it open until a key is pressed
 # auto-exit = 0s
 

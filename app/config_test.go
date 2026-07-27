@@ -14,7 +14,12 @@ import (
 	"github.com/umputun/revmux/app/executor"
 	"github.com/umputun/revmux/app/executor/mocks"
 	"github.com/umputun/revmux/app/prompt"
+	"github.com/umputun/revmux/app/task"
 )
+
+// testRun is the round every context fixture is written into: only its containment under the task is
+// ever under test, never the name itself.
+const testRun = "round-1"
 
 func TestParseArgs_defaults(t *testing.T) {
 	home := isolate(t)
@@ -29,7 +34,6 @@ func TestParseArgs_defaults(t *testing.T) {
 	assert.Equal(t, 4, o.MaxParallel)
 	assert.Equal(t, 6, o.VerifyGroups)
 	assert.Equal(t, "./.revmux/tasks", o.TasksDir)
-	assert.Equal(t, 10, o.KeepRuns)
 	assert.Equal(t, "comprehensive", o.Profile)
 	assert.Equal(t, 0, o.MinConfidence)
 }
@@ -43,7 +47,6 @@ func TestParseArgs_cleanInstallHasNoZeroKnob(t *testing.T) {
 	assert.Positive(t, o.IdleTimeout, "a zero idle timeout is a disabled watchdog")
 	assert.Positive(t, o.HardTimeout, "a zero hard timeout is a disabled watchdog")
 	assert.GreaterOrEqual(t, o.MaxParallel, 1, "a zero max-parallel is a zero-capacity semaphore")
-	assert.GreaterOrEqual(t, o.KeepRuns, 1)
 	assert.GreaterOrEqual(t, o.VerifyGroups, 1)
 
 	set, err := o.promptSet()
@@ -111,7 +114,7 @@ func TestParseArgs_unknownFlag(t *testing.T) {
 func TestParseArgs_precedenceAcrossFourLayers(t *testing.T) {
 	dir := isolate(t)
 	user := filepath.Join(dir, "user")
-	writeConfig(t, user, "max-parallel = 9\nkeep-runs = 3\nstagger-delay = 1s\nprofile = user-profile\n")
+	writeConfig(t, user, "max-parallel = 9\nverify-groups = 3\nstagger-delay = 1s\nprofile = user-profile\n")
 	writeConfig(t, filepath.Join(dir, projectDirName), "max-parallel = 7\nprofile = project-profile\n")
 
 	o, err := parseArgs([]string{"--task", "pr-1", "--config-dir", user, "--idle-timeout", "5m", "--max-parallel", "11"})
@@ -120,7 +123,7 @@ func TestParseArgs_precedenceAcrossFourLayers(t *testing.T) {
 	assert.Equal(t, 11, o.MaxParallel, "the command line beats both files")
 	assert.Equal(t, 5*time.Minute, o.IdleTimeout, "the command line beats the built-in default")
 	assert.Equal(t, "project-profile", o.Profile, "the project layer beats the user layer")
-	assert.Equal(t, 3, o.KeepRuns, "a user key the project layer does not set survives")
+	assert.Equal(t, 3, o.VerifyGroups, "a user key the project layer does not set survives")
 	assert.Equal(t, time.Second, o.StaggerDelay, "layers merge per key, not per file")
 	assert.Equal(t, 20*time.Minute, o.HardTimeout, "a key no layer sets keeps its built-in default")
 }
@@ -128,7 +131,7 @@ func TestParseArgs_precedenceAcrossFourLayers(t *testing.T) {
 func TestParseArgs_knobOriginsNameTheWinningLayer(t *testing.T) {
 	dir := isolate(t)
 	user := filepath.Join(dir, "user")
-	writeConfig(t, user, "keep-runs = 3\nmax-parallel = 9\nprofile = user-profile\n")
+	writeConfig(t, user, "verify-groups = 3\nmax-parallel = 9\nprofile = user-profile\n")
 	writeConfig(t, filepath.Join(dir, projectDirName), "max-parallel = 7\nprofile = project-profile\n")
 
 	o, err := parseArgs([]string{"--task", "pr-1", "--config-dir", user, "--idle-timeout", "5m"})
@@ -138,10 +141,9 @@ func TestParseArgs_knobOriginsNameTheWinningLayer(t *testing.T) {
 		"idle-timeout":  originFlag,
 		"profile":       originProject,
 		"max-parallel":  originProject,
-		"keep-runs":     originUser,
+		"verify-groups": originUser,
 		"hard-timeout":  originDefault,
 		"stagger-delay": originDefault,
-		"verify-groups": originDefault,
 		"tasks-dir":     originDefault,
 		"auto-exit":     originDefault,
 	}
@@ -156,28 +158,28 @@ func TestParseArgs_knobOriginIsNotFooledByStructDefaults(t *testing.T) {
 	o, err := parseArgs([]string{"--task", "pr-1", "--config-dir", filepath.Join(dir, "user"), "--profile", "focused"})
 	require.NoError(t, err)
 	assert.Equal(t, originFlag, o.knobOrigins["profile"])
-	assert.Equal(t, originDefault, o.knobOrigins["keep-runs"])
+	assert.Equal(t, originDefault, o.knobOrigins["verify-groups"])
 }
 
 func TestParseArgs_configDirOnTheProjectDirYieldsOneLayer(t *testing.T) {
 	dir := isolate(t)
 	project := filepath.Join(dir, projectDirName)
-	writeConfig(t, project, "keep-runs = 5\n")
+	writeConfig(t, project, "verify-groups = 5\n")
 
 	t.Run("collapsed", func(t *testing.T) {
 		o, err := parseArgs([]string{"--task", "pr-1", "--config-dir", project})
 		require.NoError(t, err)
 		assert.Empty(t, o.layers.project, "one directory must not load as two layers")
 		assert.True(t, sameDir(o.layers.user, project))
-		assert.Equal(t, 5, o.KeepRuns)
-		assert.Equal(t, originUser, o.knobOrigins["keep-runs"])
+		assert.Equal(t, 5, o.VerifyGroups)
+		assert.Equal(t, originUser, o.knobOrigins["verify-groups"])
 	})
 
 	t.Run("distinct", func(t *testing.T) {
 		o, err := parseArgs([]string{"--task", "pr-1", "--config-dir", filepath.Join(dir, "user")})
 		require.NoError(t, err)
 		assert.True(t, sameDir(o.layers.project, project), "the project layer is auto-detected in the working directory")
-		assert.Equal(t, originProject, o.knobOrigins["keep-runs"])
+		assert.Equal(t, originProject, o.knobOrigins["verify-groups"])
 	})
 }
 
@@ -200,7 +202,7 @@ func TestParseArgs_defaultUserDirComesFromHome(t *testing.T) {
 
 func TestParseArgs_relativePathsFollowCwdNotWorkdir(t *testing.T) {
 	dir := isolate(t)
-	writeConfig(t, filepath.Join(dir, projectDirName), "keep-runs = 5\n")
+	writeConfig(t, filepath.Join(dir, projectDirName), "verify-groups = 5\n")
 	elsewhere := t.TempDir()
 
 	o, err := parseArgs([]string{"--task", "pr-1", "--config-dir", filepath.Join(dir, "user"), "--workdir", elsewhere})
@@ -208,7 +210,7 @@ func TestParseArgs_relativePathsFollowCwdNotWorkdir(t *testing.T) {
 
 	assert.True(t, sameDir(o.layers.project, filepath.Join(dir, projectDirName)),
 		"the project layer is auto-detected in the working directory, never under --workdir")
-	assert.Equal(t, 5, o.KeepRuns)
+	assert.Equal(t, 5, o.VerifyGroups)
 	assert.Equal(t, "./.revmux/tasks", o.TasksDir, "--tasks-dir resolves against the same cwd")
 }
 
@@ -265,32 +267,41 @@ func TestKnobNames_iniNameMatchesLongName(t *testing.T) {
 		assert.NotEmpty(t, f.Tag.Get("default"), "field %s: a knob with no default resolves to a zero value", f.Name)
 	}
 	assert.Equal(t, []string{"idle-timeout", "hard-timeout", "stagger-delay", "max-parallel",
-		"verify-groups", "tasks-dir", "keep-runs", "auto-exit", "profile"}, knobNames())
+		"verify-groups", "tasks-dir", "auto-exit", "profile"}, knobNames())
 }
 
 func TestResolveContext_shapes(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
 
-	full := taskDirWith(t, root, "full", "scope.md", "goal.md", "profile.md")
-	require.NoError(t, os.MkdirAll(filepath.Join(full, contextDirName), 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(full, contextDirName, "ticket.md"), []byte("t"), 0o600))
+	full := roundInput(t, root, "full", task.ScopeFile, task.GoalFile, task.ProfileFile)
+	require.NoError(t, os.MkdirAll(filepath.Join(full, task.ContextDir), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(full, task.ContextDir, "ticket.md"), []byte("t"), 0o600))
 
-	scopeOnly := taskDirWith(t, root, "scope-only", "scope.md")
+	scopeOnly := roundInput(t, root, "scope-only", task.ScopeFile)
 
-	taskDirWith(t, root, "no-scope", "goal.md")
+	roundInput(t, root, "no-scope", task.GoalFile)
 
-	emptyScope := taskDirWith(t, root, "empty-scope")
-	require.NoError(t, os.WriteFile(filepath.Join(emptyScope, scopeFileName), nil, 0o600))
+	emptyScope := roundInput(t, root, "empty-scope")
+	require.NoError(t, os.WriteFile(filepath.Join(emptyScope, task.ScopeFile), nil, 0o600))
 
-	dirScope := taskDirWith(t, root, "dir-scope")
-	require.NoError(t, os.Mkdir(filepath.Join(dirScope, scopeFileName), 0o750))
+	dirScope := roundInput(t, root, "dir-scope")
+	require.NoError(t, os.Mkdir(filepath.Join(dirScope, task.ScopeFile), 0o750))
 
-	emptyCtx := taskDirWith(t, root, "empty-context", "scope.md")
-	require.NoError(t, os.Mkdir(filepath.Join(emptyCtx, contextDirName), 0o750))
+	emptyCtx := roundInput(t, root, "empty-context", task.ScopeFile)
+	require.NoError(t, os.Mkdir(filepath.Join(emptyCtx, task.ContextDir), 0o750))
 
-	fileCtx := taskDirWith(t, root, "file-context", "scope.md")
-	require.NoError(t, os.WriteFile(filepath.Join(fileCtx, contextDirName), []byte("x"), 0o600))
+	fileCtx := roundInput(t, root, "file-context", task.ScopeFile)
+	require.NoError(t, os.WriteFile(filepath.Join(fileCtx, task.ContextDir), []byte("x"), 0o600))
+
+	noRound := filepath.Join(root, "no-round")
+	require.NoError(t, os.MkdirAll(noRound, 0o750))
+
+	roundInput(t, root, "old-scope", task.ScopeFile)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "old-scope", task.ScopeFile), []byte("one scope"), 0o600))
+
+	roundInput(t, root, "old-runs", task.ScopeFile)
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "old-runs", "runs", "round-1"), 0o750))
 
 	tests := []struct {
 		name    string
@@ -298,15 +309,16 @@ func TestResolveContext_shapes(t *testing.T) {
 		wantErr string
 		check   func(t *testing.T, rc reviewContext)
 	}{
-		{name: "full directory", task: "full", check: func(t *testing.T, rc reviewContext) {
-			assert.Equal(t, filepath.Join(full, scopeFileName), rc.Scope)
-			assert.Equal(t, filepath.Join(full, goalFileName), rc.Goal)
-			assert.Equal(t, filepath.Join(full, profFileName), rc.Profile)
-			assert.Equal(t, filepath.Join(full, contextDirName), rc.Context)
-			assert.Equal(t, full, rc.TaskDir)
+		{name: "full round", task: "full", check: func(t *testing.T, rc reviewContext) {
+			assert.Equal(t, filepath.Join(full, task.ScopeFile), rc.Scope)
+			assert.Equal(t, filepath.Join(full, task.GoalFile), rc.Goal)
+			assert.Equal(t, filepath.Join(full, task.ProfileFile), rc.Profile)
+			assert.Equal(t, filepath.Join(full, task.ContextDir), rc.Context)
+			assert.Equal(t, filepath.Join(root, "full"), rc.TaskDir,
+				"the task directory, since it is what the prior-round inventory enumerates")
 		}},
 		{name: "scope only", task: "scope-only", check: func(t *testing.T, rc reviewContext) {
-			assert.Equal(t, filepath.Join(scopeOnly, scopeFileName), rc.Scope)
+			assert.Equal(t, filepath.Join(scopeOnly, task.ScopeFile), rc.Scope)
 			assert.Empty(t, rc.Goal, "an absent goal is not an error")
 			assert.Empty(t, rc.Profile)
 			assert.Empty(t, rc.Context)
@@ -319,11 +331,14 @@ func TestResolveContext_shapes(t *testing.T) {
 		{name: "scope is a directory", task: "dir-scope", wantErr: "is a directory, want a file"},
 		{name: "context is a file", task: "file-context", wantErr: "is a file, want a directory"},
 		{name: "missing task directory", task: "nope", wantErr: "task directory"},
+		{name: "round the caller never prepared", task: "no-round", wantErr: filepath.Join(noRound, testRun, task.InputDir)},
+		{name: "old layout, scope beside the rounds", task: "old-scope", wantErr: "old layout"},
+		{name: "old layout, a runs directory", task: "old-runs", wantErr: "runs"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			o := options{Task: tt.task, TasksDir: root}
+			o := options{Task: tt.task, Run: testRun, TasksDir: root}
 			rc, err := o.resolveContext()
 			if tt.wantErr != "" {
 				require.Error(t, err)
@@ -335,20 +350,64 @@ func TestResolveContext_shapes(t *testing.T) {
 		})
 	}
 
+	// the old-layout gate is what stands between a task written for the previous shape and a review that
+	// reads half of it, so a stat it could not answer must fail rather than read as "the entry is absent"
+	t.Run("an unstattable task-level entry is an error, never a pass", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root reads inside a directory with no execute bit")
+		}
+		roundInput(t, root, "blocked", task.ScopeFile)
+		taskDir := filepath.Join(root, "blocked")
+		require.NoError(t, os.Chmod(taskDir, 0o600))       // readable, not searchable: a name inside cannot be stat'd
+		t.Cleanup(func() { _ = os.Chmod(taskDir, 0o750) }) //nolint:gosec // restores the temp dir for cleanup
+
+		_, err := options{Task: "blocked", Run: testRun, TasksDir: root}.resolveContext()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "stat "+filepath.Join(taskDir, task.ScopeFile))
+	})
+
+	// a round nobody prepared has no input/ either, so reporting it as an empty scope names a path two
+	// levels inside a directory that is not there — and archive.New, which says it properly, never runs
+	t.Run("a round the caller never created names the call that creates one", func(t *testing.T) {
+		_, err := options{Task: "no-round", Run: testRun, TasksDir: root}.resolveContext()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "revmux new --task no-round --run "+testRun)
+		assert.Contains(t, err.Error(), filepath.Join(noRound, testRun, task.InputDir))
+	})
+
+	t.Run("a file where the round belongs is not a round", func(t *testing.T) {
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "file-round"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "file-round", testRun), []byte("x"), 0o600))
+
+		_, err := options{Task: "file-round", Run: testRun, TasksDir: root}.resolveContext()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "is not a directory")
+	})
+
+	t.Run("the old layout names both shapes", func(t *testing.T) {
+		_, err := options{Task: "old-scope", Run: testRun, TasksDir: root}.resolveContext()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), task.ScopeFile, "the entry that identifies the old shape")
+		assert.Contains(t, err.Error(), filepath.Join(root, "old-scope", testRun, task.InputDir),
+			"and the path the context is read from now")
+		assert.Equal(t, "one scope", readFile(t, filepath.Join(root, "old-scope", task.ScopeFile)),
+			"a refused task is left exactly as it was")
+	})
+
 	t.Run("tasks dir outside the working directory", func(t *testing.T) {
-		taskDirWith(t, outside, "away", "scope.md")
-		o := options{Task: "away", TasksDir: outside}
+		away := roundInput(t, outside, "away", task.ScopeFile)
+		o := options{Task: "away", Run: testRun, TasksDir: outside}
 		rc, err := o.resolveContext()
 		require.NoError(t, err)
-		assert.Equal(t, filepath.Join(outside, "away", scopeFileName), rc.Scope)
+		assert.Equal(t, filepath.Join(away, task.ScopeFile), rc.Scope)
 	})
 }
 
 func TestResolveContext_rejectsEscapingNames(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
-	taskDirWith(t, root, "ok", "scope.md")
-	taskDirWith(t, outside, "elsewhere", "scope.md")
+	roundInput(t, root, "ok", task.ScopeFile)
+	roundInput(t, outside, "elsewhere", task.ScopeFile)
 	require.NoError(t, os.Symlink(filepath.Join(outside, "elsewhere"), filepath.Join(root, "linked")))
 
 	tests := []struct {
@@ -356,14 +415,16 @@ func TestResolveContext_rejectsEscapingNames(t *testing.T) {
 		opts    options
 		wantErr string
 	}{
-		{name: "parent escape", opts: options{Task: "../escape", TasksDir: root}, wantErr: "path separator"},
-		{name: "bare parent", opts: options{Task: "..", TasksDir: root}, wantErr: "references a parent directory"},
-		{name: "separator", opts: options{Task: "a/b", TasksDir: root}, wantErr: "path separator"},
-		{name: "absolute", opts: options{Task: outside, TasksDir: root}, wantErr: "absolute"},
-		{name: "empty", opts: options{Task: "", TasksDir: root}, wantErr: "--task is empty"},
-		{name: "leading dot", opts: options{Task: ".hidden", TasksDir: root}, wantErr: "starts with a dot"},
+		{name: "parent escape", opts: options{Task: "../escape", Run: testRun, TasksDir: root}, wantErr: "path separator"},
+		{name: "bare parent", opts: options{Task: "..", Run: testRun, TasksDir: root}, wantErr: "references a parent directory"},
+		{name: "separator", opts: options{Task: "a/b", Run: testRun, TasksDir: root}, wantErr: "path separator"},
+		{name: "absolute", opts: options{Task: outside, Run: testRun, TasksDir: root}, wantErr: "absolute"},
+		{name: "empty", opts: options{Task: "", Run: testRun, TasksDir: root}, wantErr: "--task is empty"},
+		{name: "leading dot", opts: options{Task: ".hidden", Run: testRun, TasksDir: root}, wantErr: "starts with a dot"},
 		{name: "run escapes too", opts: options{Task: "ok", Run: "../out", TasksDir: root}, wantErr: "--run"},
-		{name: "symlink out of the root", opts: options{Task: "linked", TasksDir: root}, wantErr: "escapes the tasks root"},
+		{name: "run omitted", opts: options{Task: "ok", TasksDir: root}, wantErr: "revmux new --task ok"},
+		{name: "symlink out of the root", opts: options{Task: "linked", Run: testRun, TasksDir: root},
+			wantErr: "escapes the tasks root"},
 	}
 
 	for _, tt := range tests {
@@ -381,11 +442,11 @@ func TestResolveContext_absolutePathsAndNoFileOpened(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	dir := taskDirWith(t, root, "pr-1", "scope.md", "goal.md")
-	require.NoError(t, os.Chmod(filepath.Join(dir, scopeFileName), 0o000))
-	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, scopeFileName), 0o600) })
+	dir := roundInput(t, root, "pr-1", task.ScopeFile, task.GoalFile)
+	require.NoError(t, os.Chmod(filepath.Join(dir, task.ScopeFile), 0o000))
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, task.ScopeFile), 0o600) })
 
-	o := options{Task: "pr-1", TasksDir: filepath.Join(root, "..", filepath.Base(root))}
+	o := options{Task: "pr-1", Run: testRun, TasksDir: filepath.Join(root, "..", filepath.Base(root))}
 	rc, err := o.resolveContext()
 	require.NoError(t, err, "resolution stats context files and never opens one")
 
@@ -402,11 +463,11 @@ func TestResolveContext_absolutePathsAndNoFileOpened(t *testing.T) {
 
 func TestResolveContext_workDir(t *testing.T) {
 	root := t.TempDir()
-	taskDirWith(t, root, "pr-1", "scope.md")
+	roundInput(t, root, "pr-1", task.ScopeFile)
 	work := t.TempDir()
 
 	t.Run("explicit", func(t *testing.T) {
-		rc, err := options{Task: "pr-1", TasksDir: root, WorkDir: work}.resolveContext()
+		rc, err := options{Task: "pr-1", Run: testRun, TasksDir: root, WorkDir: work}.resolveContext()
 		require.NoError(t, err)
 		assert.True(t, sameDir(rc.WorkDir, work))
 	})
@@ -414,20 +475,20 @@ func TestResolveContext_workDir(t *testing.T) {
 	t.Run("defaults to the process working directory", func(t *testing.T) {
 		cwd, err := os.Getwd()
 		require.NoError(t, err)
-		rc, err := options{Task: "pr-1", TasksDir: root}.resolveContext()
+		rc, err := options{Task: "pr-1", Run: testRun, TasksDir: root}.resolveContext()
 		require.NoError(t, err)
 		assert.Equal(t, cwd, rc.WorkDir)
 	})
 
 	t.Run("missing", func(t *testing.T) {
-		_, err := options{Task: "pr-1", TasksDir: root, WorkDir: filepath.Join(work, "nope")}.resolveContext()
+		_, err := options{Task: "pr-1", Run: testRun, TasksDir: root, WorkDir: filepath.Join(work, "nope")}.resolveContext()
 		require.Error(t, err)
 	})
 
 	t.Run("not a directory", func(t *testing.T) {
 		file := filepath.Join(work, "file")
 		require.NoError(t, os.WriteFile(file, []byte("x"), 0o600))
-		_, err := options{Task: "pr-1", TasksDir: root, WorkDir: file}.resolveContext()
+		_, err := options{Task: "pr-1", Run: testRun, TasksDir: root, WorkDir: file}.resolveContext()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not a directory")
 	})
@@ -448,12 +509,38 @@ func TestReviewContext_vars(t *testing.T) {
 	}, full.vars())
 }
 
-func TestOptions_runName(t *testing.T) {
-	clk := &mocks.ClockMock{NowFunc: func() time.Time { return time.Date(2026, 7, 26, 16, 2, 11, 0, time.UTC) }}
+func TestOptions_checkNames(t *testing.T) {
+	t.Run("an omitted run names the round and how to create one", func(t *testing.T) {
+		err := options{Task: "pr-1"}.checkNames()
+		require.Error(t, err, "there is no default: the round is where the caller's own context lives")
+		assert.Contains(t, err.Error(), "revmux new --task pr-1 --run <round>")
+		assert.Contains(t, err.Error(), task.InputDir)
+	})
 
-	assert.Equal(t, "after-fix", options{Run: "after-fix"}.runName(clk))
-	assert.Equal(t, "20260726T160211Z", options{}.runName(clk))
-	assert.NoError(t, options{}.checkName("--run", options{}.runName(clk)), "the generated default must be a legal name")
+	t.Run("both names go through the one validator", func(t *testing.T) {
+		tests := []struct {
+			name string
+			opts options
+			want string
+		}{
+			{name: "task empty", opts: options{Run: "round-1"}, want: "--task is empty"},
+			{name: "task separator", opts: options{Task: "a/b", Run: "round-1"}, want: "--task"},
+			{name: "run parent", opts: options{Task: "pr-1", Run: ".."}, want: "--run"},
+			{name: "run hidden", opts: options{Task: "pr-1", Run: ".hidden"}, want: "starts with a dot"},
+			// a round carrying one of these names is where the old-layout marker is looked for, so it
+			// makes every later review of the task fail — including of its legitimate rounds
+			{name: "run named runs", opts: options{Task: "pr-1", Run: "runs"}, want: "is reserved"},
+			{name: "run named scope.md", opts: options{Task: "pr-1", Run: task.ScopeFile}, want: "is reserved"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				err := tt.opts.checkNames()
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.want)
+			})
+		}
+		require.NoError(t, options{Task: "pr-1", Run: "round-1"}.checkNames())
+	})
 }
 
 func TestOptions_executorOpts(t *testing.T) {
@@ -498,12 +585,12 @@ func TestOptions_initConfig(t *testing.T) {
 	})
 
 	t.Run("customized file is left alone", func(t *testing.T) {
-		require.NoError(t, os.WriteFile(path, []byte("keep-runs = 42\n"), 0o600))
+		require.NoError(t, os.WriteFile(path, []byte("verify-groups = 42\n"), 0o600))
 		out := &strings.Builder{}
 		require.NoError(t, options{}.initConfig(out))
 		written, err := os.ReadFile(path) //nolint:gosec // path built from t.TempDir
 		require.NoError(t, err)
-		assert.Equal(t, "keep-runs = 42\n", string(written))
+		assert.Equal(t, "verify-groups = 42\n", string(written))
 		assert.Contains(t, out.String(), "customized")
 	})
 }
@@ -545,12 +632,12 @@ func TestOptions_dumpDefaults(t *testing.T) {
 func TestIniKeys(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config")
-	body := "[Application Options]\n# comment = 1\n; other = 2\n\nkeep-runs = 5\n  Max-Parallel = 7 \nnot-a-pair\n"
+	body := "[Application Options]\n# comment = 1\n; other = 2\n\nverify-groups = 5\n  Max-Parallel = 7 \nnot-a-pair\n"
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 
 	keys, err := iniKeys(path)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"keep-runs", "max-parallel"}, keys)
+	assert.Equal(t, []string{"verify-groups", "max-parallel"}, keys)
 
 	missing, err := iniKeys(filepath.Join(dir, "absent"))
 	require.NoError(t, err)
@@ -573,12 +660,19 @@ func writeConfig(t *testing.T, dir, body string) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, configFileName), []byte(body), 0o600))
 }
 
-func taskDirWith(t *testing.T, root, name string, files ...string) string {
+func roundInput(t *testing.T, root, taskID string, files ...string) string {
 	t.Helper()
-	dir := filepath.Join(root, name)
+	dir := filepath.Join(root, taskID, testRun, task.InputDir)
 	require.NoError(t, os.MkdirAll(dir, 0o750))
 	for _, f := range files {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, f), []byte("content of "+f), 0o600))
 	}
 	return dir
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path) //nolint:gosec // path built from t.TempDir
+	require.NoError(t, err)
+	return string(data)
 }

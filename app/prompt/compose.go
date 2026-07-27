@@ -21,7 +21,7 @@ type Vars map[string]string
 
 // ComposeOpts is everything composition needs beyond the roster entry.
 //
-// History is the prior-round inventory only: the runs/ path plus one generated line per round.
+// History is the prior-round inventory only: the task directory plus one generated line per round.
 // Compose appends the independence guard itself, so no caller can supply the data without it, and
 // an empty History omits the block entirely rather than injecting it empty.
 type ComposeOpts struct {
