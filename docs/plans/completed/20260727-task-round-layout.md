@@ -354,11 +354,6 @@ leaves every caller-written file" assertion could then only pass by being weaken
 task-level `scope.md` (`artifacts_test.go:69`). None of these four can leave `go test ./...` green
 alone, so they land in one commit.
 
-**Starting point.** Uncommitted work already in the tree implements the `New` half against the plan's
-handle sequence; a copy and a patch are at
-`/private/tmp/claude-502/-Users-umputun-dev-umputun-revmux/2f0d244c-e7aa-48db-80b9-266048def49a/scratchpad/task3-archive/`.
-Build on it — do not discard it.
-
 **Files:**
 - Modify: `app/archive/archive.go`
 - Modify: `app/archive/archive_test.go`
@@ -559,7 +554,7 @@ Exports (justification per item: who outside the package calls this?):
 
 - [x] update README.md if anything drifted during implementation (verified: none)
 - [x] update CLAUDE.md if new patterns were discovered (covered by task 6)
-- [ ] move this plan to `docs/plans/completed/`
+- [x] move this plan to `docs/plans/completed/`
 
 ## Post-Completion
 
