@@ -3,15 +3,42 @@
 revmux runs a structured multi-agent code review. It spawns and supervises `claude --print` and `codex exec`
 subprocesses, then returns findings on stdout as markdown or JSON.
 
-It exists because agent fan-out driven from inside an AI coding session is unobservable and unrecoverable:
-agents go silent for minutes, sometimes never return, and the caller has no timeout, no kill, no retry and no
-progress display. A subprocess does not make the model faster. What it buys is control: a watchdog that
-notices a stall, a kill and retry the caller owns, a live view of every agent, per-agent token counts, and a
-run archive to debug a bad review afterwards.
-
 revmux runs a review and returns findings, and does nothing else. It performs no scope detection, no git
 operations, no PR fetching and no source modification. All review context is written to a task directory by
 the caller and passed in with `--task`.
+
+## Why
+
+**Control over the fan-out.** Agent fan-out driven from inside an AI coding session is unobservable and
+unrecoverable: agents go silent for minutes, sometimes never return, and the caller has no timeout, no kill,
+no retry and no progress display. A subprocess does not make the model faster. What it buys is control: a
+watchdog that notices a stall, a kill and retry the caller owns, a live view of every agent, per-agent token
+counts, and a run archive to debug a bad review afterwards.
+
+**One review standard rather than one per session.** A review assembled ad hoc varies with the prompt, the
+context left in the session, and whatever the model decided to look at that time. Here the roster, the
+lenses, the severity bar and the three stages are files, so two runs of a profile ask the same questions of
+the code. That matters most between people: a contributor gets the review a maintainer would have run, and
+the maintainer can check which lens text produced it instead of taking it on faith.
+
+**Review rules ship with the repository.** What a project actually cares about — its conventions, what counts
+as major, the mistakes it keeps repeating — usually lives in a maintainer's head and reaches contributors one
+review comment at a time. Checked into `.revmux/`, it is lens and profile text: versioned, diffable, reviewed
+like the rest of the code, and applied by everyone who clones the repo. A review that missed something is
+fixed by editing a file, once.
+
+**Auditable by agents, not only by people.** The run archive keeps the composed prompt each agent received,
+the verbatim output each one returned, the findings after every stage, and revmux's own decisions about
+stalls and retries. A person reads the report; an agent can read the entire run. That is also what makes the
+review itself improvable: a later agent reads a task's history and answers what the report cannot — which
+lens text raised a finding, whether synthesis dropped something real, whether a lens is earning its tokens —
+then proposes edits to the lens and profile files.
+
+**Rounds stack.** Reviewing a branch or a PR is never one review; it is a review, some fixes, and another
+review. revmux keeps the rounds under one task and hands the earlier ones to every agent in the next, so a
+round can tell what has already been reported, read it in full when that matters, and spend its attention on
+what changed. The injected block carries its own instruction to judge independently rather than confirm,
+since an agent told that a prior round flagged something tends to agree with it.
 
 ## Install
 
