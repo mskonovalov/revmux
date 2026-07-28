@@ -99,7 +99,7 @@ func (m Model) headerLine(p headerParts) string {
 		if p.count == countTotal {
 			count = strconv.Itoa(m.found.total) + " findings"
 		}
-		head += m.style.muted.Render(" · ") + m.style.count.Render(count)
+		head += m.style.muted.Render(" · ") + m.countStyle().Render(count)
 	}
 	return head + m.closing()
 }

@@ -125,6 +125,9 @@ cover both.
   **The count is rebuilt from the final report, not left as the last event's.** Verify moves rejected
   findings into `Immaterial` and `PreExisting` and `--min-confidence` filters, both without emitting a
   findings event, so a header fed only by events names severities the browser below it does not list.
+  **Its color is the worst severity in it, never a fixed accent** — red on any critical, yellow on any
+  major, green only when nothing above minor was found. Green is what a reader takes as a verdict on the
+  run, and a fixed one paints a review that turned up a critical exactly like a clean one.
 - On completion the model switches to the findings browser; agent tabs stay reachable
   so a reader can check *why* a finding was raised.
 - **The browser renders the report and nothing more.** It lays out what the rendered report carries

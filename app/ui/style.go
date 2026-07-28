@@ -25,7 +25,6 @@ type styles struct {
 	muted  lipgloss.Style
 	tabOn  lipgloss.Style
 	tabOff lipgloss.Style
-	count  lipgloss.Style
 	stage  lipgloss.Style
 	ok     lipgloss.Style
 	warn   lipgloss.Style
@@ -52,13 +51,28 @@ func newStyles(w io.Writer) styles {
 		muted:  r.NewStyle().Foreground(colMuted),
 		tabOn:  r.NewStyle().Bold(true).Foreground(colAccent),
 		tabOff: r.NewStyle().Foreground(colMuted),
-		count:  r.NewStyle().Bold(true).Foreground(colOK),
 		stage:  r.NewStyle().Bold(true).Foreground(colBg).Background(colAccent),
 		ok:     r.NewStyle().Foreground(colOK),
 		warn:   r.NewStyle().Foreground(colWarn),
 		bad:    r.NewStyle().Foreground(colErr),
 		run:    r.NewStyle().Foreground(colAccent),
 	}
+}
+
+// countStyle colors the header's findings count by the worst severity in it. A fixed green there reads
+// as a verdict on the run rather than as an accent, and a review that turned up a critical is exactly
+// the run a reader must not skim past. Green is reserved for a count with nothing above minor in it.
+//
+// The bold is applied here rather than carried on the three palette styles, which are also the row
+// states and are not bold.
+func (m Model) countStyle() lipgloss.Style {
+	switch {
+	case m.found.critical > 0:
+		return m.style.bad.Bold(true)
+	case m.found.major > 0:
+		return m.style.warn.Bold(true)
+	}
+	return m.style.ok.Bold(true)
 }
 
 // stateStyle colors a row by what its state means rather than by how it is spelled, so a degraded

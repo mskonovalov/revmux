@@ -554,7 +554,9 @@ pane below it. The roster fills it first, and the synthesis and verify processes
 they start, so the table shows what is running rather than only what the profile named. The findings count
 in the header follows the same logic — the finders add to it and a later stage's merged count replaces it —
 and it is rebuilt from the finished report at the end, since verify rejects findings and `--min-confidence`
-filters without either emitting an event. It is shown broken down by severity when the width allows.
+filters without either emitting an event. It is shown broken down by severity when the width allows, and
+colored by the worst severity in it: red on any critical, yellow on any major, green only when nothing
+above minor was found.
 
 Tab `1 all` is the combined chronological view and is focused by default; the tabs after it are per-agent
 full-detail scrollback. On completion the model switches to the findings browser, and the
