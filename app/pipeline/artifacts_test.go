@@ -15,6 +15,7 @@ import (
 	"github.com/umputun/revmux/app/executor"
 	"github.com/umputun/revmux/app/finding"
 	"github.com/umputun/revmux/app/pipeline/mocks"
+	"github.com/umputun/revmux/app/task"
 )
 
 func TestPipeline_Run_artifacts(t *testing.T) {
@@ -140,7 +141,7 @@ func TestPipeline_Run_artifacts(t *testing.T) {
 		_, err := p.Run(context.Background())
 		require.NoError(t, err)
 
-		counts := map[string]int{foundFile: 4, synthesizedFile: 4, verifiedFile: 4}
+		counts := map[string]int{task.FoundFile: 4, task.SynthesizedFile: 4, task.VerifiedFile: 4}
 		for name, want := range counts {
 			t.Run(name, func(t *testing.T) {
 				got := h.get(name)
@@ -153,9 +154,9 @@ func TestPipeline_Run_artifacts(t *testing.T) {
 			})
 		}
 
-		assert.Empty(t, verdictIn(t, h.get(synthesizedFile)),
+		assert.Empty(t, verdictIn(t, h.get(task.SynthesizedFile)),
 			"the pre-verify snapshot is what shows whether verify dropped something real")
-		assert.Equal(t, finding.Confirmed, verdictIn(t, h.get(verifiedFile)))
+		assert.Equal(t, finding.Confirmed, verdictIn(t, h.get(task.VerifiedFile)))
 	})
 
 	t.Run("a skipped stage snapshots nothing", func(t *testing.T) {
@@ -169,9 +170,9 @@ func TestPipeline_Run_artifacts(t *testing.T) {
 		_, err := p.Run(context.Background())
 		require.NoError(t, err)
 
-		assert.NotNil(t, h.get(foundFile))
-		assert.Nil(t, h.get(synthesizedFile), "a stage that did not run has no findings to snapshot")
-		assert.Nil(t, h.get(verifiedFile))
+		assert.NotNil(t, h.get(task.FoundFile))
+		assert.Nil(t, h.get(task.SynthesizedFile), "a stage that did not run has no findings to snapshot")
+		assert.Nil(t, h.get(task.VerifiedFile))
 		assert.Nil(t, h.get("prompts/stages/synthesis.md"))
 	})
 
@@ -204,6 +205,36 @@ func TestPipeline_Run_artifacts(t *testing.T) {
 		assert.NotEmpty(t, kinds[EventStage], "stage transitions are decisions too")
 	})
 
+	t.Run("every archive path is joined from an app/task constant", func(t *testing.T) {
+		h, _ := artifactHarness(t)
+
+		p := New(h.cfg)
+		drain(p)
+		_, err := p.Run(context.Background())
+		require.NoError(t, err)
+
+		files := []string{task.EventsFile, task.FoundFile, task.SynthesizedFile, task.VerifiedFile}
+		dirs := []string{task.AgentsDir, task.AgentPromptDir, task.StagePromptDir}
+
+		loose := []string{}
+		for _, name := range h.names() {
+			under := slices.ContainsFunc(dirs, func(d string) bool { return strings.HasPrefix(name, d+"/") })
+			if under || slices.Contains(files, name) {
+				continue
+			}
+			loose = append(loose, name)
+		}
+		assert.Empty(t, loose, "an archive path spelled here rather than in app/task drifts the next time the layout moves")
+
+		for _, name := range files {
+			assert.NotNil(t, h.get(name), "%s is an app/task constant nothing wrote to", name)
+		}
+		for _, dir := range dirs {
+			assert.True(t, slices.ContainsFunc(h.names(), func(n string) bool { return strings.HasPrefix(n, dir+"/") }),
+				"%s is an app/task constant nothing wrote under", dir)
+		}
+	})
+
 	t.Run("a prompt that cannot be archived fails the whole run", func(t *testing.T) {
 		h := newHarness(t)
 		h.archived["prompts/agents/bugs.md"] = &syncBuffer{writeErr: errors.New("disk full")}
@@ -221,7 +252,7 @@ func TestPipeline_Run_artifacts(t *testing.T) {
 
 	t.Run("a stage snapshot that cannot be archived fails the whole run", func(t *testing.T) {
 		h := newHarness(t)
-		h.archived[foundFile] = &syncBuffer{closeErr: errors.New("disk full")}
+		h.archived[task.FoundFile] = &syncBuffer{closeErr: errors.New("disk full")}
 		h.cfg.NewRunner = h.runner(map[string]executor.Result{
 			"bugs": {StructuredOutput: findingsJSON()}, "impl": {StructuredOutput: findingsJSON()},
 		})
@@ -230,7 +261,7 @@ func TestPipeline_Run_artifacts(t *testing.T) {
 		drain(p)
 		_, err := p.Run(context.Background())
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), foundFile)
+		assert.Contains(t, err.Error(), task.FoundFile)
 	})
 }
 

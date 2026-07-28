@@ -14,6 +14,7 @@ import (
 	"github.com/umputun/revmux/app/executor"
 	"github.com/umputun/revmux/app/finding"
 	"github.com/umputun/revmux/app/prompt"
+	"github.com/umputun/revmux/app/task"
 )
 
 // synthesizer owns the synthesis stage: one model call merging every source's findings into one set,
@@ -46,7 +47,7 @@ func (s *synthesizer) run(ctx context.Context, sources []sourceResult) (finding.
 	if err != nil {
 		return finding.Report{}, fmt.Errorf("compose synthesis prompt: %w", err)
 	}
-	s.save(path.Join(stagePromptDir, stageSynthesis+".md"),
+	s.save(path.Join(task.StagePromptDir, stageSynthesis+".md"),
 		[]byte(archivedPrompt(stage.Executor, text, finding.SynthesisSchema())))
 
 	// a stage announces itself and closes itself, exactly as a finder does. Without the pair its row

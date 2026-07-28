@@ -14,6 +14,7 @@ import (
 	"github.com/umputun/revmux/app/executor"
 	"github.com/umputun/revmux/app/finding"
 	"github.com/umputun/revmux/app/prompt"
+	"github.com/umputun/revmux/app/task"
 )
 
 // executorCodex names the one roster executor whose output is prose rather than stream-json, so its
@@ -259,13 +260,13 @@ func (f *finder) rawName(spec prompt.AgentSpec, attempt int) string {
 	if attempt > 0 {
 		ext = ".retry" + ext
 	}
-	return path.Join("agents", spec.Name+ext)
+	return path.Join(task.AgentsDir, spec.Name+ext)
 }
 
 // promptName is where this agent's composed prompt goes. Agent prompts live under their own directory
 // so an agent named synthesis or verify cannot overwrite a stage's prompt.
 func (f *finder) promptName(spec prompt.AgentSpec) string {
-	return path.Join(agentPromptDir, spec.Name+".md")
+	return path.Join(task.AgentPromptDir, spec.Name+".md")
 }
 
 func (f *finder) degrade(res sourceResult, err error) sourceResult {

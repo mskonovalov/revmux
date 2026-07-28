@@ -23,9 +23,15 @@ Each stage is its own unexported type (`finder`, `synthesizer`, `verifier`) owni
 Do not let `Pipeline` accumulate stage logic — it becomes a god object holding three stages, event fan-out and I/O plumbing.
 
 The I/O plumbing is held off it the same way: `app/pipeline/artifacts.go` owns the whole-artifact writers
-(`save`, `saveStage`, the sticky `fail`) and the artifact path constants.
+(`save`, `saveStage`, the sticky `fail`).
 `events.jsonl` is the deliberate exception and stays in `pipeline.go` beside `emit` — it is a stream held
 open across the whole run under the mutex guarding it, not a whole-file write.
+
+The paths those writers are handed are **not** this package's to name.
+Every archive path is joined from an `app/task` constant — `EventsFile`, `AgentsDir`, `AgentPromptDir`,
+`StagePromptDir`, `FoundFile`, `SynthesizedFile`, `VerifiedFile` — the same single source `app/archive`
+and `package main` join the caller-facing layout from.
+A literal spelled here is a second copy of the layout, and it drifts the next time the layout moves.
 
 ### No VCS. None.
 

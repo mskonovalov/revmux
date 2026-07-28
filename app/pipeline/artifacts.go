@@ -9,18 +9,6 @@ import (
 	"github.com/umputun/revmux/app/finding"
 )
 
-// artifact locations inside the round directory. Composed prompts are split by producer so a roster
-// agent named verify cannot overwrite the verify stage's own prompt — the same collision class
-// agents/ already handles for the verbatim tees.
-const (
-	agentPromptDir = "prompts/agents"
-	stagePromptDir = "prompts/stages"
-
-	foundFile       = "stages/1-found.json"
-	synthesizedFile = "stages/2-synthesized.json"
-	verifiedFile    = "stages/3-verified.json"
-)
-
 // save writes one whole artifact — a composed prompt or a stage snapshot — and folds any failure into
 // the sticky archive error instead of returning it. An archive gap fails the whole run rather than
 // degrading the one stage that hit it, since a report next to a half-written archive reads as complete.

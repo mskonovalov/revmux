@@ -16,6 +16,7 @@ import (
 	"github.com/umputun/revmux/app/executor"
 	"github.com/umputun/revmux/app/finding"
 	"github.com/umputun/revmux/app/prompt"
+	"github.com/umputun/revmux/app/task"
 )
 
 // thinGroup is the size below which a directory does not earn its own verifier and is merged with
@@ -168,7 +169,7 @@ func (v *verifier) freeName(label string, taken map[string]bool) string {
 // promptName is where one group's composed prompt goes. The name is already a filename-safe slug, so
 // a group covering app/executor lands in a file rather than a stray nested directory.
 func (v *verifier) promptName(g verifyGroup) string {
-	return path.Join(stagePromptDir, stageVerify+"-"+g.name+".md")
+	return path.Join(task.StagePromptDir, stageVerify+"-"+g.name+".md")
 }
 
 // judge runs one group and falls back to leaving its findings unverified when the verifier does not

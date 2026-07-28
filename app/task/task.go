@@ -22,8 +22,8 @@ import (
 	"github.com/umputun/revmux/app/frontmatter"
 )
 
-// the task-directory layout every path in app/archive and package main is joined from. Nothing outside
-// this package spells one of these names.
+// the task-directory layout every path in app/archive, app/pipeline and package main is joined from.
+// Nothing outside this package spells one of these names.
 const (
 	InputDir     = "input"
 	ScopeFile    = "scope.md"
@@ -36,6 +36,27 @@ const (
 
 	// metaFile describes the task rather than any one round, so it is the only entry at task level.
 	metaFile = "task.md"
+)
+
+// EventsFile is the run's decision record: stalls, retries, degrades and stage transitions.
+const EventsFile = "events.jsonl"
+
+// AgentsDir holds one verbatim stream tee per agent.
+const AgentsDir = "agents"
+
+// AgentPromptDir and StagePromptDir hold composed prompts, split so a roster agent named after a
+// stage cannot overwrite a stage prompt.
+const (
+	AgentPromptDir = "prompts/agents"
+	StagePromptDir = "prompts/stages"
+)
+
+// FoundFile, SynthesizedFile and VerifiedFile are the per-stage findings snapshots. Each is a
+// finding.Report, so each carries the full source roster alongside that stage's findings.
+const (
+	FoundFile       = "stages/1-found.json"
+	SynthesizedFile = "stages/2-synthesized.json"
+	VerifiedFile    = "stages/3-verified.json"
 )
 
 // metaTemplate is the task.md a fresh task is scaffolded with. It ships fully commented out, so a task

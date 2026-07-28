@@ -16,14 +16,11 @@ import (
 	"github.com/umputun/revmux/app/executor"
 	"github.com/umputun/revmux/app/finding"
 	"github.com/umputun/revmux/app/prompt"
+	"github.com/umputun/revmux/app/task"
 )
 
 //go:generate moq -out mocks/runner.go -pkg mocks -skip-ensure -fmt goimports . Runner
 //go:generate moq -out mocks/archiver.go -pkg mocks -skip-ensure -fmt goimports . archiver:ArchiverMock
-
-// eventsFile is the run's decision record: stalls, retries, degrades and stage transitions, none of
-// which any per-agent stream contains.
-const eventsFile = "events.jsonl"
 
 // stage names, used for the stage events, the recorded timings and the stage prompt lookup.
 const (
@@ -185,7 +182,7 @@ func (p *Pipeline) runFind(ctx context.Context) (finding.Report, []sourceResult,
 	rep := f.report(sources)
 	rep.Stats.Stages = append(rep.Stats.Stages,
 		finding.StageTiming{Name: stageFind, DurationMS: p.cfg.Clock.Now().Sub(at).Milliseconds()})
-	p.saveStage(foundFile, rep)
+	p.saveStage(task.FoundFile, rep)
 	return rep, sources, nil
 }
 
@@ -209,7 +206,7 @@ func (p *Pipeline) runSynthesis(ctx context.Context, rep finding.Report, sources
 	rep.Stats.Tokens += out.Stats.Tokens
 	rep.Stats.Stages = append(rep.Stats.Stages,
 		finding.StageTiming{Name: stageSynthesis, DurationMS: p.cfg.Clock.Now().Sub(at).Milliseconds()})
-	p.saveStage(synthesizedFile, rep)
+	p.saveStage(task.SynthesizedFile, rep)
 	return rep, nil
 }
 
@@ -230,7 +227,7 @@ func (p *Pipeline) runVerify(ctx context.Context, rep finding.Report) (finding.R
 	}
 	out.Stats.Stages = append(out.Stats.Stages,
 		finding.StageTiming{Name: stageVerify, DurationMS: p.cfg.Clock.Now().Sub(at).Milliseconds()})
-	p.saveStage(verifiedFile, out)
+	p.saveStage(task.VerifiedFile, out)
 	return out, nil
 }
 
@@ -259,11 +256,11 @@ func (p *Pipeline) archive(ev Event) {
 }
 
 func (p *Pipeline) openEvents() {
-	w, err := p.cfg.Archive.Writer(eventsFile)
+	w, err := p.cfg.Archive.Writer(task.EventsFile)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if err != nil {
-		p.err = fmt.Errorf("open %s: %w", eventsFile, err)
+		p.err = fmt.Errorf("open %s: %w", task.EventsFile, err)
 		return
 	}
 	p.log, p.enc = w, json.NewEncoder(w)
@@ -278,7 +275,7 @@ func (p *Pipeline) closeEvents() {
 		return
 	}
 	if err := p.log.Close(); err != nil && p.err == nil {
-		p.err = fmt.Errorf("close %s: %w", eventsFile, err)
+		p.err = fmt.Errorf("close %s: %w", task.EventsFile, err)
 	}
 	p.log, p.enc = nil, nil
 }

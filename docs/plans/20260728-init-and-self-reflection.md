@@ -260,11 +260,11 @@ func CollectStats(q StatsQuery) (Corpus, error)
 - Modify: `app/pipeline/find.go`
 - Modify: `app/pipeline/artifacts_test.go`
 
-- [ ] add the seven constants from Technical Details to `app/task/task.go`, beside `ManifestFile` / `FindingsFile` / `ReportFile`, each with the godoc shown
-- [ ] replace `eventsFile` in `app/pipeline/pipeline.go` and the five names in `app/pipeline/artifacts.go` with the `app/task` constants, deleting the local ones
-- [ ] update `app/pipeline/find.go:262` to join from `task.AgentsDir` rather than the literal `"agents"`
-- [ ] write a test asserting each archive path the pipeline writes equals its `app/task` constant, so a rename in one place cannot silently diverge
-- [ ] run tests - must pass before next task
+- [x] add the seven constants from Technical Details to `app/task/task.go`, beside `ManifestFile` / `FindingsFile` / `ReportFile`, each with the godoc shown
+- [x] replace `eventsFile` in `app/pipeline/pipeline.go` and the five names in `app/pipeline/artifacts.go` with the `app/task` constants, deleting the local ones
+- [x] update `app/pipeline/find.go:262` to join from `task.AgentsDir` rather than the literal `"agents"`
+- [x] write a test asserting each archive path the pipeline writes equals its `app/task` constant, so a rename in one place cannot silently diverge
+- [x] run tests - must pass before next task
 
 ### Task 2: Lift task enumeration into app/task
 

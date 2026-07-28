@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,7 @@ import (
 	"github.com/umputun/revmux/app/finding"
 	"github.com/umputun/revmux/app/pipeline/mocks"
 	"github.com/umputun/revmux/app/prompt"
+	"github.com/umputun/revmux/app/task"
 )
 
 func TestPipeline_Run(t *testing.T) {
@@ -183,7 +185,7 @@ func TestPipeline_Run_archiveFailures(t *testing.T) {
 	t.Run("events writer cannot be opened", func(t *testing.T) {
 		h := newHarness(t)
 		h.cfg.Archive = &mocks.ArchiverMock{WriterFunc: func(name string) (io.WriteCloser, error) {
-			if name == eventsFile {
+			if name == task.EventsFile {
 				return nil, errors.New("disk full")
 			}
 			return &syncBuffer{}, nil
@@ -320,7 +322,7 @@ func newHarnessWith(t *testing.T, extra map[string]string) *harness {
 	require.NoError(t, err)
 
 	h := &harness{events: &syncBuffer{}, archived: map[string]*syncBuffer{}}
-	h.archived[eventsFile] = h.events
+	h.archived[task.EventsFile] = h.events
 
 	h.cfg = Config{
 		Archive: &mocks.ArchiverMock{WriterFunc: h.writer},
@@ -374,6 +376,14 @@ func (h *harness) get(name string) *syncBuffer {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.archived[name]
+}
+
+// names lists every artifact the run opened a writer for, sorted so an assertion on the whole set
+// does not depend on which agent finished first.
+func (h *harness) names() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Sorted(maps.Keys(h.archived))
 }
 
 // runner returns a factory whose runner answers per agent, keyed off the composed prompt, since the
