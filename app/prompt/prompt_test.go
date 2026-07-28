@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -116,6 +117,99 @@ func TestLoad_Provenance(t *testing.T) {
 			assert.NotEqual(t, first, o.Hash, "editing an override must change its hash")
 		}
 	}
+}
+
+func TestSet_Content(t *testing.T) {
+	const (
+		projectBugs = "---\ndescription: project bugs\n---\nproject bugs body\n"
+		userBugs    = "---\ndescription: user bugs\n---\nuser bugs body\n"
+		userVerify  = "---\ndescription: user verify\n---\nuser verify body\n"
+	)
+	project := writeTree(t, t.TempDir(), map[string]string{"lenses/bugs.md": projectBugs})
+	user := writeTree(t, t.TempDir(), map[string]string{"lenses/bugs.md": userBugs, "prompts/verify.md": userVerify})
+
+	set, err := Load(LoadOpts{ProjectDir: project, UserDir: user})
+	require.NoError(t, err)
+
+	t.Run("front matter is retained", func(t *testing.T) {
+		got, err := set.Content("lenses/bugs.md")
+		require.NoError(t, err)
+		assert.Equal(t, projectBugs, string(got), "the unparsed bytes, not the stripped body")
+		assert.Contains(t, string(got), "---\ndescription:", "a stripped write would fail the next Load")
+	})
+
+	t.Run("project layer wins", func(t *testing.T) {
+		got, err := set.Content("lenses/bugs.md")
+		require.NoError(t, err)
+		assert.Equal(t, projectBugs, string(got))
+		assert.NotEqual(t, userBugs, string(got), "the user copy of the same file must not be materialized")
+	})
+
+	t.Run("user layer wins", func(t *testing.T) {
+		got, err := set.Content("prompts/verify.md")
+		require.NoError(t, err)
+		assert.Equal(t, userVerify, string(got))
+	})
+
+	t.Run("embedded layer wins", func(t *testing.T) {
+		want, err := fs.ReadFile(Defaults(), "lenses/adversarial.md")
+		require.NoError(t, err)
+		got, err := set.Content("lenses/adversarial.md")
+		require.NoError(t, err)
+		assert.Equal(t, want, got, "an un-overridden file materializes the embedded bytes")
+	})
+
+	t.Run("unknown path errors", func(t *testing.T) {
+		got, err := set.Content("lenses/nosuch.md")
+		require.ErrorContains(t, err, `unknown prompt file "lenses/nosuch.md"`)
+		assert.Nil(t, got, "an unknown path must never yield empty bytes to write")
+	})
+
+	t.Run("the caller cannot mutate the set", func(t *testing.T) {
+		got, err := set.Content("lenses/bugs.md")
+		require.NoError(t, err)
+		got[0] = 'x'
+		again, err := set.Content("lenses/bugs.md")
+		require.NoError(t, err)
+		assert.Equal(t, projectBugs, string(again))
+	})
+}
+
+func TestSet_ContentAgreesWithProvenance(t *testing.T) {
+	project := writeTree(t, t.TempDir(), map[string]string{
+		"lenses/bugs.md":              "---\ndescription: project bugs\n---\nproject bugs body\n",
+		"prompts/profiles/focused.md": "---\nagents:\n  - {name: a, lenses: [bugs]}\n---\nproject focused body\n",
+	})
+	user := writeTree(t, t.TempDir(), map[string]string{
+		"lenses/bugs.md":       "---\ndescription: user bugs\n---\nuser bugs body\n",
+		"lenses/user-only.md":  "---\ndescription: only the user has this\n---\nuser only body\n",
+		"prompts/synthesis.md": "---\ndescription: user synthesis\n---\nuser synthesis body\n",
+	})
+
+	set, err := Load(LoadOpts{ProjectDir: project, UserDir: user})
+	require.NoError(t, err)
+
+	origins := set.Provenance()
+	require.NotEmpty(t, origins)
+	layers := map[string]bool{}
+	for _, o := range origins {
+		data, err := set.Content(o.Path)
+		require.NoError(t, err, o.Path)
+		assert.Equal(t, o.Hash, hashOf(data), "%s: Content must be the bytes Provenance hashed", o.Path)
+
+		if o.Layer == LayerEmbedded {
+			want, err := fs.ReadFile(Defaults(), o.Path)
+			require.NoError(t, err, o.Path)
+			assert.Equal(t, want, data, o.Path)
+		} else {
+			want, err := os.ReadFile(o.Source)
+			require.NoError(t, err, o.Path)
+			assert.Equal(t, want, data, o.Path)
+		}
+		layers[o.Layer] = true
+	}
+	assert.Equal(t, map[string]bool{LayerProject: true, LayerUser: true, LayerEmbedded: true}, layers,
+		"all three layers must be exercised or the agreement is untested")
 }
 
 func TestSet_LensDescriptionIsNotInherited(t *testing.T) {

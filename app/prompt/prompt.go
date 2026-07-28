@@ -79,6 +79,7 @@ type Set struct {
 	stages   map[string]*Stage
 	lenses   map[string]doc
 	origins  []FileOrigin
+	files    map[string]fileRef // raw winning bytes, keyed by the same rel path as origins
 }
 
 type fileRef struct {
@@ -104,7 +105,8 @@ func Load(opts LoadOpts) (*Set, error) {
 		return nil, err
 	}
 
-	set := &Set{profiles: map[string]*Profile{}, stages: map[string]*Stage{}, lenses: map[string]doc{}}
+	set := &Set{profiles: map[string]*Profile{}, stages: map[string]*Stage{}, lenses: map[string]doc{},
+		files: map[string]fileRef{}}
 	for _, rel := range slices.Sorted(maps.Keys(files)) {
 		ref := files[rel]
 		meta, body, err := frontmatter.Split(ref.data)
@@ -115,6 +117,7 @@ func Load(opts LoadOpts) (*Set, error) {
 			return nil, fmt.Errorf("%s: %w", rel, err)
 		}
 		set.origins = append(set.origins, FileOrigin{Path: rel, Layer: ref.layer, Source: ref.source, Hash: hashOf(ref.data)})
+		set.files[rel] = ref
 	}
 
 	if err := set.validate(); err != nil {
@@ -166,6 +169,16 @@ func (s *Set) ProfileNames() []string { return slices.Sorted(maps.Keys(s.profile
 
 // Provenance reports the winning layer and content hash per loaded file, sorted by path.
 func (s *Set) Provenance() []FileOrigin { return slices.Clone(s.origins) }
+
+// Content is the unparsed bytes of the file that won the precedence chain for relPath, front matter
+// included. revmux init writes these, so anything stripped here produces a tree that fails to load.
+func (s *Set) Content(relPath string) ([]byte, error) {
+	ref, ok := s.files[relPath]
+	if !ok {
+		return nil, fmt.Errorf("unknown prompt file %q", relPath)
+	}
+	return bytes.Clone(ref.data), nil
+}
 
 func (s *Set) lens(name string) (string, error) {
 	d, ok := s.lenses[name]

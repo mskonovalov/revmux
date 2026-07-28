@@ -300,12 +300,12 @@ Exports (justification per item: who outside the package calls this?):
 - Modify: `app/prompt/prompt.go`
 - Modify: `app/prompt/prompt_test.go`
 
-- [ ] add the `files` field to `Set` and populate it inside `Load`'s existing loop, beside the `set.origins` append, so `Content` and `Provenance` cannot disagree about which layer won
-- [ ] implement `Content` returning the retained bytes, and an error naming the path when it is not part of the loaded tree — never empty bytes
-- [ ] write a test asserting `Content` returns bytes **including front matter**, since a stripped body would produce a tree that fails the next `Load`
-- [ ] write tests for a project-layer win, a user-layer win and an embedded win, each asserting the bytes match that layer's file
-- [ ] write a test asserting `Content` and `Provenance` agree on every entry of a three-layer tree, and one asserting an unknown path errors
-- [ ] run tests - must pass before next task
+- [x] add the `files` field to `Set` and populate it inside `Load`'s existing loop, beside the `set.origins` append, so `Content` and `Provenance` cannot disagree about which layer won
+- [x] implement `Content` returning the retained bytes, and an error naming the path when it is not part of the loaded tree — never empty bytes
+- [x] write a test asserting `Content` returns bytes **including front matter**, since a stripped body would produce a tree that fails the next `Load`
+- [x] write tests for a project-layer win, a user-layer win and an embedded win, each asserting the bytes match that layer's file
+- [x] write a test asserting `Content` and `Provenance` agree on every entry of a three-layer tree, and one asserting an unknown path errors
+- [x] run tests - must pass before next task
 
 ### Task 4: Add the `revmux init` subcommand
 
