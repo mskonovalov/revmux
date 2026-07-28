@@ -84,6 +84,11 @@ func run(o runOpts) int {
 			return o.fail(err)
 		}
 		return 0
+	case o.opts.showInit:
+		if err := o.writeInitPaths(); err != nil {
+			return o.fail(err)
+		}
+		return 0
 	}
 
 	cfg, arc, err := o.pipelineConfig()

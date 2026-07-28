@@ -332,14 +332,14 @@ Exports (justification per item: who outside the package calls this?):
 - Modify: `app/config.go`
 - Modify: `app/main.go`
 
-- [ ] create `app/initcmd.go` with `initCmd` mirroring `newCmd` — `Execute` records `o.opts.showInit` only, because go-flags calls it before the injected writers exist
-- [ ] register the `init` subcommand in the `options` struct and add the `showInit` selection field
-- [ ] implement `materializePrompts`: for each `Set.Provenance()` entry write `Set.Content` to `./.revmux/<path>` unless a project file is already there, recording the path, the layer it resolved from, and whether this call created it
-- [ ] implement `writeInitPaths`: reuse `initConfig` for the settings template, call `materializePrompts`, encode `initPaths` to `o.stdout`; add the case to `run()`
-- [ ] write tests: fresh directory creates config plus 12 prompt files; a second run creates nothing; an existing project file is left byte-identical; a customized config is left alone; a user-layer file wins over the embedded one
-- [ ] write a test asserting the materialized tree loads — `prompt.Load` over the written `./.revmux/` must succeed, which is what catches a front-matter-stripped write
-- [ ] write a test asserting nothing is written outside `./.revmux/`
-- [ ] run tests - must pass before next task
+- [x] create `app/initcmd.go` with `initCmd` mirroring `newCmd` — `Execute` records `o.opts.showInit` only, because go-flags calls it before the injected writers exist
+- [x] register the `init` subcommand in the `options` struct and add the `showInit` selection field
+- [x] implement `materializePrompts`: for each `Set.Provenance()` entry write `Set.Content` to `./.revmux/<path>` unless a project file is already there, recording the path, the layer it resolved from, and whether this call created it
+- [x] implement `writeInitPaths`: reuse `initConfig` for the settings template, call `materializePrompts`, encode `initPaths` to `o.stdout`; add the case to `run()`
+- [x] write tests: fresh directory creates config plus 12 prompt files; a second run creates nothing; an existing project file is left byte-identical; a customized config is left alone; a user-layer file wins over the embedded one
+- [x] write a test asserting the materialized tree loads — `prompt.Load` over the written `./.revmux/` must succeed, which is what catches a front-matter-stripped write
+- [x] write a test asserting nothing is written outside `./.revmux/`
+- [x] run tests - must pass before next task
 
 ### Task 5: Fold `--init` into the subcommand and correct every description of it
 

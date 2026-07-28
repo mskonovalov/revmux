@@ -70,13 +70,15 @@ type options struct {
 	DumpDefaults string `long:"dump-defaults" no-ini:"true" description:"extract the embedded prompt tree into a directory"`
 	Version      bool   `long:"version" no-ini:"true" description:"show version and exit"`
 
-	Config configCmd `command:"config" description:"print the resolved configuration as JSON"`
-	New    newCmd    `command:"new" description:"create a task round and print the paths its context goes in"`
+	Config  configCmd `command:"config" description:"print the resolved configuration as JSON"`
+	New     newCmd    `command:"new" description:"create a task round and print the paths its context goes in"`
+	InitCmd initCmd   `command:"init" description:"materialize the resolved config and prompt tree into ./.revmux/"`
 
 	layers      configLayers
 	knobOrigins map[string]string
 	showConfig  bool
 	showNew     bool
+	showInit    bool
 }
 
 // configLayers are the two on-disk roots searched ahead of the embedded defaults, resolved once during
@@ -104,7 +106,7 @@ func parseArgs(args []string) (options, error) {
 	p := flags.NewParser(&o, flags.HelpFlag|flags.PassDoubleDash)
 	p.SubcommandsOptional = true // a plain `revmux --task pr-123` carries no command word
 	// the back-pointers are only how each Execute records the selection during this parse
-	o.Config.opts, o.New.opts = &o, &o
+	o.Config.opts, o.New.opts, o.InitCmd.opts = &o, &o, &o
 	if _, err := p.ParseArgs(args); err != nil {
 		return o, fmt.Errorf("parse arguments: %w", err)
 	}
@@ -464,11 +466,21 @@ func (o options) checkNames() error {
 	return nil
 }
 
-// initConfig materializes the commented-out template under ./.revmux/, leaving a customized file alone.
-func (o options) initConfig(w io.Writer) error {
+// projectDir is ./.revmux resolved against the process working directory — the only directory revmux
+// materializes into, and the same one resolveLayers picks up as the project layer.
+func (o options) projectDir() (string, error) {
 	dir, err := filepath.Abs(projectDirName)
 	if err != nil {
-		return fmt.Errorf("resolve project config dir: %w", err)
+		return "", fmt.Errorf("resolve project config dir: %w", err)
+	}
+	return dir, nil
+}
+
+// initConfig materializes the commented-out template under ./.revmux/, leaving a customized file alone.
+func (o options) initConfig(w io.Writer) error {
+	dir, err := o.projectDir()
+	if err != nil {
+		return err
 	}
 	if mkErr := os.MkdirAll(dir, 0o750); mkErr != nil {
 		return fmt.Errorf("create %s: %w", dir, mkErr)
