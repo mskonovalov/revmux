@@ -206,6 +206,30 @@ Overriding means copying the file and editing it; the embedded version stays the
 Deleting a lens file on disk does not disable it — the embedded one is used.
 To actually drop a lens, remove it from the profile roster.
 
+`revmux init` is what turns that resolution into files a user can edit: every path `Provenance` reports,
+written to the same relative path under `./.revmux/`, and one already there is reported and left
+byte-identical rather than overwritten.
+It writes what **resolved**, so a user with `~/.config/revmux/` overrides gets his own text copied down and
+a tree with nothing left under it to fall back to.
+`--dump-defaults` is the only way to the embedded bytes, and pointing either of them at the other's layer
+removes the one thing it is for.
+
+### The winning file's bytes are retained, not re-read
+
+`Set` keeps the raw bytes of whichever file won the chain, in a `files` map keyed by the same relative path
+as `origins` and filled in `Load`'s existing loop beside the `origins` append.
+One loop populates both, so `Content` and `Provenance` cannot disagree about which layer won.
+
+`Content(relPath)` returns those bytes **with the front matter still on them**, and that is the whole
+constraint on it: `revmux init` writes exactly what it hands back, so a stripped write produces a lens with
+no `description:` and a profile with no `agents:` — a tree the next `Load` rejects, which would have init
+break the project it just initialized.
+The parsed `doc.Body` is therefore not a substitute for the retained bytes, and neither is re-reading the
+file at materialization time: that is a TOCTOU against `Provenance`, and it cannot reach the embedded layer
+at all.
+An unknown path is an error naming it, never empty bytes — a caller writing zero bytes it took for content
+gets the same broken tree by a quieter route.
+
 ### `description:` front matter
 
 Every profile, stage and lens file may carry a `description:` one-liner.

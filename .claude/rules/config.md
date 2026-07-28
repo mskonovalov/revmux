@@ -3,6 +3,9 @@ paths:
   - "app/config.go"
   - "app/main.go"
   - "app/introspect.go"
+  - "app/newcmd.go"
+  - "app/initcmd.go"
+  - "app/statscmd.go"
   - "app/archive/**"
 ---
 
@@ -469,6 +472,10 @@ The reverse holds too — a link the archive cannot walk, absolute or leaving th
 listing it advertises a review that cannot run.
 Aliasing is supported, in other words, and every path that reads a task agrees on it; `archive.History`
 already followed the link, and this is what brings the catalog in line.
+That decision is `task.List`, and it is the **only** enumerator: `revmux stats` aggregates the ids it
+returns rather than walking the root itself, so the two commands cannot name different task sets — and
+`/revmux self` reads both, where a task present in one and absent from the other is a disagreement with
+nothing on stdout to explain it.
 
 **The same rule applies to every other failure this command can hit: an empty list must mean empty.**
 An unreadable tasks root reported as `"tasks": []` is the identical wrong advice one level up — it reads as
@@ -513,6 +520,49 @@ one and only finds out when the review reads no scope.
 `newCmd.Execute` follows `configCmd.Execute` exactly — it records the selection and `runOpts.writeTaskPaths`
 does the scaffolding and the writing, through the injected stdout.
 
-**Those two subcommands are the only carve-outs in "stdout belongs to the report", along with
-`--version`.** None of them runs a pipeline, so there is no report to collide with and no TUI to gate; all
-three print and exit before either exists.
+### `revmux init`
+
+What it materializes is in **Config-management flags** above; what belongs here is the two things about it
+that are not a description of the output.
+
+**It loads the prompt tree directly rather than through `promptSet`.** A caller initializing a project has
+not chosen a `--profile` yet, and refusing to materialize a tree until he names a profile he cannot read the
+catalog of is backwards.
+
+**It writes the config template through `initConfig` into `io.Discard`, not to stderr.** That function
+reports what it did in prose, and the prose is not the payload — `writeInitPaths` prints the paths as JSON
+instead, config included. Handing it `o.stderr` puts a second, differently-shaped account of the same write
+in front of a caller parsing the first.
+
+### `revmux stats`
+
+Read-only aggregation of the rounds revmux already archived, printed as JSON on stdout. It opens no round,
+claims nothing and writes nothing anywhere, so it is safe to call at any point, including while a review is
+running.
+
+**It declares no `--task` flag of its own.** `StatsQuery` is built from `options.TasksDir` and
+`options.Task`, the fields a review already fills, exactly as `writeTaskPaths` builds `task.Round`. A second
+declaration on the subcommand parses both spellings and lands them in different fields, so
+`revmux --task pr-1 stats` and `revmux stats --task pr-1` would disagree about which task was asked for and
+nothing else in the suite would notice.
+
+**Every number comes from the per-stage snapshots, never from `findings.json`.** That file is the
+`--min-confidence`-filtered report and its survivors are split across four arrays; counting them there
+undercounts, and the agent that looks unproductive as a result is the one a reflection agent proposes
+dropping. The one exception is the `report` entry in the stage chain, which exists precisely to measure that
+filter's attrition.
+
+**An empty tasks root is an empty document; a `--task` naming no task is an error.** The first is a project
+that has never run a review, the second is a typo — and a typo answered with zeros reads as a task with no
+history, which is the `pr123`-beside-`pr-123` failure one level down. An unreadable root or task directory
+fails the call for the same reason `revmux config` refuses to report `"tasks": []` for one.
+A round whose artifacts will not decode is still skipped rather than fatal: an interrupted run leaves
+exactly that, and `Rounds` counts what was read, so it stays the denominator of everything beside it.
+
+**`app/archive` decodes `events.jsonl` with a local partial struct, as `history.record` already does for
+`findings.json`.** The artifact package must not import the orchestrator to read back what it wrote. The
+cost is that `"agent_retried"` is spelled in a second place, and CLAUDE.md's keep-in-sync list carries it.
+
+**Those four subcommands are the only carve-outs in "stdout belongs to the report", along with `--init` and
+`--version`.** None of them runs a pipeline, so there is no report to collide with and no TUI to gate; every
+one of them prints and exits before either exists.

@@ -615,12 +615,39 @@ as undecodable per Task 6's tolerant-decode rule. Corrected fixture, both comman
 
 ### Task 11: [Final] Update documentation
 
-- [ ] document `revmux init` and `revmux stats` in README.md — the flag table and a subcommand section each
-- [ ] update CLAUDE.md: the project-structure list gains `app/initcmd.go`, `app/statscmd.go`, `app/archive/stats.go` and `app/archive/collect.go`; the `app/archive` one-line description grows beyond "one round's artifacts" to cover corpus-wide aggregation; the stdout carve-out sentence grows from two subcommands to four; the layout-constants rule notes `app/pipeline` now joins from `app/task`
-- [ ] add a keep-in-sync bullet to CLAUDE.md for the `EventKind` vocabulary: `app/progress.go`, the TUI, **and** `app/archive`'s local event struct
-- [ ] update `.claude/rules/config.md` for the new subcommands and the stdout carve-out list
-- [ ] update `.claude/rules/prompts.md` for `Set.Content`, the retained bytes, and what `revmux init` materializes
-- [ ] move this plan to `docs/plans/completed/`
+- [x] document `revmux init` and `revmux stats` in README.md — the flag table and a subcommand section each
+- [x] update CLAUDE.md: the project-structure list gains `app/initcmd.go`, `app/statscmd.go`, `app/archive/stats.go` and `app/archive/collect.go`; the `app/archive` one-line description grows beyond "one round's artifacts" to cover corpus-wide aggregation; the stdout carve-out sentence grows from two subcommands to four; the layout-constants rule notes `app/pipeline` now joins from `app/task`
+- [x] add a keep-in-sync bullet to CLAUDE.md for the `EventKind` vocabulary: `app/progress.go`, the TUI, **and** `app/archive`'s local event struct
+- [x] update `.claude/rules/config.md` for the new subcommands and the stdout carve-out list
+- [x] update `.claude/rules/prompts.md` for `Set.Content`, the retained bytes, and what `revmux init` materializes
+- [x] move this plan to `docs/plans/completed/` (orchestrator moves it after review phases)
+
+**Decisions taken while implementing (nothing in the plan settled them):**
+
+- **[decision] `revmux init` and `revmux stats` each got a top-level README section beside `## revmux
+  config`**, rather than a subsection of Configuration and Run archive respectively. The four subcommands
+  are one vocabulary a caller reads together, and the `--init` paragraph under Configuration now links to
+  the section instead of repeating it.
+- **[decision] The stdout carve-out lists `--init` beside the four subcommands wherever it is stated**
+  (CLAUDE.md and `.claude/rules/config.md`). It prints the same JSON payload on stdout and is not a
+  subcommand, so a sentence naming only subcommands leaves the one spelling a launcher script actually
+  passes outside the rule.
+- **[decision] The `EventKind` bullet distinguishes adding a kind from renaming one.** `app/archive` needs
+  no case for a new kind — it matches one string — but a rename that misses it compiles, passes and
+  reports every retry count as zero, which is indistinguishable from a healthy corpus.
+- **[decision] CLAUDE.md gained one hard-rule paragraph for the two subcommands** beside the existing
+  machine-readable-configuration rule, carrying the invariants no checkbox named a home for: init writes
+  the resolved layer's own bytes and never the embedded ones, and stats takes every number from the stage
+  snapshots rather than from the filtered `findings.json`.
+- **[deviation] Two edits beyond the listed lines, both correcting statements the tasks made stale.**
+  `.claude/rules/config.md`'s `paths:` frontmatter gained `app/initcmd.go` and `app/statscmd.go` — and
+  `app/newcmd.go`, which the same list had always omitted while documenting `revmux new` — and CLAUDE.md's
+  `app/task/` one-liner now names the archive constants and the task enumeration Tasks 1 and 2 moved into
+  it.
+- **[decision] The `totals` sample in both skill trees' `references/invocation.md` is now marked
+  abbreviated.** It shows empty arrays where a real corpus folds five agents, seven lenses and three
+  stages into them, and an agent reading `.totals.agents` off that example would expect nothing there.
+  Both trees edited identically; `make check-plugins` still reports agreement.
 
 ## Post-Completion
 

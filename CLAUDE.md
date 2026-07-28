@@ -39,11 +39,14 @@ If a note would be equally true of any Go project, it does not belong here.
 `app/` is the composition root (`package main`), split by concern.
 
 - `app/main.go` — entrypoint + `run()`
-- `app/config.go` — go-flags options, INI parsing, precedence, `--init` / `--dump-defaults`
-- `app/defaults/config` — the embedded, fully commented-out INI template `--init` materializes;
+- `app/config.go` — go-flags options, INI parsing, precedence, the config template and `--dump-defaults`
+- `app/defaults/config` — the embedded, fully commented-out INI template `revmux init` materializes;
   it lives here rather than under `app/prompt/defaults/` because it is settings, not prompt content
 - `app/introspect.go` — the `revmux config` subcommand and the catalog it prints
 - `app/newcmd.go` — the `revmux new` subcommand, which scaffolds a round and prints the paths it created
+- `app/initcmd.go` — the `revmux init` subcommand, and the `--init` flag routed into it, which materialize
+  `./.revmux/` and print what is in it
+- `app/statscmd.go` — the `revmux stats` subcommand, which prints the corpus `app/archive` aggregates
 - `app/artifacts.go` — the artifacts `package main` owns: `manifest.json`, `report.md`, `findings.json`
 - `app/progress.go` — the non-TTY event subscriber (timestamped lines to stderr), plus the run's closing
   summary, which the pipeline emits no event for
@@ -51,10 +54,13 @@ If a note would be equally true of any Go project, it does not belong here.
 - `app/prompt/` — front matter and roster parsing, lens composition, `{{VAR}}` substitution, `go:embed` defaults
 - `app/pipeline/` — the three stages, fan-out, stagger, degrade policy, typed event channel
 - `app/finding/` — `Finding` and `Report` types, the per-stage JSON schemas, markdown and JSON rendering
-- `app/task/` — the task-directory layout constants, `task.md` parsing, name validation, round scaffolding
+- `app/task/` — the layout constants for the task directory and the run archive alike, task and round
+  enumeration, `task.md` parsing, name validation, round scaffolding
 - `app/frontmatter/` — the `---` block scanner `app/prompt` and `app/task` share, so its CRLF and
   empty-block cases have one implementation rather than two that drift
-- `app/archive/` — one round's artifacts, written into `<task>/<round>/` beside the caller's `input/`
+- `app/archive/` — one round's artifacts, written into `<task>/<round>/` beside the caller's `input/`,
+  and — in `stats.go` and `collect.go` — the corpus read back out of them, aggregated across every round
+  of every task under the tasks root
 - `app/ui/` — bubbletea TUI, single `Model` with state grouped into sub-structs, files split by concern
 - `app/*/mocks/` — moq-generated, never edited by hand
 
@@ -253,10 +259,11 @@ The TUI renders to the tty, progress lines go to stderr, and only the report is 
 That is what makes `revmux > findings.json` work with the TUI running at the same time.
 Never print a status message, warning or banner to stdout.
 Gate the TUI on the tty being openable — never on stdout being a TTY, which is false whenever the report is redirected.
-The only exceptions are the two subcommands, `revmux config` and `revmux new`, and `--version`.
-All three print on stdout and exit before any pipeline, archive or TUI exists, so there is no report for
+The only exceptions are the four subcommands — `revmux config`, `revmux new`, `revmux init` and
+`revmux stats` — plus `--init`, which is the flag spelling of one of them, and `--version`.
+All of them print on stdout and exit before any pipeline, archive or TUI exists, so there is no report for
 any of them to collide with.
-Both write it from `runOpts` through the injected writer rather than from their own `Execute`, which go-flags
+Each writes it from `runOpts` through the injected writer rather than from its own `Execute`, which go-flags
 calls during parsing while stdout is still the real `os.Stdout` and nothing can capture it.
 
 **revmux is driven by a caller model, so its configuration is machine-readable.**
@@ -269,6 +276,19 @@ embedded defaults while the user has overrides describes a review that will not 
 it, and the rounds already recorded under it.
 That is what a caller matches an in-flight review against — an id alone leaves it minting `pr123` beside an
 existing `pr-123`.
+
+**`revmux init` materializes what resolved; `revmux stats` reports what the archive recorded.**
+Between them a caller can localize the review configuration and then judge it from the runs it produced,
+which is what makes the configuration something other than text authored once and never revisited.
+`init` writes the winning layer's own bytes into `./.revmux/`, front matter included, and never overwrites —
+materializing the embedded text under a user who has overrides hands him a tree that reverts his review, and
+a body-only write produces one the next `prompt.Load` rejects.
+`--dump-defaults` stays the opposite direction and the only way to reach the embedded bytes.
+`stats` takes every number from the per-stage snapshots and never from `findings.json`, which is the
+`--min-confidence`-filtered report: counting survivors there undercounts them, and the agent that looks
+unproductive as a result is the one a reflection agent drops.
+It reads and writes nothing, and it enumerates tasks through `task.List` exactly as `revmux config` does, so
+the two can never name different task sets.
 
 **The layout is revmux's own detail, so a caller is handed paths rather than a shape to reproduce.**
 `revmux new --task <id> --run <name>` creates the round and prints every path the caller writes to, absolute,
@@ -299,7 +319,7 @@ Stamping happens in `find`, not synthesis, or `--no-synthesis` runs carry invent
 ## Keep-in-sync conventions
 
 - A new CLI flag needs: the `options` struct tag and the README flag table.
-  An INI-backed one also needs a commented-out entry in `app/defaults/config`, the template `--init` writes —
+  An INI-backed one also needs a commented-out entry in `app/defaults/config`, the template `revmux init` writes —
   not `--dump-defaults`, which extracts the prompt tree and knows nothing about settings.
   It is reported by `revmux config` automatically: `knobs` is built by reflection over the `options` struct.
 - A new roster key needs: the `agentYAML` field it parses into, the `AgentSpec` field it resolves to,
@@ -307,9 +327,15 @@ Stamping happens in `find`, not synthesis, or `--no-synthesis` runs carry invent
 - A new pipeline `EventKind` needs a case in `app/progress.go` **and** in the TUI — in `agentState.track`
   for an agent-scoped kind, or in `Model.apply` for one that is not, since `apply` dispatches everything
   else to `track` and both switches end in a `default` that renders nothing.
+  **Renaming one needs `app/archive` as a third site.** `collect.go` reads `events.jsonl` back through a
+  local partial struct that spells `"agent_retried"` itself, rather than importing the orchestrator into
+  the artifact package, so a rename that misses it compiles, passes and silently reports every agent's
+  retry count as zero — which reads as supervision never having to intervene.
 - A new lens file needs an entry in at least one shipped profile, or nothing will ever run it.
-- A change to the task-directory layout starts at the constants in `app/task`, which `app/archive` and
-  `package main` join every path from — no layout name is spelled anywhere else. What does not follow them
+- A change to the task-directory layout starts at the constants in `app/task`, which `app/archive`,
+  `app/pipeline` and `package main` join every path from — the run's own artifacts included, so a stage
+  snapshot is named once and read back by that name.
+  No layout name is spelled anywhere else. What does not follow them
   is everything that *describes* the shape: `task.Paths` and its JSON field names, the two trees in README,
   the one in this file, and both skill trees.
 - A new `task.md` front-matter key needs: the `Meta` field with both a `yaml` and a `json` tag, the

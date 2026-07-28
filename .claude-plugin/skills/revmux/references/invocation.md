@@ -374,7 +374,9 @@ valid empty document rather than an error; a `--task` naming no task under the r
  "totals": {"rounds": 5, "agents": [], "lenses": [], "stages": []}}
 ```
 
-`totals` is every task folded together and carries no `id`.
+`totals` is every task folded together and carries no `id`. The sample is abbreviated: a real run
+lists every agent, every lens and every stage, and `totals` carries those same three arrays rather
+than the empty ones above.
 
 **Per agent** — `raised` is what it put on the table in `stages/1-found.json`; `survived` is what was
 still there in the round's last stage snapshot, counted across all four of that report's arrays;

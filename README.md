@@ -299,6 +299,8 @@ failure there is reported the way any other agent failure is — named in the re
 — rather than discarding the other agents' work.
 
 Rounds accumulate and are never pruned; see [Cleaning up](#cleaning-up).
+[`revmux stats`](#revmux-stats) reads them back as numbers — what each agent and each lens produced, and how
+many findings the pipeline dropped between stages.
 
 ## Configuration
 
@@ -334,11 +336,11 @@ so an invocation that stays outside never picks up the reviewed repository's own
     └── quality.md  docs.md  tests.md  adversarial.md
 ```
 
-`--config-dir` relocates the user layer. `--init` — the flag spelling of `revmux init`, same implementation —
-materializes `./.revmux/`: the commented-out config template plus whatever each prompt file actually resolved
-to, with the paths printed as JSON on stdout. `--dump-defaults <dir>` extracts the **embedded** prompt tree
-instead, which is how a customized file is diffed against the shipped one. Neither overwrites a file you have
-customized, and a normal run writes no config at all.
+`--config-dir` relocates the user layer. [`revmux init`](#revmux-init), and `--init` which is the same thing
+behind a flag, materializes `./.revmux/`: the commented-out config template plus whatever each prompt file
+actually resolved to, with the paths printed as JSON on stdout. `--dump-defaults <dir>` extracts the
+**embedded** prompt tree instead, which is how a customized file is diffed against the shipped one. Neither
+overwrites a file you have customized, and a normal run writes no config at all.
 
 Paths resolve against the **process working directory** — the project config layer, and `--tasks-dir`'s
 `./.revmux/tasks` default. `--workdir` is separate: it sets where the subprocesses run and what `{{WORKDIR}}`
@@ -452,8 +454,10 @@ The runtime knobs below also read from the config file, under the same name as t
 `--task` and `--run` are both required for a review, and neither is a config key: a config file naming the
 round to write would make the same command review different context in different directories.
 
-Two subcommands, both of which print JSON and exit before any review starts: `revmux config` reports the
-resolved configuration, `revmux new` creates a round and reports its paths.
+Four subcommands, all of which print JSON and exit before any review starts: [`revmux config`](#revmux-config)
+reports the resolved configuration, [`revmux new`](#revmux-new) creates a round and reports its paths,
+[`revmux init`](#revmux-init) materializes the local prompt tree, and [`revmux stats`](#revmux-stats) reports
+what past rounds produced.
 
 ## Output
 
@@ -659,6 +663,95 @@ name, the interrupted one as long as its review left nothing behind.
 An empty list always means empty. A tasks root that could not be read is reported as `paths.tasks_error`,
 a task whose own directory could not be read as `rounds_error` on that entry, and a `--workdir` that would
 not resolve as `paths.workdir_error` — nothing that failed is reported as nothing being there.
+
+## `revmux init`
+
+`revmux init` materializes `./.revmux/` so there is something local to edit: the commented-out config
+template, plus every prompt file as it currently **resolved**. `--init` is the same implementation behind a
+flag, for a caller that already builds an argument list.
+
+What it writes is the winning layer's own bytes, front matter included. A user with `~/.config/revmux/`
+overrides gets those copied down rather than the shipped text, so editing the result changes the review
+that already runs instead of reverting it to the default one. `--dump-defaults <dir>` is the other
+direction, and the only way to reach the embedded copy for a diff.
+
+It writes nothing outside `./.revmux/` and prints the paths as JSON on stdout:
+
+```json
+{
+  "dir": "/abs/project/.revmux",
+  "config": "/abs/project/.revmux/config",
+  "files": [
+    {"path": "/abs/project/.revmux/lenses/bugs.md", "layer": "user", "created": true},
+    {"path": "/abs/project/.revmux/prompts/synthesis.md", "layer": "embedded", "created": true}
+  ]
+}
+```
+
+`layer` is where the content came from — `project`, `user` or `embedded`. `created` is false for a file
+already there: it is reported and left byte-identical, so a second run changes nothing and nothing you
+customized is ever overwritten. Take the paths from that output rather than joining them yourself.
+
+The config ships commented out and the prompt files ship live, because they are different kinds of thing: a
+settings file holding only comments can be replaced wholesale on upgrade, while prompt markdown is the text
+an agent executes and has to be there to be read.
+
+## `revmux stats`
+
+`revmux stats` reads what past rounds produced and prints it as JSON on stdout. It runs no pipeline, spawns
+no agent and writes nothing — it is arithmetic over the archive, so it is always safe to call.
+
+```console
+$ revmux stats                    # every task under the tasks root
+$ revmux stats --task pr-123      # one task
+```
+
+```json
+{
+  "tasks": [
+    {"id": "pr-123", "rounds": 5,
+     "agents": [{"name": "bugs+impl", "raised": 8, "survived": 8, "corroborated": 5,
+                 "degraded_rounds": 0, "retries": 0, "tokens": 10441185}],
+     "lenses": [{"name": "bugs", "raised": 14, "ambiguous": 3,
+                 "verdicts": {"confirmed": 4, "refined": 6, "unverified": 4}}],
+     "stages": [{"name": "synthesis", "in": 62, "out": 46},
+                {"name": "verify", "in": 46, "out": 46},
+                {"name": "report", "in": 46, "out": 46}]}
+  ],
+  "totals": {"rounds": 5, "agents": [], "lenses": [], "stages": []}
+}
+```
+
+The output is abbreviated above — a real run lists every agent, every lens and every stage, and `totals`
+carries those same three arrays folded across tasks rather than the empty ones shown here.
+
+`totals` is every task folded together and carries no `id`. `rounds` is the rounds the numbers were read
+from: a round prepared but never run is not one, and neither is a round an interrupted run left
+half-written — those are skipped rather than counted as zeroes.
+
+**Per agent.** `raised` is what it put on the table before synthesis merged anything; `survived` is what was
+still there in the round's last stage snapshot, counted across all four of that report's arrays; and
+`corroborated` is the subset of those another agent independently reached. The attribution is exact rather
+than model-supplied — revmux stamps `sources` from the process that emitted the finding.
+
+**Per lens.** `raised` counts the find stage only, since after synthesis a finding's `lenses` is a union
+across merged findings from different agents. `ambiguous` is the part of it attributable only by the raising
+agent's whole lens set, which is what the find stage falls back to when the model named no valid lens — so a
+per-lens number is only as good as its `ambiguous` share, and the two belong together wherever either is
+quoted. `verdicts` counts survivors only, so a finding the verifier rejected appears in none of them:
+rejection shows up as the gap between `raised` and the verdict total.
+
+**Per stage.** `in` and `out` for `synthesis`, `verify` and `report`, each the union of that report's four
+finding arrays. `report` carries the `--min-confidence` attrition. There is no `find` entry, since nothing
+goes into it.
+
+Every number comes from the per-stage snapshots under `stages/`, never from the round's `findings.json` —
+that one is the filtered report, and counting survivors there undercounts them. The single exception is the
+`report` stage entry, which reads `findings.json` precisely to measure what the filter removed.
+
+An empty tasks root is a valid empty document rather than an error; a `--task` naming no task under the root
+exits `2`, because a typo answered with zeroes reads as a task with no history. `degraded_rounds` and
+`retries` come out zero on a healthy corpus, and that zero is an absence rather than a finding.
 
 ## Agent skills
 
