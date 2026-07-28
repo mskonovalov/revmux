@@ -44,6 +44,9 @@ count from the findings themselves.
 4. Severity is the highest severity any input claimed.
 
 5. Drop a finding that has a single source, confidence below 80, and nothing corroborating it.
+   Never drop a critical or a major this way — a single source is not evidence against a serious
+   defect, and only one reviewer looking in the right place is the normal case for the worst bugs.
+   Keep it and route it to the verifier, which is the authority on whether it is real.
    When the source list above shows the run was degraded, drop nothing: keep every would-be-drop and
    route it to the verifier instead. Corroboration is rarer with a source missing, so the drop rule
    starts eating findings the missing source would have confirmed, and the verifier is the authority

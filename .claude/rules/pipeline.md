@@ -107,8 +107,17 @@ and matching on file and line in Go would both merge unrelated findings and spli
 - dedupe on `(file, line ±2)` with similar descriptions
 - boost: `min(99, max_conf + 10*(N-1))` over distinct sources
 - severity: max across sources
-- drop: single-source, confidence below 80, no corroboration
+- drop: single-source, confidence below 80, no corroboration — **never a critical or a major**
 - open questions and pre-existing issues are split out **first** and are never boosted, dropped, or verified for fixing
+
+**Severity exempts a finding from the drop rule, and only the drop rule.**
+A single source is not evidence against a serious defect: one reviewer looking in the right place is
+the normal case for the worst bugs, and corroboration is a boost rather than a gate.
+Measured over the first seven rounds, four majors met all three drop conditions and one met them
+exactly — single source, confidence 75, nothing corroborating — and survived only because the model
+declined to apply the rule it was given.
+A critical or major that would be dropped is kept and routed to the verifier instead, the same escape
+hatch a degraded run uses.
 
 **Degraded runs do not drop.**
 With a source dead, corroboration is rarer, so the drop rule starts eating findings the missing source would have confirmed.
