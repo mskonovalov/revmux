@@ -124,11 +124,15 @@ write_rc_cmd() {
         "$(sq "$sentinel")" "$REVMUX_CMD" "$(sq "$sentinel")" "$(sq "$sentinel")" "$(sq "$sentinel")"
 }
 
+# same as write_rc_cmd, plus the trailing `exit` the emacs launcher needs. The write-then-rename is not
+# decoration: await_sentinel polls for the file's existence, so a plain `> $sentinel` lets a poll land in
+# the gap between the create and the write, read an empty file, and substitute RC_LAUNCH_FAIL for a
+# review that finished - reporting a complete report under the code that means revmux never ran.
 write_fifo_rc_cmd() {
     local sentinel="$1"
     # shellcheck disable=SC2016
-    printf 'printf "%%s" "$$" > %s.pid; %s; rc=$?; echo "$rc" > %s; exit' \
-        "$(sq "$sentinel")" "$REVMUX_CMD" "$(sq "$sentinel")"
+    printf 'printf "%%s" "$$" > %s.pid; %s; rc=$?; printf "%%s" "$rc" > %s.tmp && mv -f %s.tmp %s; exit' \
+        "$(sq "$sentinel")" "$REVMUX_CMD" "$(sq "$sentinel")" "$(sq "$sentinel")" "$(sq "$sentinel")"
 }
 
 read_rc() {
@@ -564,7 +568,7 @@ if [ "${INSIDE_EMACS:-}" = "vterm" ] && command -v emacsclient >/dev/null 2>&1; 
     SENTINEL=$(mktemp "$TMPBASE/revmux-done-XXXXXX")
     rm -f "$SENTINEL"
     LAUNCH_SCRIPT=$(mktemp "$TMPBASE/revmux-launch-XXXXXX")
-    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.pid" "$LAUNCH_SCRIPT" || true' EXIT
+    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" "$LAUNCH_SCRIPT" || true' EXIT
     cat > "$LAUNCH_SCRIPT" <<LAUNCHER
 #!/bin/sh
 cd $(sq "$CWD") && $(write_fifo_rc_cmd "$SENTINEL")

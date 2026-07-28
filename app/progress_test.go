@@ -247,27 +247,45 @@ func TestProgress_alignsByDisplayCellsNotRunes(t *testing.T) {
 		return lipgloss.Width(line[:at])
 	}
 
+	// column renders one roster's agent line and its agentless stage line, and returns where each starts
+	column := func(t *testing.T, agent string) (agentCol, stageCol int) {
+		t.Helper()
+		pr := &progress{roster: []prompt.AgentSpec{{Name: agent}}}
+		agentLine := pr.line(pipeline.Event{Kind: pipeline.EventAgentActivity, Agent: agent,
+			Text: "tool: Read", At: progressAt})
+		stageLine := pr.line(pipeline.Event{Kind: pipeline.EventStage, Stage: "find", At: progressAt})
+		return textCol(t, agentLine, "tool: Read"), textCol(t, stageLine, "\u2500\u2500 find \u2500\u2500")
+	}
+
 	tests := []struct {
 		name  string
 		agent string
+		ascii string // an ASCII name of the same display width, which must land in the same column
 	}{
-		{"a CJK name is twice as many cells as runes", "数据审查代理"},
-		{"a combining mark is one cell across two runes", "éclair"},
+		{"a CJK name is twice as many cells as runes", "\u6570\u636e\u5ba1\u67e5\u4ee3\u7406", "abcdefghijkl"},
+		{"a decomposed name has more runes than cells", "e\u0301clair-e\u0301quipe", "abcdefghijklm"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("COLUMNS", "200")
-			require.NotEqual(t, len([]rune(tc.agent)), lipgloss.Width(tc.agent),
-				"a name whose runes and cells agree cannot tell the two implementations apart")
+			// the floor swallows any name narrower than it, so runes != cells is necessary but not
+			// sufficient: what has to differ is the width nameWidth would actually return. A 7-rune,
+			// 6-cell name floors to 11 either way and proves nothing, which is why none is used here.
+			require.NotEqual(t,
+				max(len([]rune(tc.agent)), minNameWidth), max(lipgloss.Width(tc.agent), minNameWidth),
+				"a name the floor swallows cannot tell the two implementations apart")
+			require.Equal(t, lipgloss.Width(tc.agent), lipgloss.Width(tc.ascii), "same display width")
 
-			pr := &progress{roster: []prompt.AgentSpec{{Name: tc.agent}}}
-			agentLine := pr.line(pipeline.Event{Kind: pipeline.EventAgentActivity, Agent: tc.agent,
-				Text: "tool: Read", At: progressAt})
-			stageLine := pr.line(pipeline.Event{Kind: pipeline.EventStage, Stage: "find", At: progressAt})
+			agentCol, stageCol := column(t, tc.agent)
+			assert.Equal(t, stageCol, agentCol, "an agent line and an agentless one start at one column")
 
-			assert.Equal(t, textCol(t, stageLine, "── find ──"), textCol(t, agentLine, "tool: Read"),
-				"an agent line and an agentless one start at one column")
+			// comparing a line only against its own stage line is blind to a width that is wrong for
+			// both: a nameWidth of max(cells, runes) over-pads this name and shifts them together. The
+			// ASCII name of equal display width is the fixed reference that catches it.
+			asciiCol, _ := column(t, tc.ascii)
+			assert.Equal(t, asciiCol, agentCol,
+				"two names of one display width start at one column, whatever their rune counts")
 		})
 	}
 }
