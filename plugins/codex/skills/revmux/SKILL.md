@@ -289,14 +289,33 @@ Read `references/output.md` for the full shape.
 `sources` holds **agent names** and is the only evidence of independent corroboration. `lenses` holds
 lens names and is informational. One agent flagging under two lenses is still one source.
 
-### Step 6: Present
+### Step 6: Present, then propose
 
 Lead with completeness, then severity counts, then each finding with location, argument and fix. Call
 out findings with more than one entry in `sources`.
 
 Do not compress a finding to its title — the body carries the trigger and consequence.
 
-Stop here unless fixing was requested.
+**Then close with what is actionable and what to do about it.** A list of findings is not a decision,
+and the reader should not have to re-derive one from it.
+
+Actionable is `findings` alone — what revmux kept. Report the other three, and keep them out of the
+count: `immaterial` is real and judged not worth the fix, `pre_existing` is real and not this change's,
+`open_questions` wants a decision rather than an edit.
+
+Recommend the option that fits the outcome:
+
+| the run came back | recommend |
+|---|---|
+| `sources.degraded` non-empty | re-run the missing source first — a partial review's silence is not evidence, so nothing else is worth deciding yet |
+| any `critical` or `major` | fix those, then a new round on the same task |
+| `minor` only | fix now, or note for later — verification already dropped the ones whose fix costs more than the defect, so what is left is a question of timing |
+| nothing actionable | done, and `--profile final` if a merge is next |
+
+Put it as a numbered list, the recommendation first and marked `(recommended)`, and wait for the pick.
+
+**Never start fixing because the findings look clear.** A review produces findings; editing is a
+separate decision, and this is where the user makes it.
 
 ### Step 7: Fix and re-run, if asked
 
