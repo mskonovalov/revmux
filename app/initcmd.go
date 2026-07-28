@@ -1,12 +1,8 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
-	"io/fs"
-	"os"
-	"path/filepath"
 
 	"github.com/umputun/revmux/app/prompt"
 )
@@ -52,69 +48,53 @@ func (o runOpts) writeInitPaths() error {
 	if err != nil {
 		return fmt.Errorf("load prompts: %w", err)
 	}
-	dir, err := o.opts.projectDir()
+	dir, err := projectDir()
 	if err != nil {
 		return err
 	}
 	// settings ship commented out so an upgrade can still overwrite them, which is the whole reason the
-	// config is not materialized the way the prompt files are; its prose report is not the payload
-	if cfgErr := o.opts.initConfig(io.Discard); cfgErr != nil {
-		return cfgErr
+	// config is not materialized the way the prompt files are; its prose report is not the payload, and
+	// the path it reports back is what the payload carries rather than a second composition of it
+	cfg, err := o.opts.initConfig(io.Discard)
+	if err != nil {
+		return err
 	}
 	files, err := o.materializePrompts(set, dir)
 	if err != nil {
 		return err
 	}
-	return o.writeJSON(initPaths{Dir: dir, Config: filepath.Join(dir, configFileName), Files: files}, "init paths")
+	return o.writeJSON(initPaths{Dir: dir, Config: cfg, Files: files}, "init paths")
 }
 
 // materializePrompts writes what each prompt file resolved to into dir, leaving one already there
 // untouched. The bytes are the winning file's own, front matter included: a stripped write produces a
 // tree the next prompt.Load rejects, so init would break the project it just initialized.
 //
-// The entry is read with Lstat and written with O_EXCL, the same pair task.Scaffold writes task.md with:
-// a dangling link is a link rather than a missing file, and Stat plus WriteFile would follow it and put
-// the shipped text wherever it points — outside ./.revmux/, which is the one place init writes.
+// Every write goes through a treeWriter anchored on dir, which is what keeps ./.revmux/ the one place
+// init writes: a symlinked subdirectory under it is refused where it sits rather than followed.
+//
+// A file that cannot be written stops the run with the path named, leaving what was already materialized
+// on disk. The tree is resumed by running init again — every file already there is reported and skipped,
+// so a second call completes exactly what the first did not.
 func (o runOpts) materializePrompts(set *prompt.Set, dir string) ([]initFile, error) {
+	w, err := newTreeWriter(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer w.close() //nolint:errcheck // nothing is written after this point
+
 	origins := set.Provenance()
 	out := make([]initFile, 0, len(origins))
 	for _, org := range origins {
-		dst := filepath.Join(dir, filepath.FromSlash(org.Path))
-		switch _, statErr := os.Lstat(dst); {
-		case statErr == nil:
-			out = append(out, initFile{Path: dst, Layer: org.Layer})
-			continue
-		case !errors.Is(statErr, fs.ErrNotExist):
-			return nil, fmt.Errorf("read %s: %w", dst, statErr)
-		}
-
 		data, contentErr := set.Content(org.Path)
 		if contentErr != nil {
 			return nil, fmt.Errorf("resolve %s: %w", org.Path, contentErr)
 		}
-		if mkErr := os.MkdirAll(filepath.Dir(dst), 0o750); mkErr != nil {
-			return nil, fmt.Errorf("create %s: %w", filepath.Dir(dst), mkErr)
-		}
-		if writeErr := o.writeNew(dst, data); writeErr != nil {
+		created, writeErr := w.write(org.Path, data)
+		if writeErr != nil {
 			return nil, writeErr
 		}
-		out = append(out, initFile{Path: dst, Layer: org.Layer, Created: true})
+		out = append(out, initFile{Path: w.dest(org.Path), Layer: org.Layer, Created: created})
 	}
 	return out, nil
-}
-
-// writeNew creates one materialized file, refusing an entry planted between the look and the write.
-func (o runOpts) writeNew(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // path joined from ./.revmux
-	if err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
 }

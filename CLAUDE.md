@@ -47,6 +47,8 @@ If a note would be equally true of any Go project, it does not belong here.
 - `app/initcmd.go` — the `revmux init` subcommand, and the `--init` flag routed into it, which materialize
   `./.revmux/` and print what is in it
 - `app/statscmd.go` — the `revmux stats` subcommand, which prints the corpus `app/archive` aggregates
+- `app/treewriter.go` — the one materializer `revmux init` and `--dump-defaults` both write prompt files
+  through, contained by an `os.Root` on its destination
 - `app/artifacts.go` — the artifacts `package main` owns: `manifest.json`, `report.md`, `findings.json`
 - `app/progress.go` — the non-TTY event subscriber (timestamped lines to stderr), plus the run's closing
   summary, which the pipeline emits no event for
@@ -288,6 +290,13 @@ The config is the deliberate exception, because settings and prompt text are dif
 upgrade move a default the user never set. Only one carrying a setting is left alone, so `created` in the
 payload describes the prompt files and the config is reported as a path.
 `--dump-defaults` stays the opposite direction and the only way to reach the embedded bytes.
+**Both write through `treeWriter`, which is one implementation of "skip what is already there, create what
+is not" and one guarantee about where a write may land.**
+Two copies of that rule diverge the moment one of them is hardened, and the divergence is silent: the paths
+reported back name the destination whether or not the bytes went there.
+Containment is structural rather than checked — an `os.Root` on the destination, the way `task.Scaffold`
+walks the tasks root — because a joined path contains its last component alone, and `os.Lstat` dereferences
+every directory above it.
 `stats` takes every survivor and every per-lens number from the per-stage snapshots, never from
 `findings.json`, which is the `--min-confidence`-filtered report: counting survivors there undercounts them,
 and the agent that looks unproductive as a result is the one a reflection agent drops.

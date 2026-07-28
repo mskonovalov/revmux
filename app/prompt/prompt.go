@@ -78,14 +78,17 @@ type Set struct {
 	profiles map[string]*Profile
 	stages   map[string]*Stage
 	lenses   map[string]doc
-	origins  []FileOrigin
-	files    map[string]fileRef // raw winning bytes, keyed by the same rel path as origins
+	files    map[string]fileRef // the winning file per rel path, which Content and Provenance both read
 }
 
+// fileRef is the one record of a file that won its layer: where it came from and what it held. Provenance
+// is derived from it rather than kept beside it, since two per-path records carrying the same layer and
+// source are two records to keep in step.
 type fileRef struct {
 	layer  string
 	source string
 	data   []byte
+	hash   string
 }
 
 // layer is one searchable root in the precedence chain. root is empty for the embedded layer, which
@@ -116,7 +119,7 @@ func Load(opts LoadOpts) (*Set, error) {
 		if err := set.add(rel, meta, body); err != nil {
 			return nil, fmt.Errorf("%s: %w", rel, err)
 		}
-		set.origins = append(set.origins, FileOrigin{Path: rel, Layer: ref.layer, Source: ref.source, Hash: hashOf(ref.data)})
+		ref.hash = hashOf(ref.data)
 		set.files[rel] = ref
 	}
 
@@ -167,8 +170,17 @@ func (s *Set) LensNames() map[string]struct{} {
 // ProfileNames lists every profile that resolved, sorted.
 func (s *Set) ProfileNames() []string { return slices.Sorted(maps.Keys(s.profiles)) }
 
-// Provenance reports the winning layer and content hash per loaded file, sorted by path.
-func (s *Set) Provenance() []FileOrigin { return slices.Clone(s.origins) }
+// Provenance reports the winning layer and content hash per loaded file, sorted by path. It is derived
+// from the same record Content reads rather than kept beside it, so the two cannot come to disagree about
+// which layer won a file.
+func (s *Set) Provenance() []FileOrigin {
+	out := make([]FileOrigin, 0, len(s.files))
+	for _, rel := range slices.Sorted(maps.Keys(s.files)) {
+		ref := s.files[rel]
+		out = append(out, FileOrigin{Path: rel, Layer: ref.layer, Source: ref.source, Hash: ref.hash})
+	}
+	return out
+}
 
 // Content is the unparsed bytes of the file that won the precedence chain for relPath, front matter
 // included. revmux init writes these, so anything stripped here produces a tree that fails to load.

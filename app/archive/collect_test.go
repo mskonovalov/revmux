@@ -19,7 +19,13 @@ func TestRoundReader_readFullRound(t *testing.T) {
 	// the shape a real four-agent round leaves behind: 26 found, 10 findings plus 7 pre-existing after
 	// synthesis, 9 plus 8 after verification, and a findings.json --min-confidence cut down to 13
 	dir := t.TempDir()
-	writeArtifact(t, dir, foundFile, finding.Report{Sources: roster(), Findings: stageOne()})
+	found := stageOne()
+	seen := map[string]bool{}
+	for _, f := range found {
+		require.False(t, seen[f.ID], "a real stage 1 gives every finding its own id, and %s repeats", f.ID)
+		seen[f.ID] = true
+	}
+	writeArtifact(t, dir, foundFile, finding.Report{Sources: roster(), Findings: found})
 	// verification reclassified one of the ten synthesized findings as pre-existing rather than rejecting it
 	writeArtifact(t, dir, synthesizedFile, finding.Report{
 		Sources:     roster(),
@@ -296,7 +302,7 @@ func TestRoundReader_readEvents(t *testing.T) {
 		r := newRoundReader(dir)
 		require.NoError(t, r.read())
 		assert.Equal(t, []agentStats{{Name: "bugs+impl", Raised: 1, Survived: 1, Retries: 1}}, r.stats().agents,
-			"only a name the roster registered is an agent, and synthesis is not one")
+			"only a name this round tallied is an agent, and no stage is one")
 	})
 
 	t.Run("a round with no events.jsonl has no retries", func(t *testing.T) {
@@ -736,9 +742,11 @@ func roster() finding.SourceStatus {
 	}
 }
 
-// stageOne is the 26 findings the four agents raised, in the lens distribution a real round produced.
+// stageOne is the 26 findings the four agents raised, in the lens distribution a real round produced. The
+// ids are renumbered across the whole slice because raised numbers within its own call: two calls naming
+// one agent would otherwise repeat ids, and this fixture is the shape a real stage 1 leaves behind.
 func stageOne() []finding.Finding {
-	return slices.Concat(
+	out := slices.Concat(
 		raised(2, "bugs+impl", "bugs", "impl"),
 		raised(2, "bugs+impl", "impl"),
 		raised(1, "bugs+impl", "bugs"),
@@ -750,6 +758,10 @@ func stageOne() []finding.Finding {
 		raised(1, "docs+tests", "tests"),
 		raised(10, "codex", "adversarial"),
 	)
+	for i := range out {
+		out[i].ID = out[i].Sources[0] + "-" + strconv.Itoa(i+1)
+	}
+	return out
 }
 
 // verifiedFindings is what verification left, each carrying the union of sources and lenses synthesis

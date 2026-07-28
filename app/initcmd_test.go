@@ -227,34 +227,27 @@ func TestRun_init(t *testing.T) {
 		assert.Contains(t, r.stderr.String(), "read "+filepath.Join(lenses, "adversarial.md"))
 	})
 
-	// a link where a prompt file goes is a link, not a missing file: written through, it would put the
-	// shipped text wherever it points, and ./.revmux/ is the one place init writes.
-	// the directory is unlistable so the loader's glob never sees the link and the lens falls back to
-	// embedded — a link prompt.Load can read fails two steps earlier and materialization never runs
-	t.Run("a dangling symlink is refused rather than written through", func(t *testing.T) {
-		if os.Geteuid() == 0 {
-			t.Skip("root lists a directory with no read permission")
-		}
+	// containment at the leaf alone is not containment: os.Lstat dereferences every directory above the
+	// file it is handed, so a link occupying a directory name would send the whole tree wherever it points
+	// while the reported paths still named ./.revmux/.
+	// the leaf-link case this pairs with is TestTreeWriter_write's — the loader reads every project-layer
+	// .md, so a link it can see fails the run two steps before materialization runs at all
+	t.Run("a symlinked subdirectory is refused rather than followed", func(t *testing.T) {
 		dir := isolate(t)
-		outside := filepath.Join(t.TempDir(), "elsewhere.md")
-		lenses := filepath.Join(dir, projectDirName, "lenses")
-		require.NoError(t, os.MkdirAll(lenses, 0o750))
-		require.NoError(t, os.Symlink(outside, filepath.Join(lenses, "bugs.md")))
-		//nolint:gosec // traversable and writable but not listable, which is what hides the link from the glob
-		require.NoError(t, os.Chmod(lenses, 0o300))
-		t.Cleanup(func() { _ = os.Chmod(lenses, 0o750) }) //nolint:gosec // restores the temp dir for cleanup
+		outside := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, projectDirName), 0o750))
+		require.NoError(t, os.Symlink(outside, filepath.Join(dir, projectDirName, "lenses")))
 
-		p, _ := initialize(t)
-		assert.NoFileExists(t, outside, "the target sits outside the project directory and init writes nowhere else")
+		o, err := parseArgs([]string{"init"})
+		require.NoError(t, err)
+		r := newRunOpts(t, o)
+		assert.Equal(t, 2, run(r.opts()), "a tree that cannot be materialized in place is a failed init")
+		assert.Empty(t, r.stdout.String(), "no payload claims paths under ./.revmux/ that were written elsewhere")
+		assert.Contains(t, r.stderr.String(), filepath.Join(dir, projectDirName, "lenses"))
 
-		files := filesByPath(p.Files)
-		linked, ok := files[filepath.Join(lenses, "bugs.md")]
-		require.True(t, ok, "the entry is still reported, as one already there")
-		assert.False(t, linked.Created, "a dangling link is an entry, not a missing file")
-
-		sibling, ok := files[filepath.Join(lenses, "adversarial.md")]
-		require.True(t, ok)
-		assert.True(t, sibling.Created, "the rest of the tree materialized, so the link is what was refused")
+		left, err := os.ReadDir(outside)
+		require.NoError(t, err)
+		assert.Empty(t, left, "every shipped lens would land here if the link were followed")
 	})
 
 	t.Run("an unwritable stdout exits 2", func(t *testing.T) {

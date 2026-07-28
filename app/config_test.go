@@ -552,7 +552,9 @@ func TestOptions_initConfig(t *testing.T) {
 	path := filepath.Join(dir, projectDirName, configFileName)
 	out := &strings.Builder{}
 
-	require.NoError(t, options{}.initConfig(out))
+	got, err := options{}.initConfig(out)
+	require.NoError(t, err)
+	assert.Equal(t, path, got, "the payload reports this path rather than composing it a second time")
 	written, err := os.ReadFile(path) //nolint:gosec // path built from t.TempDir
 	require.NoError(t, err)
 	assert.Equal(t, defaultConfig, written)
@@ -561,7 +563,9 @@ func TestOptions_initConfig(t *testing.T) {
 	t.Run("comment-only file is replaced", func(t *testing.T) {
 		require.NoError(t, os.WriteFile(path, []byte("# only a comment\n"), 0o600))
 		out := &strings.Builder{}
-		require.NoError(t, options{}.initConfig(out))
+		got, err := options{}.initConfig(out)
+		require.NoError(t, err)
+		assert.Equal(t, path, got)
 		written, err := os.ReadFile(path) //nolint:gosec // path built from t.TempDir
 		require.NoError(t, err)
 		assert.Equal(t, defaultConfig, written)
@@ -570,7 +574,9 @@ func TestOptions_initConfig(t *testing.T) {
 	t.Run("customized file is left alone", func(t *testing.T) {
 		require.NoError(t, os.WriteFile(path, []byte("verify-groups = 42\n"), 0o600))
 		out := &strings.Builder{}
-		require.NoError(t, options{}.initConfig(out))
+		got, err := options{}.initConfig(out)
+		require.NoError(t, err)
+		assert.Equal(t, path, got, "a file left alone is still the path the caller reports")
 		written, err := os.ReadFile(path) //nolint:gosec // path built from t.TempDir
 		require.NoError(t, err)
 		assert.Equal(t, "verify-groups = 42\n", string(written))
@@ -609,6 +615,35 @@ func TestOptions_dumpDefaults(t *testing.T) {
 		err := options{DumpDefaults: filepath.Join(blocked, "out")}.dumpDefaults(&strings.Builder{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "dump defaults")
+	})
+
+	// this command takes a user-named destination, so it writes through the same treeWriter init does: one
+	// rule for what an entry already there means, and one for where a write may land
+	t.Run("a dangling symlink is left alone rather than written through", func(t *testing.T) {
+		dest := t.TempDir()
+		outside := filepath.Join(t.TempDir(), "elsewhere.md")
+		require.NoError(t, os.MkdirAll(filepath.Join(dest, "lenses"), 0o750))
+		require.NoError(t, os.Symlink(outside, filepath.Join(dest, "lenses", "bugs.md")))
+
+		out := &strings.Builder{}
+		require.NoError(t, options{DumpDefaults: dest}.dumpDefaults(out))
+		assert.NoFileExists(t, outside, "the target sits outside the destination and the shipped text is not written there")
+		assert.Contains(t, out.String(), filepath.Join(dest, "lenses", "bugs.md")+" already present")
+		assert.FileExists(t, filepath.Join(dest, "lenses", "adversarial.md"), "the rest of the tree still extracts")
+	})
+
+	t.Run("a symlinked subdirectory leaving the destination is refused", func(t *testing.T) {
+		dest := t.TempDir()
+		outside := t.TempDir()
+		require.NoError(t, os.Symlink(outside, filepath.Join(dest, "lenses")))
+
+		err := options{DumpDefaults: dest}.dumpDefaults(&strings.Builder{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), filepath.Join(dest, "lenses"))
+
+		left, err := os.ReadDir(outside)
+		require.NoError(t, err)
+		assert.Empty(t, left, "every shipped lens would land here if the link were followed")
 	})
 
 	// --init writes what resolved; this one stays the escape hatch for the shipped text, which is the only

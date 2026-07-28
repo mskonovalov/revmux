@@ -6,6 +6,7 @@ paths:
   - "app/newcmd.go"
   - "app/initcmd.go"
   - "app/statscmd.go"
+  - "app/treewriter.go"
   - "app/archive/**"
 ---
 
@@ -422,6 +423,15 @@ Do not reintroduce a delete to bound growth. Growth is bounded by the user.
 The flag routes into `runOpts.writeInitPaths` exactly as the subcommand does, so what the two write cannot
 diverge — and it is the flag, not the subcommand, that a launcher script is handed as "any other revmux flag".
 
+**They also share the writer, and that is what keeps "never overwrites" one rule rather than two.**
+`treeWriter` opens the destination as an `os.Root` and creates every file through it, so a symlink occupying
+a directory name is refused where it sits instead of sending the tree wherever it points — a path joined and
+written to contains its last component alone, since `os.Lstat` dereferences every directory above it.
+The entry check is `Lstat` and the create is `O_CREATE|O_EXCL`, the pair `task.Scaffold` writes `task.md`
+with: a dangling link is a link rather than a missing file, and `Stat` plus `os.WriteFile` follows it.
+Hardening one materializer and leaving the other is how the hole came back a level down; there is one now,
+and a second copy of it is the same bug waiting.
+
 **Which layer each one reads is the whole difference between them, and it must stay that way.**
 `--init` writes what resolved, so a user with an overridden lens gets his own text and a tree that loads with
 no fallback under it; `--dump-defaults` writes the embedded bytes at an arbitrary path, which is the only way
@@ -577,9 +587,12 @@ the numbers that shrank are the ones a reflection agent acts on.
 **`app/archive` decodes `events.jsonl` with a local partial struct, as `history.record` already does for
 `findings.json`.** The artifact package must not import the orchestrator to read back what it wrote. The
 cost is that `"agent_retried"` is spelled in a second place, and CLAUDE.md's keep-in-sync list carries it.
-**Only a name the round's roster registered is counted under it.** The stages retry under that same event
-kind — synthesis emits one naming itself — so counting every name the log carries invents a source no roster
-contains and reports it beside the agents that ran.
+**Only a name the round already tallied is counted under it** — the roster the snapshot recorded, plus the
+sources its findings were stamped with, which `find` fills with the executing agent's own name.
+The stages retry under that same event kind — synthesis emits one naming itself — so counting every name the
+log carries invents a source no roster contains and reports it beside the agents that ran.
+The kind is looked for in the raw line before anything is decoded: every other event is discarded, and a
+findings event carries every finding's body through the decoder to reach a field almost no line matches.
 
 **Those four subcommands are the only carve-outs in "stdout belongs to the report", along with `--init` and
 `--version`.** None of them runs a pipeline, so there is no report to collide with and no TUI to gate; every

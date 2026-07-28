@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/umputun/revmux/app/finding"
 	"github.com/umputun/revmux/app/task"
@@ -120,9 +121,9 @@ func (t *taskStats) addAgents(agents []agentStats) {
 	for _, a := range agents {
 		i, ok := idx[a.Name]
 		if !ok {
-			idx[a.Name] = len(t.Agents)
+			i = len(t.Agents)
+			idx[a.Name] = i
 			t.Agents = append(t.Agents, agentStats{Name: a.Name})
-			i = idx[a.Name]
 		}
 		st := &t.Agents[i]
 		st.Raised += a.Raised
@@ -145,9 +146,9 @@ func (t *taskStats) addLenses(lenses []lensStats) {
 	for _, l := range lenses {
 		i, ok := idx[l.Name]
 		if !ok {
-			idx[l.Name] = len(t.Lenses)
+			i = len(t.Lenses)
+			idx[l.Name] = i
 			t.Lenses = append(t.Lenses, lensStats{Name: l.Name, Verdicts: map[finding.Verdict]int{}})
-			i = idx[l.Name]
 		}
 		st := &t.Lenses[i]
 		st.Raised += l.Raised
@@ -166,12 +167,13 @@ func (t *taskStats) addStages(stages []stageFlow) {
 	for _, s := range stages {
 		i, ok := idx[s.Name]
 		if !ok {
-			idx[s.Name] = len(t.Stages)
+			i = len(t.Stages)
+			idx[s.Name] = i
 			t.Stages = append(t.Stages, stageFlow{Name: s.Name})
-			i = idx[s.Name]
 		}
-		t.Stages[i].In += s.In
-		t.Stages[i].Out += s.Out
+		st := &t.Stages[i]
+		st.In += s.In
+		st.Out += s.Out
 	}
 }
 
@@ -385,12 +387,15 @@ func (r *roundReader) count(rep finding.Report) int {
 // readEvents counts the retries the run recorded. An absent events.jsonl is a round that wrote none, not a
 // failure, and a last line an interrupted run never finished is skipped rather than fatal.
 //
-// Only a name the roster already registered is counted. The stages retry under the same event kind — the
-// synthesis stage emits one naming itself — and a name nothing ran under would otherwise become a source
-// no roster contains, reported beside the agents that really ran and read as one of them.
+// Only a name this round already tallied is counted — the roster the snapshot recorded, plus the sources
+// its findings were stamped with, which find fills with the executing agent's own name. The stages retry
+// under the same event kind, the synthesis stage emitting one that names itself, and a name nothing ran
+// under would otherwise become a source no roster contains, reported beside the agents that really ran.
 //
 // Lines are read without a size cap: a findings event carries every finding's body, so a fixed scan buffer
-// would silently stop counting partway through a large round.
+// would silently stop counting partway through a large round. That is also why the kind is looked for in
+// the raw line first — every other event is discarded, and a findings event carries every finding's body
+// through the decoder to reach a field two of a thousand lines can match.
 func (r *roundReader) readEvents() error {
 	path := filepath.Join(r.dir, task.EventsFile)
 	f, err := os.Open(path) //nolint:gosec // a round revmux itself wrote
@@ -405,10 +410,14 @@ func (r *roundReader) readEvents() error {
 	buf := bufio.NewReader(f)
 	for {
 		line, readErr := buf.ReadString('\n')
-		var ev event
-		if json.Unmarshal([]byte(line), &ev) == nil && ev.Kind == eventAgentRetried {
-			if st, ok := r.agents[ev.Agent]; ok {
-				st.Retries++
+		// the substring is the cheap filter and the decode is the real test: a findings event quoting the
+		// kind gets past the first and is turned away by the second
+		if strings.Contains(line, eventAgentRetried) {
+			var ev event
+			if json.Unmarshal([]byte(line), &ev) == nil && ev.Kind == eventAgentRetried {
+				if st, ok := r.agents[ev.Agent]; ok {
+					st.Retries++
+				}
 			}
 		}
 		if errors.Is(readErr, io.EOF) {

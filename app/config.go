@@ -213,6 +213,17 @@ func knobNames() []string {
 	return out
 }
 
+// projectDir is ./.revmux resolved against the process working directory — the only directory revmux
+// materializes into, and the same one resolveLayers picks up as the project layer. Both readings of
+// "where the project directory is" come from here, since two of them can disagree.
+func projectDir() (string, error) {
+	dir, err := filepath.Abs(projectDirName)
+	if err != nil {
+		return "", fmt.Errorf("resolve project config dir: %w", err)
+	}
+	return dir, nil
+}
+
 // resolveLayers locates the two on-disk config roots. The project layer is auto-detected in the process
 // working directory and simply absent when the directory is not there.
 func resolveLayers(configDir string) (configLayers, error) {
@@ -229,9 +240,9 @@ func resolveLayers(configDir string) (configLayers, error) {
 		return configLayers{}, fmt.Errorf("resolve config dir %q: %w", configDir, err)
 	}
 
-	project, err := filepath.Abs(projectDirName)
+	project, err := projectDir()
 	if err != nil {
-		return configLayers{}, fmt.Errorf("resolve project config dir: %w", err)
+		return configLayers{}, err
 	}
 	if fi, statErr := os.Stat(project); statErr != nil || !fi.IsDir() {
 		project = ""
@@ -468,66 +479,64 @@ func (o options) checkNames() error {
 	return nil
 }
 
-// projectDir is ./.revmux resolved against the process working directory — the only directory revmux
-// materializes into, and the same one resolveLayers picks up as the project layer.
-func (o options) projectDir() (string, error) {
-	dir, err := filepath.Abs(projectDirName)
-	if err != nil {
-		return "", fmt.Errorf("resolve project config dir: %w", err)
-	}
-	return dir, nil
-}
-
 // initConfig materializes the commented-out template under ./.revmux/, leaving a customized file alone.
-func (o options) initConfig(w io.Writer) error {
-	dir, err := o.projectDir()
+// It returns the config path so a caller reporting it does not compose the same path a second time.
+func (o options) initConfig(w io.Writer) (string, error) {
+	dir, err := projectDir()
 	if err != nil {
-		return err
+		return "", err
 	}
 	if mkErr := os.MkdirAll(dir, 0o750); mkErr != nil {
-		return fmt.Errorf("create %s: %w", dir, mkErr)
+		return "", fmt.Errorf("create %s: %w", dir, mkErr)
 	}
 
 	path := filepath.Join(dir, configFileName)
 	keys, err := iniKeys(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if len(keys) > 0 {
 		_, _ = fmt.Fprintf(w, "%s is customized, left unchanged\n", path)
-		return nil
+		return path, nil
 	}
 	if err := os.WriteFile(path, defaultConfig, 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
+		return "", fmt.Errorf("write %s: %w", path, err)
 	}
 	_, _ = fmt.Fprintf(w, "wrote %s\n", path)
-	return nil
+	return path, nil
 }
 
 // dumpDefaults extracts the embedded prompt tree, skipping every file already present so an edited
 // override is never overwritten.
+//
+// It writes through the same treeWriter `revmux init` does, so one rule decides how a file lands on disk
+// and the two commands cannot diverge in what they refuse. What differs is the layer read — the embedded
+// bytes here, the resolved ones there — and the prose report, which is this command's whole output.
 func (o options) dumpDefaults(w io.Writer) error {
+	tw, err := newTreeWriter(o.DumpDefaults)
+	if err != nil {
+		return fmt.Errorf("dump defaults to %s: %w", o.DumpDefaults, err)
+	}
+	defer tw.close() //nolint:errcheck // nothing is written after this point
+
 	tree := prompt.Defaults()
-	err := fs.WalkDir(tree, ".", func(p string, d fs.DirEntry, err error) error {
+	err = fs.WalkDir(tree, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
-		}
-		dst := filepath.Join(o.DumpDefaults, filepath.FromSlash(p))
-		if _, statErr := os.Stat(dst); statErr == nil {
-			_, _ = fmt.Fprintf(w, "%s already present, left unchanged\n", dst)
-			return nil
 		}
 		data, err := fs.ReadFile(tree, p)
 		if err != nil {
 			return fmt.Errorf("read embedded %s: %w", p, err)
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
-			return fmt.Errorf("create %s: %w", filepath.Dir(dst), err)
+		created, err := tw.write(p, data)
+		if err != nil {
+			return err
 		}
-		if err := os.WriteFile(dst, data, 0o600); err != nil {
-			return fmt.Errorf("write %s: %w", dst, err)
+		if !created {
+			_, _ = fmt.Fprintf(w, "%s already present, left unchanged\n", tw.dest(p))
+			return nil
 		}
-		_, _ = fmt.Fprintf(w, "wrote %s\n", dst)
+		_, _ = fmt.Fprintf(w, "wrote %s\n", tw.dest(p))
 		return nil
 	})
 	if err != nil {

@@ -216,9 +216,11 @@ removes the one thing it is for.
 
 ### The winning file's bytes are retained, not re-read
 
-`Set` keeps the raw bytes of whichever file won the chain, in a `files` map keyed by the same relative path
-as `origins` and filled in `Load`'s existing loop beside the `origins` append.
-One loop populates both, so `Content` and `Provenance` cannot disagree about which layer won.
+`Set` keeps the raw bytes of whichever file won the chain, in a `files` map of one `fileRef` per relative
+path carrying the layer, the source and the hash alongside them.
+`Provenance` is **derived** from that map rather than accumulated beside it: two per-path records holding
+the same layer and source are two records to keep in step, and the pair kept in step by one line is the one
+that eventually is not — so `Content` and `Provenance` cannot disagree about which layer won a file.
 
 `Content(relPath)` returns those bytes **with the front matter still on them**, and that is the whole
 constraint on it: `revmux init` writes exactly what it hands back, so a stripped write produces a lens with
