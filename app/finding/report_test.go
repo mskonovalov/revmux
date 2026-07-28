@@ -362,7 +362,7 @@ func TestSourceStatus_Degraded(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, tt.s.Degraded())
-			assert.Equal(t, tt.names, nilIfEmpty(tt.s.degradedNames()))
+			assert.Equal(t, tt.names, nilIfEmpty(tt.s.DegradedNames()))
 		})
 	}
 }

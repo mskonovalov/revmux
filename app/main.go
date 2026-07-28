@@ -215,11 +215,12 @@ func (o runOpts) review(ctx context.Context, cfg pipeline.Config, arc *archive.A
 }
 
 // renderer is the active event subscriber, held so the finished report can be handed to it and the
-// run can wait for it to release the terminal. prog is nil under the plain renderer, which has
-// nothing to browse and needs no report.
+// run can wait for it to release the terminal. Exactly one of the two fields is set: prog under the
+// TUI, which browses the report, and plain under the stderr renderer, which summarizes it.
 type renderer struct {
-	prog *tea.Program
-	done chan struct{}
+	prog  *tea.Program
+	plain *progress
+	done  chan struct{}
 }
 
 // render subscribes the active renderer to the run's events — the TUI when the tty opens, the plain
@@ -230,9 +231,10 @@ func (o runOpts) render(roster []prompt.AgentSpec, events <-chan pipeline.Event)
 
 	tty := o.tty()
 	if tty == nil {
+		r.plain = &progress{w: o.stderr, roster: roster}
 		go func() {
 			defer close(r.done)
-			(&progress{w: o.stderr, roster: roster}).run(events)
+			r.plain.run(events)
 		}()
 		return r
 	}
@@ -256,6 +258,9 @@ func (o runOpts) render(roster []prompt.AgentSpec, events <-chan pipeline.Event)
 //
 // The wait is what keeps the report off stdout until the terminal is free: writing it while the TUI
 // still owns the screen would interleave it with the final frame.
+//
+// The stderr renderer is summarized after that wait rather than before it, because its own goroutine is
+// what writes the event lines: summarizing first would put the closing lines above the last agent's.
 func (r *renderer) finish(rep finding.Report, err error) {
 	switch {
 	case r.prog == nil:
@@ -265,6 +270,9 @@ func (r *renderer) finish(rep finding.Report, err error) {
 		r.prog.Send(ui.CompletedMsg{Report: rep})
 	}
 	<-r.done
+	if r.plain != nil {
+		r.plain.finish(rep, err)
+	}
 }
 
 // tty opens the terminal the TUI renders to, nil when there is none to render on. The gate is the tty

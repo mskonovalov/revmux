@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/umputun/revmux/app/finding"
 	"github.com/umputun/revmux/app/pipeline"
 	"github.com/umputun/revmux/app/prompt"
 	"github.com/umputun/revmux/app/ui"
@@ -77,6 +78,57 @@ func (pr *progress) run(events <-chan pipeline.Event) {
 			_, _ = fmt.Fprintln(pr.w, line)
 		}
 	}
+}
+
+// finish closes the log with what the run came to. The pipeline emits no completion event — it signals
+// the end by closing the channel — so without this the last line on stderr is whichever agent finished
+// last, and a reader tailing the log cannot tell a clean finish from a process that died there.
+//
+// It reports the outcome, never the findings: those belong to stdout, and the TUI is the only renderer
+// that may put them on a screen. A failed run prints nothing, because its error is already on stderr and
+// the report it would summarize is empty.
+func (pr *progress) finish(rep finding.Report, err error) {
+	if err != nil {
+		return
+	}
+	at := rep.Stats.FinishedAt.Format(progressTimeFormat)
+	for _, what := range []string{"── complete ──", pr.sourceLine(rep), pr.findingLine(rep)} {
+		for _, line := range ui.Wrap(at+" "+pr.prefix(""), what, pr.cols()) {
+			_, _ = fmt.Fprintln(pr.w, line)
+		}
+	}
+}
+
+// sourceLine is the run's duration and how many sources reported. A degraded run names what is missing:
+// a partial review that reads like a complete one is the worst failure this tool has, and the log is
+// where someone watching it live would look.
+func (pr *progress) sourceLine(rep finding.Report) string {
+	out := fmt.Sprintf("%s, sources %d/%d", time.Duration(rep.Stats.DurationMS)*time.Millisecond,
+		rep.Sources.Reported, rep.Sources.Expected)
+	names := rep.Sources.DegradedNames()
+	if len(names) == 0 {
+		return out + ", degraded none"
+	}
+	return out + ", DEGRADED: " + strings.Join(names, ", ")
+}
+
+// findingLine counts the findings by severity, worst first, and says so in the same words the report
+// does. Only the counts — a finding's text is the report's to carry.
+func (pr *progress) findingLine(rep finding.Report) string {
+	if len(rep.Findings) == 0 {
+		return "no findings"
+	}
+	counts := map[finding.Severity]int{}
+	for _, f := range rep.Findings {
+		counts[f.Severity]++
+	}
+	parts := []string{}
+	for _, sev := range []finding.Severity{finding.Critical, finding.Major, finding.Minor} {
+		if n := counts[sev]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n, sev))
+		}
+	}
+	return fmt.Sprintf("%d findings: %s", len(rep.Findings), strings.Join(parts, ", "))
 }
 
 // line renders one event. Every EventKind needs a case here and in the TUI, or it is invisible in

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -274,5 +275,96 @@ func TestProgress_clipsToTerminalWidth(t *testing.T) {
 		out := (&progress{roster: progRoster}).line(short)
 		assert.NotContains(t, out, "\n", "one row is enough, so it stays one row")
 		assert.Contains(t, out, "reading proc.go")
+	})
+}
+
+func TestProgress_finish(t *testing.T) {
+	finishedAt := time.Date(2026, 7, 26, 16, 7, 28, 0, time.UTC)
+	base := finding.Report{
+		Sources: finding.SourceStatus{Expected: 2, Reported: 2},
+		Stats:   finding.Stats{FinishedAt: finishedAt, DurationMS: 291000},
+	}
+	indent := strings.Repeat(" ", len("bugs")+2)
+
+	tests := []struct {
+		name string
+		rep  func(finding.Report) finding.Report
+		want []string
+	}{
+		{
+			name: "a clean run reports duration, sources and counts",
+			rep: func(r finding.Report) finding.Report {
+				r.Findings = []finding.Finding{{Severity: finding.Minor}, {Severity: finding.Minor}, {Severity: finding.Major}}
+				return r
+			},
+			want: []string{
+				"16:07:28 " + indent + "── complete ──",
+				"16:07:28 " + indent + "4m51s, sources 2/2, degraded none",
+				"16:07:28 " + indent + "3 findings: 1 major, 2 minor",
+			},
+		},
+		{
+			name: "no findings says so rather than printing an empty tally",
+			rep:  func(r finding.Report) finding.Report { return r },
+			want: []string{
+				"16:07:28 " + indent + "── complete ──",
+				"16:07:28 " + indent + "4m51s, sources 2/2, degraded none",
+				"16:07:28 " + indent + "no findings",
+			},
+		},
+		{
+			name: "a degraded source is named, never counted as reported",
+			rep: func(r finding.Report) finding.Report {
+				r.Sources = finding.SourceStatus{Expected: 2, Reported: 1, DegradedSources: []string{"codex"}}
+				r.Findings = []finding.Finding{{Severity: finding.Critical}}
+				return r
+			},
+			want: []string{
+				"16:07:28 " + indent + "── complete ──",
+				"16:07:28 " + indent + "4m51s, sources 1/2, DEGRADED: codex",
+				"16:07:28 " + indent + "1 findings: 1 critical",
+			},
+		},
+		{
+			name: "a source degraded only by its own flag is named too",
+			rep: func(r finding.Report) finding.Report {
+				r.Sources = finding.SourceStatus{Expected: 2, Reported: 1,
+					Agents: []finding.SourceStat{{Name: "bugs"}, {Name: "codex", Degraded: true}}}
+				return r
+			},
+			want: []string{
+				"16:07:28 " + indent + "── complete ──",
+				"16:07:28 " + indent + "4m51s, sources 1/2, DEGRADED: codex",
+				"16:07:28 " + indent + "no findings",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("COLUMNS", "200")
+			out := &strings.Builder{}
+			(&progress{w: out, roster: []prompt.AgentSpec{{Name: "bugs"}}}).finish(tc.rep(base), nil)
+			assert.Equal(t, tc.want, strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n"))
+		})
+	}
+
+	t.Run("a failed run prints nothing, since its error is already on stderr", func(t *testing.T) {
+		out := &strings.Builder{}
+		(&progress{w: out}).finish(base, errors.New("review failed"))
+		assert.Empty(t, out.String())
+	})
+
+	t.Run("the summary lines up with the event lines above them", func(t *testing.T) {
+		t.Setenv("COLUMNS", "200")
+		roster := []prompt.AgentSpec{{Name: "arch+quality"}}
+		out := &strings.Builder{}
+		pr := &progress{w: out, roster: roster}
+		ev := pr.line(pipeline.Event{Kind: pipeline.EventStage, Stage: "verify", At: progressAt})
+		pr.finish(base, nil)
+
+		summary := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")[0]
+		assert.Equal(t, strings.Index(ev, "──"), strings.Index(summary, "──"),
+			"a stage banner and the closing banner start at one column")
 	})
 }

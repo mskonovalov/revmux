@@ -67,10 +67,13 @@ type StageTiming struct {
 // Degraded reports whether any source failed to deliver. A degraded run that reads like a
 // complete one is the worst failure mode this tool has, so both records of it count.
 func (s SourceStatus) Degraded() bool {
-	return len(s.degradedNames()) > 0
+	return len(s.DegradedNames()) > 0
 }
 
-func (s SourceStatus) degradedNames() []string {
+// DegradedNames is every source that failed to deliver, from the explicit list and from the per-agent
+// flags together — the two records disagree whenever one is written and the other is not, and a name in
+// either is a source whose absence the reader has to be told about.
+func (s SourceStatus) DegradedNames() []string {
 	names := slices.Clone(s.DegradedSources)
 	for _, a := range s.Agents {
 		if a.Degraded && !slices.Contains(names, a.Name) {
@@ -155,7 +158,7 @@ func (r Report) headerLines() []string {
 	if r.Scope.ScopePath != "" {
 		out = append(out, "scope: `"+r.Scope.ScopePath+"`", "")
 	}
-	if names := r.Sources.degradedNames(); len(names) > 0 {
+	if names := r.Sources.DegradedNames(); len(names) > 0 {
 		banner := fmt.Sprintf("**Degraded run**: %d of %d sources reported, missing %s",
 			r.Sources.Reported, r.Sources.Expected, strings.Join(names, ", "))
 		out = append(out, banner, "")

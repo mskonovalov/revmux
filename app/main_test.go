@@ -662,6 +662,23 @@ func TestRunOpts_render(t *testing.T) {
 		assert.Empty(t, r.stdout.String(), "stdout belongs to the report alone")
 	})
 
+	t.Run("the plain renderer closes with a summary, after the last event line", func(t *testing.T) {
+		r := newRunOpts(t, options{})
+		rep := finding.Report{
+			Sources:  finding.SourceStatus{Expected: 2, Reported: 2},
+			Findings: []finding.Finding{{Severity: finding.Major}},
+		}
+		finished(t, r.opts(), rep, nil)
+
+		out := r.stderr.String()
+		assert.Contains(t, out, "── complete ──", "a reader tailing the log is told the run ended")
+		assert.Contains(t, out, "sources 2/2, degraded none")
+		assert.Contains(t, out, "1 findings: 1 major")
+		assert.Greater(t, strings.Index(out, "── complete ──"), strings.Index(out, "started [bugs]"),
+			"the drain goroutine owns the event lines, so the summary may only follow them")
+		assert.NotContains(t, out, "unchecked error", "the findings themselves belong to stdout")
+	})
+
 	t.Run("with a tty the ui renders there, and a failed run gets the terminal back", func(t *testing.T) {
 		r := newRunOpts(t, options{})
 		ro := r.opts()
@@ -684,6 +701,7 @@ func TestRunOpts_render(t *testing.T) {
 		finished(t, ro, finding.Report{Findings: []finding.Finding{{Title: "unchecked error"}}}, nil,
 			func() { typeKeys("q") })
 		assert.Empty(t, r.stdout.String(), "the browser renders the report, it does not write it")
+		assert.Empty(t, r.stderr.String(), "and the browser is the summary, so stderr gets none of its own")
 	})
 }
 

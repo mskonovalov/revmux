@@ -558,15 +558,24 @@ agent tabs stay reachable so a reader can check why a finding was raised.
 Quitting stops watching the run, it does not stop the run: the report is still written to stdout when the
 pipeline finishes.
 
-With `--no-tui`, or when the tty cannot be opened, the same events render as timestamped lines on stderr:
+With `--no-tui`, or when the tty cannot be opened, the same events render as timestamped lines on stderr,
+each agent in its own color and every line starting at one column:
 
 ```
-16:02:11 bugs+impl: started [bugs, impl]
-16:02:19 arch+quality: tool: Grep
-16:04:02 docs+tests: retrying: agent docs+tests stalled
-16:05:12 bugs+impl: done, 6 findings
-16:05:40 stage synthesis
+16:02:11 bugs+impl     started [bugs, impl]
+16:02:19 arch+quality  reading the roster resolution path
+16:04:02 docs+tests    retrying: agent docs+tests stalled
+16:05:12 bugs+impl     done, 6 findings
+16:05:40               ── synthesis ──
+16:09:03               ── complete ──
+16:09:03               6m52s, sources 4/4, degraded none
+16:09:03               6 findings: 1 major, 5 minor
 ```
+
+The pipeline emits no completion event — it ends by closing the event channel — so the closing three lines
+are written after the last one, to say what the run came to. They carry counts only: the findings
+themselves go to stdout, and a degraded run names its missing sources here rather than leaving the log
+looking like a complete one.
 
 ## `revmux config`
 

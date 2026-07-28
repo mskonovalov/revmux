@@ -45,7 +45,8 @@ If a note would be equally true of any Go project, it does not belong here.
 - `app/introspect.go` — the `revmux config` subcommand and the catalog it prints
 - `app/newcmd.go` — the `revmux new` subcommand, which scaffolds a round and prints the paths it created
 - `app/artifacts.go` — the artifacts `package main` owns: `manifest.json`, `report.md`, `findings.json`
-- `app/progress.go` — the non-TTY event subscriber (timestamped lines to stderr)
+- `app/progress.go` — the non-TTY event subscriber (timestamped lines to stderr), plus the run's closing
+  summary, which the pipeline emits no event for
 - `app/executor/` — supervised subprocess execution for claude and codex
 - `app/prompt/` — front matter and roster parsing, lens composition, `{{VAR}}` substitution, `go:embed` defaults
 - `app/pipeline/` — the three stages, fan-out, stagger, degrade policy, typed event channel
