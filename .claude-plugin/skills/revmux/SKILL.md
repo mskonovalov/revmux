@@ -316,14 +316,30 @@ separate decision, and this is where the user makes it.
 
 ```bash
 revmux new --task <id> --run 02-after-fix
-revmux --task <id> --run 02-after-fix --no-tui \
+revmux --task <id> --run 02-after-fix --profile <picked> --no-tui \
     > /tmp/revmux-<id>-02-after-fix.json 2> /tmp/revmux-<id>-02-after-fix.log
 ```
 
 revmux injects the prior rounds itself. **Do not paste prior findings into the scope** — it
 duplicates the injection and anchors agents on conclusions they should re-derive.
 
-`--profile final` is a good last round.
+**Pick this round's profile from what the fixes touched, not from the round number.** A re-review is
+not automatically smaller: round 1's findings may have been fixed by a redesign, and a narrower roster
+cannot catch a regression in an area its lenses do not cover.
+
+| the fixes were | profile |
+|---|---|
+| contained edits inside what round 1 flagged | `final` — `bugs+impl` is the fix-confirmation shape, and it reports nothing below major |
+| spilled into tests, docs or structure | `comprehensive` — that surface has not been reviewed yet |
+| time-boxed, correctness only | `focused` |
+
+The round-2 failure worth spending a roster on is a fix that does not address the finding, or addresses
+it in the wrong place. That is the `impl` lens, which `focused` does not carry — so a re-review narrows
+to `final` rather than to `focused`.
+
+Put it as an AskUserQuestion, the matching row first and marked `(Recommended)`.
+Never narrow the roster silently: a user who does not notice gets a smaller review than the one he
+thinks he asked for. Skip the question when he named a profile himself.
 
 ## Debugging a review that looks wrong
 
