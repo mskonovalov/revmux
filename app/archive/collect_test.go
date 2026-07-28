@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -302,6 +303,313 @@ func TestRoundReader_readEvents(t *testing.T) {
 		require.NoError(t, r.read())
 		assert.Equal(t, 1, r.stats().agents[0].Retries, "a findings event carries every finding's body")
 	})
+}
+
+func TestCollectStats(t *testing.T) {
+	// two tasks sharing one agent and one lens, so the fold has something to match by name and something to
+	// append: alpha runs bugs+impl beside codex over two rounds, beta runs docs+tests beside codex over one
+	root := t.TempDir()
+	alpha := sources(agent("bugs+impl", "bugs", "impl"), agent("codex", "adversarial"))
+	beta := sources(agent("docs+tests", "docs", "tests"), agent("codex", "adversarial"))
+
+	recordRound(t, filepath.Join(root, "alpha", "01-initial"), map[string]finding.Report{
+		foundFile: {Sources: alpha, Findings: slices.Concat(
+			raised(3, "bugs+impl", "bugs"), raised(2, "codex", "adversarial"))},
+		verifiedFile: {Sources: alpha, Findings: []finding.Finding{
+			merged(finding.Confirmed, []string{"bugs+impl", "codex"}, "bugs", "adversarial")}},
+	})
+	recordRound(t, filepath.Join(root, "alpha", "02-followup"), map[string]finding.Report{
+		foundFile: {Sources: alpha, Findings: slices.Concat(
+			raised(1, "bugs+impl", "impl"), raised(1, "codex", "adversarial"))},
+		verifiedFile: {Sources: alpha, Findings: []finding.Finding{
+			merged(finding.Refined, []string{"codex"}, "adversarial")}},
+	})
+	recordRound(t, filepath.Join(root, "beta", "01-initial"), map[string]finding.Report{
+		foundFile: {Sources: beta, Findings: slices.Concat(
+			raised(2, "docs+tests", "docs"), raised(1, "codex", "adversarial"))},
+		verifiedFile: {Sources: beta, Findings: []finding.Finding{
+			merged(finding.Confirmed, []string{"docs+tests"}, "docs"),
+			merged(finding.Refined, []string{"codex"}, "adversarial")}},
+	})
+
+	got, err := CollectStats(StatsQuery{TasksDir: root})
+	require.NoError(t, err)
+
+	t.Run("every task under the root is reported, in the order task.List names them", func(t *testing.T) {
+		assert.Equal(t, []string{"alpha", "beta"}, ids(got))
+	})
+
+	t.Run("a task's rounds fold together", func(t *testing.T) {
+		assert.Equal(t, 2, got.Tasks[0].Rounds)
+		assert.Equal(t, []agentStats{
+			{Name: "bugs+impl", Raised: 4, Survived: 1, Corroborated: 1},
+			{Name: "codex", Raised: 3, Survived: 2, Corroborated: 1},
+		}, got.Tasks[0].Agents)
+		assert.Equal(t, []lensStats{
+			{Name: "bugs", Raised: 3, Verdicts: map[finding.Verdict]int{finding.Confirmed: 1}},
+			{Name: "impl", Raised: 1, Verdicts: map[finding.Verdict]int{}},
+			{Name: "adversarial", Raised: 3, Verdicts: map[finding.Verdict]int{
+				finding.Confirmed: 1, finding.Refined: 1}},
+		}, got.Tasks[0].Lenses, "a lens the roster carries but nothing raised is still reported, at zero")
+		assert.Equal(t, []stageFlow{{Name: "verify", In: 7, Out: 2}}, got.Tasks[0].Stages)
+	})
+
+	t.Run("a task keeps its own roster", func(t *testing.T) {
+		assert.Equal(t, 1, got.Tasks[1].Rounds)
+		assert.Equal(t, []agentStats{
+			{Name: "docs+tests", Raised: 2, Survived: 1},
+			{Name: "codex", Raised: 1, Survived: 1},
+		}, got.Tasks[1].Agents)
+	})
+
+	t.Run("totals match names across tasks and append the ones only one task ran", func(t *testing.T) {
+		assert.Equal(t, taskStats{
+			Rounds: 3,
+			Agents: []agentStats{
+				{Name: "bugs+impl", Raised: 4, Survived: 1, Corroborated: 1},
+				{Name: "codex", Raised: 4, Survived: 3, Corroborated: 1},
+				{Name: "docs+tests", Raised: 2, Survived: 1},
+			},
+			Lenses: []lensStats{
+				{Name: "bugs", Raised: 3, Verdicts: map[finding.Verdict]int{finding.Confirmed: 1}},
+				{Name: "impl", Raised: 1, Verdicts: map[finding.Verdict]int{}},
+				{Name: "adversarial", Raised: 4, Verdicts: map[finding.Verdict]int{
+					finding.Confirmed: 1, finding.Refined: 2}},
+				{Name: "docs", Raised: 2, Verdicts: map[finding.Verdict]int{finding.Confirmed: 1}},
+				{Name: "tests", Verdicts: map[finding.Verdict]int{}},
+			},
+			Stages: []stageFlow{{Name: "verify", In: 10, Out: 4}},
+		}, got.Totals, "the totals carry no id: they are every task at once")
+	})
+
+	t.Run("a task's verdict counts are its own after the totals folded them in", func(t *testing.T) {
+		assert.Equal(t, map[finding.Verdict]int{finding.Refined: 1}, got.Tasks[1].Lenses[2].Verdicts,
+			"beta's adversarial map is not the one the totals accumulate into")
+	})
+}
+
+func TestCollectStats_query(t *testing.T) {
+	t.Run("a named task narrows the corpus to it", func(t *testing.T) {
+		root := t.TempDir()
+		recordRound(t, filepath.Join(root, "alpha", "01-initial"), map[string]finding.Report{
+			foundFile: {Sources: sources(agent("solo", "bugs")), Findings: raised(2, "solo", "bugs")},
+		})
+		recordRound(t, filepath.Join(root, "beta", "01-initial"), map[string]finding.Report{
+			foundFile: {Sources: sources(agent("other", "docs")), Findings: raised(5, "other", "docs")},
+		})
+
+		got, err := CollectStats(StatsQuery{TasksDir: root, Task: "beta"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"beta"}, ids(got))
+		assert.Equal(t, []agentStats{{Name: "other", Raised: 5, Survived: 5}}, got.Totals.Agents)
+	})
+
+	t.Run("a task the root does not carry is named rather than answered empty", func(t *testing.T) {
+		root := t.TempDir()
+		recordRound(t, filepath.Join(root, "pr-123", "01-initial"), map[string]finding.Report{
+			foundFile: {Sources: sources(agent("solo", "bugs"))},
+		})
+
+		_, err := CollectStats(StatsQuery{TasksDir: root, Task: "pr123"})
+		require.Error(t, err, "a typo'd id answered with an empty document reads as a task with no history")
+		assert.Contains(t, err.Error(), "pr123")
+	})
+
+	t.Run("a name that is not one task directory matches nothing", func(t *testing.T) {
+		root := t.TempDir()
+		recordRound(t, filepath.Join(root, "pr-123", "01-initial"), map[string]finding.Report{
+			foundFile: {Sources: sources(agent("solo", "bugs"))},
+		})
+
+		for _, name := range []string{"../" + filepath.Base(root), "pr-123/01-initial", ".."} {
+			_, err := CollectStats(StatsQuery{TasksDir: root, Task: name})
+			require.Error(t, err, "task %s", name)
+		}
+	})
+}
+
+func TestCollectStats_roundGating(t *testing.T) {
+	t.Run("a round nobody ran is not counted", func(t *testing.T) {
+		root := t.TempDir()
+		recordRound(t, filepath.Join(root, "pr-123", "01-initial"), map[string]finding.Report{
+			foundFile: {Sources: sources(agent("solo", "bugs")), Findings: raised(3, "solo", "bugs")},
+		})
+		// a round `revmux new` scaffolded and nobody has run yet: input/ and no marker at all
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "pr-123", "02-prepared", inputDir), 0o750))
+		// a round claimed by a run that never came back: the marker is there and still empty
+		claimed := filepath.Join(root, "pr-123", "03-claimed")
+		recordRound(t, claimed, map[string]finding.Report{
+			foundFile: {Sources: sources(agent("solo", "bugs")), Findings: raised(9, "solo", "bugs")},
+		})
+		require.NoError(t, os.WriteFile(filepath.Join(claimed, manifestFile), nil, 0o600))
+
+		got, err := CollectStats(StatsQuery{TasksDir: root})
+		require.NoError(t, err)
+		assert.Equal(t, 1, got.Totals.Rounds)
+		assert.Equal(t, []agentStats{{Name: "solo", Raised: 3, Survived: 3}}, got.Totals.Agents,
+			"an open round's artifacts belong to a run that never finished")
+	})
+
+	t.Run("a round whose artifacts will not decode is left out rather than folded in half", func(t *testing.T) {
+		root := t.TempDir()
+		recordRound(t, filepath.Join(root, "pr-123", "01-initial"), map[string]finding.Report{
+			foundFile: {Sources: sources(agent("solo", "bugs")), Findings: raised(2, "solo", "bugs")},
+		})
+		broken := filepath.Join(root, "pr-123", "02-broken")
+		recordRound(t, broken, map[string]finding.Report{
+			foundFile: {Sources: sources(agent("solo", "bugs"))},
+		})
+		require.NoError(t, os.WriteFile(filepath.Join(broken, verifiedFile), []byte(`{"findings":`), 0o600))
+
+		got, err := CollectStats(StatsQuery{TasksDir: root})
+		require.NoError(t, err)
+		assert.Equal(t, 1, got.Tasks[0].Rounds, "rounds counts the ones these numbers were read from")
+		assert.Equal(t, []agentStats{{Name: "solo", Raised: 2, Survived: 2}}, got.Tasks[0].Agents)
+	})
+
+	t.Run("a task with no rounds is still reported, so both commands name the same tasks", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "pr-123", "01-initial", inputDir), 0o750))
+
+		got, err := CollectStats(StatsQuery{TasksDir: root})
+		require.NoError(t, err)
+		require.Equal(t, []string{"pr-123"}, ids(got))
+		assert.Equal(t, newTaskStats("pr-123"), got.Tasks[0])
+	})
+
+	t.Run("an unreadable task directory is refused rather than reported as no rounds", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root reads a directory with no permissions")
+		}
+		root := t.TempDir()
+		dir := filepath.Join(root, "pr-123")
+		require.NoError(t, os.MkdirAll(dir, 0o750))
+		unreadable(t, dir)
+
+		_, err := CollectStats(StatsQuery{TasksDir: root})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "pr-123")
+	})
+}
+
+func TestCollectStats_tasksRoot(t *testing.T) {
+	t.Run("a tasks root that is not there is a project that has never run a review", func(t *testing.T) {
+		got, err := CollectStats(StatsQuery{TasksDir: filepath.Join(t.TempDir(), "never-created")})
+		require.NoError(t, err)
+		assert.Equal(t, Corpus{Tasks: []taskStats{}, Totals: newTaskStats("")}, got)
+
+		data, marshalErr := json.Marshal(got)
+		require.NoError(t, marshalErr)
+		assert.Contains(t, string(data), `"tasks":[]`, "an empty corpus is a document, not a null")
+	})
+
+	t.Run("an unreadable tasks root is refused rather than reported as no tasks", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root reads a directory with no permissions")
+		}
+		root := t.TempDir()
+		unreadable(t, root)
+
+		_, err := CollectStats(StatsQuery{TasksDir: root})
+		require.Error(t, err, "an empty corpus over a root nobody could read is how a caller mints a duplicate id")
+		assert.Contains(t, err.Error(), root)
+	})
+
+	t.Run("an empty query reads no location of its own", func(t *testing.T) {
+		got, err := CollectStats(StatsQuery{})
+		require.NoError(t, err)
+		assert.Empty(t, got.Tasks, "there is no default tasks root here, so the developer's own is never read")
+	})
+
+	t.Run("the corpus names only what the query's root carries", func(t *testing.T) {
+		root := t.TempDir()
+		recordRound(t, filepath.Join(root, "only-task", "01-initial"), map[string]finding.Report{
+			foundFile: {Sources: sources(agent("solo", "bugs")), Findings: raised(1, "solo", "bugs")},
+		})
+
+		got, err := CollectStats(StatsQuery{TasksDir: root})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"only-task"}, ids(got))
+	})
+}
+
+func TestTaskStats_add(t *testing.T) {
+	t.Run("an empty accumulator takes the other side whole", func(t *testing.T) {
+		got := newTaskStats("pr-123")
+		got.add(taskStats{Rounds: 1,
+			Agents: []agentStats{{Name: "solo", Raised: 2, Survived: 1, Corroborated: 1,
+				DegradedRounds: 1, Retries: 3, Tokens: 100}},
+			Lenses: []lensStats{{Name: "bugs", Raised: 2, Ambiguous: 1,
+				Verdicts: map[finding.Verdict]int{finding.Confirmed: 1}}},
+			Stages: []stageFlow{{Name: "verify", In: 2, Out: 1}},
+		})
+
+		assert.Equal(t, taskStats{ID: "pr-123", Rounds: 1,
+			Agents: []agentStats{{Name: "solo", Raised: 2, Survived: 1, Corroborated: 1,
+				DegradedRounds: 1, Retries: 3, Tokens: 100}},
+			Lenses: []lensStats{{Name: "bugs", Raised: 2, Ambiguous: 1,
+				Verdicts: map[finding.Verdict]int{finding.Confirmed: 1}}},
+			Stages: []stageFlow{{Name: "verify", In: 2, Out: 1}},
+		}, got, "the id is the accumulator's own and no argument order can decide it")
+	})
+
+	t.Run("every counter accumulates by name", func(t *testing.T) {
+		got := newTaskStats("")
+		one := taskStats{Rounds: 1,
+			Agents: []agentStats{{Name: "solo", Raised: 2, Survived: 1, Corroborated: 1, Retries: 1, Tokens: 10}},
+			Lenses: []lensStats{{Name: "bugs", Raised: 2, Ambiguous: 1,
+				Verdicts: map[finding.Verdict]int{finding.Confirmed: 1}}},
+			Stages: []stageFlow{{Name: "verify", In: 2, Out: 1}},
+		}
+		two := taskStats{Rounds: 1,
+			Agents: []agentStats{{Name: "solo", Raised: 3, Survived: 2, DegradedRounds: 1, Tokens: 5}},
+			Lenses: []lensStats{{Name: "bugs", Raised: 3,
+				Verdicts: map[finding.Verdict]int{finding.Confirmed: 2, finding.Rejected: 1}}},
+			Stages: []stageFlow{{Name: "verify", In: 3, Out: 2}},
+		}
+		got.add(one)
+		got.add(two)
+
+		assert.Equal(t, 2, got.Rounds)
+		assert.Equal(t, []agentStats{{Name: "solo", Raised: 5, Survived: 3, Corroborated: 1,
+			DegradedRounds: 1, Retries: 1, Tokens: 15}}, got.Agents)
+		assert.Equal(t, []lensStats{{Name: "bugs", Raised: 5, Ambiguous: 1,
+			Verdicts: map[finding.Verdict]int{finding.Confirmed: 3, finding.Rejected: 1}}}, got.Lenses)
+		assert.Equal(t, []stageFlow{{Name: "verify", In: 5, Out: 3}}, got.Stages)
+	})
+
+	t.Run("a folded tally is never aliased by the accumulator", func(t *testing.T) {
+		one := taskStats{Rounds: 1, Lenses: []lensStats{{Name: "bugs",
+			Verdicts: map[finding.Verdict]int{finding.Confirmed: 1}}}}
+		got := newTaskStats("")
+		got.add(one)
+		got.add(taskStats{Rounds: 1, Lenses: []lensStats{{Name: "bugs",
+			Verdicts: map[finding.Verdict]int{finding.Confirmed: 4}}}})
+
+		assert.Equal(t, map[finding.Verdict]int{finding.Confirmed: 1}, one.Lenses[0].Verdicts,
+			"the source of a fold is read, never written into")
+		assert.Equal(t, map[finding.Verdict]int{finding.Confirmed: 5}, got.Lenses[0].Verdicts)
+	})
+}
+
+// ids is the task ids a corpus reports, in the order it reports them.
+func ids(c Corpus) []string {
+	out := make([]string, 0, len(c.Tasks))
+	for _, t := range c.Tasks {
+		out = append(out, t.ID)
+	}
+	return out
+}
+
+// recordRound lays out one round that ran: the findings artifacts it carries plus the non-empty
+// manifest.json task.Rounds gates on.
+func recordRound(t *testing.T, dir string, reps map[string]finding.Report) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(dir, 0o750))
+	for name, rep := range reps {
+		writeArtifact(t, dir, name, rep)
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, manifestFile), []byte(`{"run":"recorded"}`), 0o600))
 }
 
 // fill is n bytes of filler for an oversized event line.

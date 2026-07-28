@@ -438,12 +438,37 @@ Exports (justification per item: who outside the package calls this?):
 - Modify: `app/archive/collect.go`
 - Modify: `app/archive/collect_test.go`
 
-- [ ] implement `CollectStats` — enumerate via `task.List` (Task 2) or the single `q.Task`, gated by `task.Rounds` so only rounds that ran are counted
-- [ ] implement the fold as `(t *taskStats) add(o taskStats)` accumulating into name-keyed maps, never a two-parameter merge where argument order silently decides which `ID` survives
-- [ ] return an empty `Corpus` rather than an error when the tasks root does not exist, so a project that has never run a review is not a failure
-- [ ] write tests: two tasks with differing rosters aggregate correctly; `q.Task` narrows; a prepared-but-never-run round is excluded; a missing tasks root yields an empty result
-- [ ] write a test asserting only temp dirs are read, never the developer's real tasks root
-- [ ] run tests - must pass before next task
+- [x] implement `CollectStats` — enumerate via `task.List` (Task 2) or the single `q.Task`, gated by `task.Rounds` so only rounds that ran are counted
+- [x] implement the fold as `(t *taskStats) add(o taskStats)` accumulating into name-keyed maps, never a two-parameter merge where argument order silently decides which `ID` survives
+- [x] return an empty `Corpus` rather than an error when the tasks root does not exist, so a project that has never run a review is not a failure
+- [x] write tests: two tasks with differing rosters aggregate correctly; `q.Task` narrows; a prepared-but-never-run round is excluded; a missing tasks root yields an empty result
+- [x] write a test asserting only temp dirs are read, never the developer's real tasks root
+- [x] run tests - must pass before next task
+
+**Decisions taken while implementing (nothing in the plan settled them):**
+
+- **`q.Task` narrows by looking the id up in `task.List`'s output rather than by joining a path of its own.**
+  One enumerator then decides what a task is for both the whole-corpus and the single-task reading, so a
+  task reached through a relative symlink is aggregated exactly where `revmux config` reports it, and a name
+  that is not one directory under the root — a separator, a parent hop — matches nothing by construction
+  rather than by a second copy of `task.CheckName`.
+- **A `--task` naming no task under the root is an error, not an empty document.** The empty-`Corpus` rule
+  covers the tasks root itself; a typo'd id answered with zeros reads as a task with no history, which is
+  the `pr123`-beside-`pr-123` failure CLAUDE.md names.
+- **An unreadable tasks root or task directory fails the call rather than reporting no tasks or no rounds**,
+  the same way `revmux config` refuses to report `"tasks": []` for a root it could not read. A round whose
+  artifacts will not decode is still skipped, per Task 6.
+- **A task with rounds nobody has run yet is still reported, at zero.** `revmux stats` and `revmux config`
+  have to name the same task set — `/revmux self` reads both, and a task missing from one is a silent
+  disagreement.
+- **`Rounds` counts the rounds the numbers were read from, so a skipped undecodable round is not one**, and
+  Task 6's godoc for the field was amended to say so: it is the denominator of everything beside it.
+- **[deviation] `newTaskStats` and three private `add*` methods exist beyond the Design Contract's list.**
+  `add` delegates to `addAgents`, `addLenses` and `addStages` rather than carrying three index maps inline,
+  and `newTaskStats` is a constructor (explicitly exempt) whose non-nil slices keep an empty task marshaling
+  as `[]` rather than `null`. `addLenses` starts a fresh verdict map for a lens it has not seen: taking the
+  other side's map would alias one between a task entry and the totals, and the next task's verdicts would
+  land in both.
 
 ### Task 8: Add the `revmux stats` subcommand
 

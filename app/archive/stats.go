@@ -15,8 +15,13 @@ type Corpus struct {
 
 // taskStats is one task's rounds folded together. ID is empty on Corpus.Totals, which is every task at once.
 type taskStats struct {
-	ID     string       `json:"id,omitempty"`
-	Rounds int          `json:"rounds"` // rounds task.HasRun accepts, so a prepared round nobody ran is not one
+	ID string `json:"id,omitempty"`
+
+	// Rounds is the rounds these numbers were read from: task.HasRun accepts it, so a prepared round nobody
+	// ran is not one, and its artifacts decoded, so a round left half-written by an interrupted run is not
+	// one either. It is the denominator of everything beside it.
+	Rounds int `json:"rounds"`
+
 	Agents []agentStats `json:"agents"`
 	Lenses []lensStats  `json:"lenses"`
 	Stages []stageFlow  `json:"stages"`

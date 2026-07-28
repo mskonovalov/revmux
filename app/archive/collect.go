@@ -15,6 +15,159 @@ import (
 	"github.com/umputun/revmux/app/task"
 )
 
+// CollectStats aggregates every round that ran under the query's tasks root: one entry per task, plus the
+// totals across all of them.
+//
+// Which directories are tasks is task.List and which are rounds is task.Rounds, the same two enumerations
+// `revmux config` reports. Two walks over the tasks root are two chances to disagree about what a task is,
+// and a caller reading both commands would see that disagreement as a task that has no history.
+//
+// A round whose artifacts will not decode is left out rather than folded in half — an interrupted run
+// leaves exactly that — but an unreadable task directory is an error: reported as no rounds it reads as a
+// task nobody reviewed, which is the wrong advice this whole document exists to avoid giving.
+func CollectStats(q StatsQuery) (Corpus, error) {
+	ids, err := q.tasks()
+	if err != nil {
+		return Corpus{}, err
+	}
+
+	out := Corpus{Tasks: make([]taskStats, 0, len(ids)), Totals: newTaskStats("")}
+	for _, id := range ids {
+		st, collectErr := q.collect(id)
+		if collectErr != nil {
+			return Corpus{}, collectErr
+		}
+		out.Tasks = append(out.Tasks, st)
+		out.Totals.add(st)
+	}
+	return out, nil
+}
+
+// tasks names the tasks this query covers, narrowed to q.Task when it is set. The narrowed name is looked
+// up in the enumeration rather than joined into a path of its own, so a name that is not one task directory
+// under the root — a separator, a parent hop, a link the archive could not walk — matches nothing and is
+// reported as absent.
+//
+// A tasks root that is not there has no tasks and is not an error: a project that has never run a review is
+// not a failure. Asking for one task by name is different — a typo'd id answered with an empty document
+// reads as a task with no history, so it says so instead.
+func (q StatsQuery) tasks() ([]string, error) {
+	ids, err := task.List(q.TasksDir)
+	if err != nil {
+		return nil, fmt.Errorf("list tasks: %w", err)
+	}
+	if q.Task == "" {
+		return ids, nil
+	}
+	if !slices.Contains(ids, q.Task) {
+		return nil, fmt.Errorf("task %s not found under %s", q.Task, q.TasksDir)
+	}
+	return []string{q.Task}, nil
+}
+
+// collect folds one task's rounds into a single tally. Rounds counts the rounds these numbers were read
+// from, so a round skipped for being unreadable is not one of them: it is the denominator of everything
+// beside it.
+func (q StatsQuery) collect(id string) (taskStats, error) {
+	dir := filepath.Join(q.TasksDir, id)
+	rounds, err := task.Rounds(dir)
+	if err != nil {
+		return taskStats{}, fmt.Errorf("list rounds of task %s: %w", id, err)
+	}
+
+	out := newTaskStats(id)
+	for _, name := range rounds {
+		r := newRoundReader(filepath.Join(dir, name))
+		if readErr := r.read(); readErr != nil {
+			continue
+		}
+		st := r.stats()
+		out.add(taskStats{Rounds: 1, Agents: st.agents, Lenses: st.lenses, Stages: st.stages})
+	}
+	return out, nil
+}
+
+// newTaskStats starts an empty tally. The slices are non-nil because the caller is a program reading this
+// back: a task with no rounds yet marshals as empty arrays rather than as nulls it has to special-case.
+func newTaskStats(id string) taskStats {
+	return taskStats{ID: id, Agents: []agentStats{}, Lenses: []lensStats{}, Stages: []stageFlow{}}
+}
+
+// add folds another tally into this one, matching agents, lenses and stages by name and appending a name
+// this one has not seen. Two tasks with different rosters therefore keep every entry of both.
+//
+// It accumulates into the receiver rather than merging two arguments side by side: with two taskStats as
+// parameters the argument order silently decides which ID and Rounds survive, and both readings compile.
+func (t *taskStats) add(o taskStats) {
+	t.Rounds += o.Rounds
+	t.addAgents(o.Agents)
+	t.addLenses(o.Lenses)
+	t.addStages(o.Stages)
+}
+
+func (t *taskStats) addAgents(agents []agentStats) {
+	idx := make(map[string]int, len(t.Agents))
+	for i, a := range t.Agents {
+		idx[a.Name] = i
+	}
+	for _, a := range agents {
+		i, ok := idx[a.Name]
+		if !ok {
+			idx[a.Name] = len(t.Agents)
+			t.Agents = append(t.Agents, agentStats{Name: a.Name})
+			i = idx[a.Name]
+		}
+		st := &t.Agents[i]
+		st.Raised += a.Raised
+		st.Survived += a.Survived
+		st.Corroborated += a.Corroborated
+		st.DegradedRounds += a.DegradedRounds
+		st.Retries += a.Retries
+		st.Tokens += a.Tokens
+	}
+}
+
+// addLenses folds the per-lens tallies, starting a fresh verdict map for a lens this tally has not seen.
+// Taking the other side's map would alias it, and a task entry and the totals sharing one map means the
+// next task's verdicts land in both.
+func (t *taskStats) addLenses(lenses []lensStats) {
+	idx := make(map[string]int, len(t.Lenses))
+	for i, l := range t.Lenses {
+		idx[l.Name] = i
+	}
+	for _, l := range lenses {
+		i, ok := idx[l.Name]
+		if !ok {
+			idx[l.Name] = len(t.Lenses)
+			t.Lenses = append(t.Lenses, lensStats{Name: l.Name, Verdicts: map[finding.Verdict]int{}})
+			i = idx[l.Name]
+		}
+		st := &t.Lenses[i]
+		st.Raised += l.Raised
+		st.Ambiguous += l.Ambiguous
+		for verdict, n := range l.Verdicts {
+			st.Verdicts[verdict] += n
+		}
+	}
+}
+
+func (t *taskStats) addStages(stages []stageFlow) {
+	idx := make(map[string]int, len(t.Stages))
+	for i, s := range t.Stages {
+		idx[s.Name] = i
+	}
+	for _, s := range stages {
+		i, ok := idx[s.Name]
+		if !ok {
+			idx[s.Name] = len(t.Stages)
+			t.Stages = append(t.Stages, stageFlow{Name: s.Name})
+			i = idx[s.Name]
+		}
+		t.Stages[i].In += s.In
+		t.Stages[i].Out += s.Out
+	}
+}
+
 // the stage a findings artifact is the output of. stageReport is not a pipeline stage: findings.json is
 // what package main wrote after applying --min-confidence, and it takes part in the attrition chain only.
 const (
