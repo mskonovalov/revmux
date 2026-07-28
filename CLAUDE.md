@@ -192,8 +192,8 @@ defeats the lexical test.
 delegate to it rather than carrying a copy.
 A round name additionally passes `task.CheckRoundName`, which refuses the one entry the task directory keeps
 beside its rounds: `task.md`.
-A round carrying that name is read as the task's own metadata, and the next `revmux new` on the task
-scaffolds over it.
+A round carrying that name is read as the task's own metadata rather than as a round, so it is invisible to
+the prior-round inventory and unreachable by the name it was created under.
 Roster agent names carry the same rule, applied at load in `prompt.AgentSpec.checkName` — but not the paths
 `Archive.Writer` takes, which are relative and must allow a separator because `agents/`, `stages/` and
 `prompts/` all need one.
@@ -315,12 +315,15 @@ Stamping happens in `find`, not synthesis, or `--no-synthesis` runs carry invent
 - A new `task.md` front-matter key needs: the `Meta` field with both a `yaml` and a `json` tag, the
   commented-out line in `app/task`'s scaffolded template, and the README description of the file.
   `revmux config` reports it for free, since `taskInfo` embeds `Meta` rather than copying its fields.
-  Five files enumerate the keys literally and do not: the README and `.claude/rules/prompts.md`
-  descriptions of the file, the `SKILL.md` step that writes it, `references/task-dir.md` — in both its
-  `task.md` example and its description of what a `paths.tasks` entry carries — and
-  `scripts/task-state.sh`, in both its usage header and the hardcoded
+  Six files enumerate the keys literally and do not, and they split by what they are enumerating.
+  Describing `task.md` itself: the README (its description of the file **and** the `paths.tasks` sample
+  payload in the `revmux config` section), `.claude/rules/prompts.md`, `references/task-dir.md` — in its
+  `task.md` example and its "Each entry carries" line — and the `SKILL.md` step that writes it.
+  Describing what a `paths.tasks` entry carries: `references/invocation.md`, and `SKILL.md`'s own
+  "Entries carry" line, which is a second place inside a file the write step already put on the list.
+  Then `scripts/task-state.sh`, in both its usage header and the hardcoded
   `for key in description url branch base meta_error rounds_error` loop.
-  The last three are in **both** skill trees.
+  The last four are in **both** skill trees.
 - Anything the shipped skill documents — a flag, a profile, the JSON shape, an exit code, the task
   directory layout — needs the same edit in **both** skill trees, since they hold duplicate copies of
   `references/` and `scripts/`. A `diff -r` of the two `references/` and `scripts/` directories must

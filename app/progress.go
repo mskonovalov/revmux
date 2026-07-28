@@ -1,9 +1,12 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -85,8 +88,13 @@ func (pr *progress) run(events <-chan pipeline.Event) {
 // last, and a reader tailing the log cannot tell a clean finish from a process that died there.
 //
 // It reports the outcome, never the findings: those belong to stdout, and the TUI is the only renderer
-// that may put them on a screen. A failed run prints nothing, because its error is already on stderr and
-// the report it would summarize is empty.
+// that may put them on a screen.
+//
+// err is any failure that makes the run's own record unsound — the pipeline's, and the archive's, which
+// the caller folds in. Either prints nothing: a summary saying the review is complete, above the error
+// that says it is not, is the reading this exists to prevent. A report that reached the archive and
+// failed only on its way to stdout is not one of those, and keeps its summary — the review did complete,
+// the round is intact, and the error beneath says only that delivery did not.
 func (pr *progress) finish(rep finding.Report, err error) {
 	if err != nil {
 		return
@@ -114,6 +122,12 @@ func (pr *progress) sourceLine(rep finding.Report) string {
 
 // findingLine counts the findings by severity, worst first, and says so in the same words the report
 // does. Only the counts — a finding's text is the report's to carry.
+//
+// A severity outside the three constants is counted under its own name rather than dropped, so the parts
+// always sum to the total. Only the claude path has a schema constraining that vocabulary: codex is
+// handed the same contract as prompt prose, and a run that skips synthesis has nothing downstream to
+// normalize what it answers. app/finding keeps such a value visible for the same reason, and a tally
+// quietly short of its own total is the one way this line could mislead.
 func (pr *progress) findingLine(rep finding.Report) string {
 	if len(rep.Findings) == 0 {
 		return "no findings"
@@ -126,7 +140,11 @@ func (pr *progress) findingLine(rep finding.Report) string {
 	for _, sev := range []finding.Severity{finding.Critical, finding.Major, finding.Minor} {
 		if n := counts[sev]; n > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", n, sev))
+			delete(counts, sev)
 		}
+	}
+	for _, sev := range slices.Sorted(maps.Keys(counts)) {
+		parts = append(parts, fmt.Sprintf("%d %s", counts[sev], cmp.Or(string(sev), "unlabeled")))
 	}
 	return fmt.Sprintf("%d findings: %s", len(rep.Findings), strings.Join(parts, ", "))
 }

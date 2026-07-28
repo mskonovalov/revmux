@@ -152,8 +152,10 @@ instead, which contains every hop by construction.
 
 **A round name passes `task.CheckRoundName` on top of it, which refuses the one reserved entry.**
 A round is a direct child of the task directory and shares its namespace with the task's own `task.md`, so
-`--run task.md` is refused: that round would be read as the task's metadata, and the next `revmux new` on
-the same task scaffolds over it. The name is `metaFile` in `app/task`, spelled once.
+`--run task.md` is refused: that round would be read as the task's metadata rather than as a round —
+`Load` parses it, `Rounds` skips it, and `writeMeta` then refuses to write the real metadata over a
+directory, so the round is unreachable as one rather than overwritten. The name is `metaFile` in
+`app/task`, spelled once.
 
 **`task.Scaffold` writes through nested `os.Root`s anchored at the tasks root, never by path.**
 A check on a resolved path and the write that follows it are two operations, and the directory can be

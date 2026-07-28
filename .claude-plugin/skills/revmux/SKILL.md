@@ -255,7 +255,7 @@ Read `references/output.md` for the full shape.
    completed.
 2. **`sources`.** Non-empty `degraded` means partial; lead with that.
 3. **`findings`.** Group by severity.
-4. **`open_questions`** and **`pre_existing`** — report separately.
+4. **`open_questions`**, **`pre_existing`** and **`immaterial`** — report each separately.
 
 `sources` holds **agent names** and is the only evidence of independent corroboration. `lenses` holds
 lens names and is informational. One agent flagging under two lenses is still one source.
@@ -280,8 +280,12 @@ Recommend the option that fits the outcome:
 |---|---|
 | `sources.degraded` non-empty | re-run the missing source first — a partial review's silence is not evidence, so nothing else is worth deciding yet |
 | any `critical` or `major` | fix those, then a new round on the same task |
-| `minor` only | fix now, or note for later — verification already dropped the ones whose fix costs more than the defect, so what is left is a question of timing |
+| `minor` only, verdicts not `unverified` | fix now, or note for later — verification weighed each fix's cost against its consequence, so what is left is a question of timing |
+| `minor` only, verdicts `unverified` | say nothing was checked, and weigh each one before acting — `--no-verify` drops nothing and produces no `immaterial` list |
+| `open_questions` non-empty, no findings | answer them — they are decisions, and the review found nothing to edit |
 | nothing actionable | done, and `--profile final` if a merge is next |
+
+Rows are tried in order and the first match wins, so a degraded run outranks whatever it did report.
 
 Put it as an AskUserQuestion, the recommendation first and marked `(Recommended)`.
 

@@ -505,7 +505,9 @@ func CheckName(what, name string) error {
 
 // CheckRoundName is CheckName plus the one entry a round may not be named after, since a round is a direct
 // child of the task directory and shares its namespace with the task's own task.md. A round carrying that
-// name is read as the task's metadata and scaffolded over by the next `revmux new` on the same task.
+// name is read as the task's metadata rather than as a round: Load parses it, Rounds skips it, and
+// writeMeta then refuses to write the task's real metadata over a directory. Nothing is overwritten —
+// the round is simply unreachable as one, which is why the name is refused up front instead.
 func CheckRoundName(what, name string) error {
 	if err := CheckName(what, name); err != nil {
 		return err

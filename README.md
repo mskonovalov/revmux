@@ -174,7 +174,7 @@ worth keeping.
 
 Neither name may contain a path separator or `..`, be absolute, or begin with a dot. A round additionally
 may not be called `task.md`: that is the one entry the task directory keeps beside its rounds, and a round
-named after it is read as the task's own metadata and scaffolded over by the next `revmux new`.
+named after it would be read as the task's own metadata rather than as a round.
 
 ### `revmux new`
 
@@ -276,12 +276,13 @@ a round that has already run is detected and how a real round is told from a dir
 It is created empty and filled in when the run finishes, so a marker still empty means the run never came
 back, and such a round is not counted as a prior round in the meantime.
 
-**A round like that is re-runnable under the same name only while nothing else was written into it.**
-Interrupt a review before an agent reported and the round is still yours, with the `input/` you wrote in it.
-Interrupt one that had already written stage snapshots, agent tees or composed prompts and revmux refuses
-the name, because a second run would leave one round holding two runs' artifacts under a manifest
-describing only the second. The error names what it found; nothing is deleted to make the round usable.
-Open the next round and copy the `input/` across.
+**A round like that is re-runnable under the same name only while nothing else was written into it**, which
+is narrower than it sounds: the pipeline opens `events.jsonl` before it launches an agent, so a review
+interrupted at any point after it started has written something and revmux refuses the name. A round
+holding `events.jsonl`, stage snapshots, agent tees or composed prompts is refused, because a second run
+would leave one round holding two runs' artifacts under a manifest describing only the second. What is
+re-runnable is a round claimed by a run that died before the pipeline began. The error names what it
+found; nothing is deleted to make the round usable. Open the next round and copy the `input/` across.
 
 **A round already being written by another revmux is refused too.** An empty marker is what an interrupted
 run leaves *and* what a run starting right now leaves, so the size alone cannot tell them apart. revmux
@@ -515,12 +516,14 @@ listed in the TUI. Open questions, pre-existing and immaterial findings pass thr
 A per-agent tee is the one artifact whose failure degrades a source rather than failing the run; every other
 artifact either lands or the run exits `2`.
 
-A run that exits `2` leaves no report and, usually, an empty `manifest.json` in the round it claimed. That
-round is re-runnable under the same name once the cause is fixed, as long as the failed run had not written
-anything else into it — the `input/` you wrote is untouched and `revmux new` reports it back unchanged. A
-configuration error caught before the pipeline starts always leaves such a round; a failure part-way
-through a review may not, and then both `revmux new` and the run itself refuse the name and say what the
-round holds.
+A run that exits `2` usually leaves no report. The exception is a failure writing the report to stdout:
+that happens after the round is archived, so the round is complete and its `findings.json` is on disk —
+check `manifest.json` for content before re-running.
+
+A configuration error is caught before the round is claimed at all, so it leaves no `manifest.json` and the
+name is free. Anything that fails once the pipeline has started leaves an empty marker beside what it had
+written, and both `revmux new` and the run itself refuse the name and say what the round holds. Either way
+the `input/` you wrote is untouched and `revmux new` reports it back unchanged.
 
 A delivered signal — `SIGINT` or `SIGTERM` — cancels the run and exits `2`. Agent processes are started in
 their own session, so the terminal never signals them: revmux tears each process group down itself on the

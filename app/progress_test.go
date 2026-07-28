@@ -292,15 +292,47 @@ func TestProgress_finish(t *testing.T) {
 		want []string
 	}{
 		{
-			name: "a clean run reports duration, sources and counts",
+			// the findings carry title, body and location on purpose: the exact-line equality below is
+			// what proves none of that text reaches stderr, and title-less findings would prove nothing
+			name: "a clean run reports duration, sources and counts, and no finding text",
 			rep: func(r finding.Report) finding.Report {
-				r.Findings = []finding.Finding{{Severity: finding.Minor}, {Severity: finding.Minor}, {Severity: finding.Major}}
+				r.Findings = []finding.Finding{
+					{Severity: finding.Minor, Title: "unchecked error", Body: "Close is dropped", File: "proc.go"},
+					{Severity: finding.Minor, Title: "stale comment", Body: "says the old behavior", File: "ui.go"},
+					{Severity: finding.Major, Title: "lost report", Body: "exits 2 over a live round", File: "main.go"},
+				}
 				return r
 			},
 			want: []string{
 				"16:07:28 " + indent + "── complete ──",
 				"16:07:28 " + indent + "4m51s, sources 2/2, degraded none",
 				"16:07:28 " + indent + "3 findings: 1 major, 2 minor",
+			},
+		},
+		{
+			// only the claude path has a schema constraining severity, so a codex peer on a --no-synthesis
+			// run can answer anything. counting it under its own name keeps the parts summing to the total
+			name: "a severity outside the enum is counted under its own name, not dropped",
+			rep: func(r finding.Report) finding.Report {
+				r.Findings = []finding.Finding{{Severity: finding.Major}, {Severity: "high"}, {Severity: "high"}}
+				return r
+			},
+			want: []string{
+				"16:07:28 " + indent + "── complete ──",
+				"16:07:28 " + indent + "4m51s, sources 2/2, degraded none",
+				"16:07:28 " + indent + "3 findings: 1 major, 2 high",
+			},
+		},
+		{
+			name: "an empty severity is labeled rather than printed as a bare count",
+			rep: func(r finding.Report) finding.Report {
+				r.Findings = []finding.Finding{{Severity: ""}}
+				return r
+			},
+			want: []string{
+				"16:07:28 " + indent + "── complete ──",
+				"16:07:28 " + indent + "4m51s, sources 2/2, degraded none",
+				"16:07:28 " + indent + "1 findings: 1 unlabeled",
 			},
 		},
 		{

@@ -631,7 +631,7 @@ func TestRunOpts_render(t *testing.T) {
 	// a keystroke presses it there rather than queueing it on the pty: a real terminal is read as soon
 	// as the program starts, so a quit waiting in the buffer ends the program before the first event
 	// lands, nothing drains the channel, and the send above blocks for good.
-	finished := func(t *testing.T, ro runOpts, rep finding.Report, err error, afterEvents ...func()) {
+	finished := func(t *testing.T, ro runOpts, rep finding.Report, err, arcErr error, afterEvents ...func()) {
 		t.Helper()
 		events, sent := make(chan pipeline.Event), make(chan struct{})
 		go func() {
@@ -647,7 +647,7 @@ func TestRunOpts_render(t *testing.T) {
 			fn()
 		}
 		done := make(chan struct{})
-		go func() { defer close(done); r.finish(rep, err) }()
+		go func() { defer close(done); r.finish(rep, err, arcErr) }()
 		select {
 		case <-done:
 		case <-time.After(10 * time.Second):
@@ -657,18 +657,22 @@ func TestRunOpts_render(t *testing.T) {
 
 	t.Run("with no tty the plain renderer takes the events", func(t *testing.T) {
 		r := newRunOpts(t, options{})
-		finished(t, r.opts(), finding.Report{}, nil)
+		finished(t, r.opts(), finding.Report{}, nil, nil)
 		assert.Contains(t, r.stderr.String(), "── find ──", "the stage line, not the word inside \"1 findings\"")
 		assert.Empty(t, r.stdout.String(), "stdout belongs to the report alone")
 	})
 
+	// summarized carries the text a leaking summary would echo: a title and a body the code has access to
+	// and must not print. Without them the NotContains assertions below hold no matter what finish does.
+	summarized := finding.Report{
+		Sources: finding.SourceStatus{Expected: 2, Reported: 2},
+		Findings: []finding.Finding{{Severity: finding.Major, Title: "unchecked error",
+			Body: "Close is dropped on the error path", File: "proc.go", Fix: "check it"}},
+	}
+
 	t.Run("the plain renderer closes with a summary, after the last event line", func(t *testing.T) {
 		r := newRunOpts(t, options{})
-		rep := finding.Report{
-			Sources:  finding.SourceStatus{Expected: 2, Reported: 2},
-			Findings: []finding.Finding{{Severity: finding.Major}},
-		}
-		finished(t, r.opts(), rep, nil)
+		finished(t, r.opts(), summarized, nil, nil)
 
 		out := r.stderr.String()
 		assert.Contains(t, out, "── complete ──", "a reader tailing the log is told the run ended")
@@ -676,7 +680,20 @@ func TestRunOpts_render(t *testing.T) {
 		assert.Contains(t, out, "1 findings: 1 major")
 		assert.Greater(t, strings.Index(out, "── complete ──"), strings.Index(out, "started [bugs]"),
 			"the drain goroutine owns the event lines, so the summary may only follow them")
-		assert.NotContains(t, out, "unchecked error", "the findings themselves belong to stdout")
+		assert.NotContains(t, out, "unchecked error", "a finding's title belongs to stdout")
+		assert.NotContains(t, out, "Close is dropped", "and so does its body")
+		assert.NotContains(t, out, "proc.go", "and its location")
+	})
+
+	t.Run("an archive failure gets no summary, since the round it describes is unusable", func(t *testing.T) {
+		r := newRunOpts(t, options{})
+		finished(t, r.opts(), summarized, nil, errors.New("archive report.md: no space left on device"))
+
+		out := r.stderr.String()
+		assert.Contains(t, out, "── find ──", "the event lines still stand")
+		assert.NotContains(t, out, "── complete ──",
+			"the run exits 2 over a half-written archive, so the log may not call it complete")
+		assert.NotContains(t, out, "sources 2/2")
 	})
 
 	t.Run("with a tty the ui renders there, and a failed run gets the terminal back", func(t *testing.T) {
@@ -685,7 +702,7 @@ func TestRunOpts_render(t *testing.T) {
 		open, frames, _ := ttyPair(t)
 		ro.openTTY = open
 
-		finished(t, ro, finding.Report{}, errors.New("every source degraded"))
+		finished(t, ro, finding.Report{}, errors.New("every source degraded"), nil)
 
 		assert.Contains(t, frames(), "find", "the ui renders to the tty")
 		assert.Empty(t, r.stdout.String(), "and never to stdout")
@@ -698,7 +715,7 @@ func TestRunOpts_render(t *testing.T) {
 		open, _, typeKeys := ttyPair(t)
 		ro.openTTY = open
 
-		finished(t, ro, finding.Report{Findings: []finding.Finding{{Title: "unchecked error"}}}, nil,
+		finished(t, ro, finding.Report{Findings: []finding.Finding{{Title: "unchecked error"}}}, nil, nil,
 			func() { typeKeys("q") })
 		assert.Empty(t, r.stdout.String(), "the browser renders the report, it does not write it")
 		assert.Empty(t, r.stderr.String(), "and the browser is the summary, so stderr gets none of its own")

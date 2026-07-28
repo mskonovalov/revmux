@@ -91,17 +91,21 @@ Go stamps `sources` after parsing; no schema exposes it to the model.
 | `confirmed` | act on it |
 | `refined` | act on it; the body is the corrected version |
 | `rejected` | do not act on it |
-| `immaterial` | mention only if asked for everything |
+| `immaterial` | do not act on it; report it separately so the dismissal can be audited |
 | `pre_existing` | report separately, not this change's responsibility |
 | `unverified` | verify was skipped; every finding is unchecked, say so |
 
-`rejected`, `immaterial` and `pre_existing` move out of `findings` into their own top-level lists.
+`immaterial` and `pre_existing` move out of `findings` into their own top-level lists. `rejected` gets no
+list — a finding the verifier judged not real is dropped, and only the stage snapshots in the archive
+still hold it.
 
 ## The other lists
 
 - `open_questions` — questions for the author, not defects. Often where the real problem is.
 - `pre_existing` — report as a separate section so the author is not asked to fix unrelated things.
-- `immaterial` — usually noise; keep out of a summary unless asked.
+- `immaterial` — real, and judged not worth acting on. Report it as its own short section and keep it out
+  of the actionable count. It is where a wrong dismissal hides, and the reader is the only one who can
+  catch one.
 
 ## Reporting to a human
 

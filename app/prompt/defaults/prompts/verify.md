@@ -51,15 +51,22 @@ Answer three questions:
 2. **Does it matter when it happens?** Name the consequence — wrong output, data loss, a crash, a
    security hole, a maintainer misled. An outcome nobody would observe is immaterial.
 3. **Is the fix worth it?** Severity measures the value of fixing; the fix's blast radius measures what
-   fixing costs and risks. They are independent, and you are better placed to weigh them than the
-   reviewer was — you have read the surrounding code and he had only the finding. For a minor finding,
-   ask whether the fix edits shared code, changes control flow, alters a signature, or reaches callers
-   beyond the finding's own site. Any of those makes it a bad trade: touching working code to correct
-   something nobody suffers from is how a nit becomes a regression, and the finding is immaterial. Say
-   which of the four it is rather than confirming it and leaving the caller to weigh it.
+   fixing costs and risks. Weigh the two against each other — you are better placed to than the reviewer
+   was, having read the surrounding code he never saw.
 
-   This applies to minor findings only. A critical or major is worth a wide fix by definition, and a
-   restructuring larger than the problem it removes is immaterial at any severity.
+   Name the fix, then say how far it reaches: does it stay at the finding's own site, or does it edit
+   shared code, alter a signature, restructure control flow, or change what callers elsewhere see? Set
+   that against the consequence question 2 already made you name. A restructuring larger than the
+   problem it removes is immaterial at any severity. A minor whose fix reaches well beyond its own site
+   is immaterial too — touching working code across a package to correct something barely anyone
+   suffers from is how a nit becomes a regression.
+
+   **This is a comparison, not a checklist, and reach alone never decides it.** Most real fixes add a
+   branch: an error that was dropped is now checked, a nil is now guarded, a boundary is now correct.
+   Those change control flow and are exactly what a minor finding usually is — confirm them. Question 2
+   has already established that someone suffers the consequence, so a fix proportionate to it is worth
+   making however small the defect. Dismiss only when the cost genuinely outweighs what question 2
+   named, and say what the cost was.
 
 A finding that survives all three is confirmed or refined. Style preferences, hypothetical futures and
 restatements of the code as written are immaterial by definition.

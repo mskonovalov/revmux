@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -203,7 +204,7 @@ func (o runOpts) review(ctx context.Context, cfg pipeline.Config, arc *archive.A
 	if err == nil {
 		arcErr = o.archiveRun(arc, cfg, rep)
 	}
-	r.finish(rep, err)
+	r.finish(rep, err, arcErr)
 
 	switch {
 	case err != nil:
@@ -261,7 +262,12 @@ func (o runOpts) render(roster []prompt.AgentSpec, events <-chan pipeline.Event)
 //
 // The stderr renderer is summarized after that wait rather than before it, because its own goroutine is
 // what writes the event lines: summarizing first would put the closing lines above the last agent's.
-func (r *renderer) finish(rep finding.Report, err error) {
+//
+// arcErr is the archive failure, which the pipeline error does not carry: a run whose archive did not
+// land exits 2 over an unusable round, so its log may not close with a summary saying the review is
+// complete. Only the stderr summary is gated on it. The findings browser still opens, because the
+// findings themselves are sound and are all that survives a round nothing can be read back from.
+func (r *renderer) finish(rep finding.Report, err, arcErr error) {
 	switch {
 	case r.prog == nil:
 	case err != nil:
@@ -271,7 +277,7 @@ func (r *renderer) finish(rep finding.Report, err error) {
 	}
 	<-r.done
 	if r.plain != nil {
-		r.plain.finish(rep, err)
+		r.plain.finish(rep, cmp.Or(err, arcErr))
 	}
 }
 
