@@ -517,13 +517,33 @@ Exports (justification per item: who outside the package calls this?):
 - Modify: `.claude-plugin/skills/revmux/references/invocation.md`
 - Modify: `plugins/codex/skills/revmux/references/invocation.md`
 
-- [ ] add a `self` mode to both `SKILL.md`: read `revmux stats` and `revmux config`, build candidates, present one suggestion at a time with its evidence and reasoning, act on the choice, repeat
-- [ ] state the candidate kinds: drop or keep an agent producing nothing that survives; split a lens pair that never corroborates; create a profile matching actual usage; retune a knob from reliability counts; rewrite a lens whose findings get rejected, shown as a diff
-- [ ] state the rules: writes are project-local only, never `~/.config/revmux/` and never the embedded tree; run `revmux init` first if the tree is not local; a counter that is zero across the whole corpus means there is nothing to say, not a finding; a per-lens number is only as good as its `ambiguous` share, which must be quoted alongside it
-- [ ] document `revmux init` and `revmux stats` in `references/invocation.md`, keeping both copies byte-identical
-- [ ] diverge only in the ask mechanism — AskUserQuestion in the claude tree, a numbered list in the codex tree, matching how Step 6 already differs
-- [ ] add activation triggers (`revmux self`, `self-improve`, `tune revmux`) to both trees
-- [ ] run `make check-plugins` - must pass before next task
+- [x] add a `self` mode to both `SKILL.md`: read `revmux stats` and `revmux config`, build candidates, present one suggestion at a time with its evidence and reasoning, act on the choice, repeat
+- [x] state the candidate kinds: drop or keep an agent producing nothing that survives; split a lens pair that never corroborates; create a profile matching actual usage; retune a knob from reliability counts; rewrite a lens whose findings get rejected, shown as a diff
+- [x] state the rules: writes are project-local only, never `~/.config/revmux/` and never the embedded tree; run `revmux init` first if the tree is not local; a counter that is zero across the whole corpus means there is nothing to say, not a finding; a per-lens number is only as good as its `ambiguous` share, which must be quoted alongside it
+- [x] document `revmux init` and `revmux stats` in `references/invocation.md`, keeping both copies byte-identical
+- [x] diverge only in the ask mechanism — AskUserQuestion in the claude tree, a numbered list in the codex tree, matching how Step 6 already differs
+- [x] add activation triggers (`revmux self`, `self-improve`, `tune revmux`) to both trees
+- [x] run `make check-plugins` - must pass before next task
+
+**Decisions taken while implementing (nothing in the plan settled them):**
+
+- **[decision] The self mode is its own `## Self mode` section with steps S1-S5, placed after the
+  debugging table rather than appended as a Step 8.** Every numbered step in the existing workflow is
+  part of one review; a mode that opens no round and spawns nothing would read as a stage of that
+  review if it carried the next number.
+- **[decision] "A lens whose findings get rejected" is stated as the gap between the lens's stage-1
+  `raised` and its verdict total, with `immaterial` dominating the map as the separate signal.**
+  `verify` drops rejected findings before writing `stages/3-verified.json`, so `verdicts` can never
+  carry a `rejected` key and a skill told to look for one would find nothing on any corpus.
+- **[decision] The codex tree's "Asking the user" preamble went from two decision points to three.**
+  It enumerates where that harness substitutes a numbered list, so leaving it at two would have it
+  undercount its own mechanism — this is inside the sanctioned ask-mechanism divergence, not beside it.
+- **[decision] `references/invocation.md` documents both subcommands with the numbers this repo's own
+  corpus actually returns**, read from `revmux stats` and `revmux config` before writing, rather than
+  invented shapes.
+- **[decision] The "git reverts a bad edit" note is phrased conditionally — "when `.revmux/` is tracked".**
+  The plan's premise holds for this repo, whose `.gitignore` covers `.revmux/tasks/` only, but the skill
+  ships to arbitrary projects and no other project's ignore rules were checked.
 
 ### Task 10: Verify acceptance criteria
 

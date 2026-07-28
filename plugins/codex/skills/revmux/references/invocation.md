@@ -11,6 +11,9 @@ revmux      --task <id> --run <name> [--profile <name> | --lenses a,b] [--no-tui
 creates the round and reports the paths to fill; the review reads what was written there and creates
 nothing. See `task-dir.md`.
 
+Three more subcommands take no round at all — `revmux config`, `revmux stats` and `revmux init`. Each
+prints JSON on stdout, runs no pipeline and exits before one exists; all three are covered below.
+
 ## Run it in the background, and do not poll
 
 A review is not a fast command. The find stage runs several agents in parallel with a launch stagger,
@@ -315,6 +318,86 @@ of them this call made. Take the paths from that output; see `task-dir.md`.
 
 It never overwrites: an existing `task.md` is left alone and a round that has already run is refused.
 The review path creates nothing, so a typo'd `--task` there is an error rather than an empty task.
+
+## `revmux init` — materialize the local tree
+
+```bash
+revmux init
+```
+
+Writes `./.revmux/`: the commented-out config template plus every prompt file as it currently
+**resolved** — the winning layer's own bytes, front matter included. A user with `~/.config/revmux/`
+overrides gets those copied down rather than the embedded text, so editing the result changes what
+already runs instead of reverting it to what ships. `--init` is the identical flag form.
+
+It prints JSON on stdout and writes nothing outside `./.revmux/`:
+
+```json
+{"dir": "…/.revmux", "config": "…/.revmux/config",
+ "files": [{"path": "…/.revmux/lenses/bugs.md", "layer": "embedded", "created": true},
+           {"path": "…/.revmux/prompts/synthesis.md", "layer": "user", "created": false}]}
+```
+
+- `layer` is where the content came from: `project`, `user` or `embedded`
+- `created` is false for a file already there — it is reported and left byte-identical, so a second
+  run changes nothing
+- the config ships commented out so an upgrade can still move a default the user never set; the
+  prompt files ship live, because they are the text agents execute
+
+Take the paths from that output. Twelve prompt files and the config is the shipped tree's size, but a
+user with his own lenses has more, and composing a path from this document rather than reading one
+back is how a caller ends up writing a file nothing loads.
+
+`--dump-defaults <dir>` is the other direction: it extracts the **embedded** tree at an arbitrary path,
+which is how a customized file is diffed against the shipped one.
+
+## `revmux stats` — what past rounds actually produced
+
+```bash
+revmux stats                    # every task under the tasks root
+revmux stats --task pr-123      # one task
+```
+
+Aggregates the rounds revmux already archived and prints the result as JSON on stdout. It runs no
+pipeline, spawns nothing and writes nothing, so it is always safe to call. An empty tasks root is a
+valid empty document rather than an error; a `--task` naming no task under the root exits `2`.
+
+```json
+{"tasks": [{"id": "pr-123", "rounds": 5,
+            "agents": [{"name": "bugs+impl", "raised": 8, "survived": 8, "corroborated": 5,
+                        "degraded_rounds": 0, "retries": 0, "tokens": 10441185}],
+            "lenses": [{"name": "bugs", "raised": 14, "ambiguous": 3,
+                        "verdicts": {"confirmed": 4, "refined": 6, "unverified": 4}}],
+            "stages": [{"name": "synthesis", "in": 62, "out": 46},
+                       {"name": "verify", "in": 46, "out": 46},
+                       {"name": "report", "in": 46, "out": 46}]}],
+ "totals": {"rounds": 5, "agents": [], "lenses": [], "stages": []}}
+```
+
+`totals` is every task folded together and carries no `id`.
+
+**Per agent** — `raised` is what it put on the table in `stages/1-found.json`; `survived` is what was
+still there in the round's last stage snapshot, counted across all four of that report's arrays;
+`corroborated` is the survived subset another agent independently reached. These are exact: revmux
+stamps `sources` from the process that emitted the finding, so no model supplied them.
+
+**Per lens** — `raised` is stage 1 only, since after synthesis a finding's `lenses` is a union across
+merged findings from different agents. `ambiguous` is the subset attributable only by the raising
+agent's whole lens set, which is what the find stage falls back to when the model named no valid lens.
+**A per-lens number is only as good as its `ambiguous` share, so quote the two together.** `verdicts`
+counts survivors, so a finding the verifier rejected is in neither — rejection shows up as the gap
+between `raised` and the verdict total, and `immaterial` in the map is the separate "real, not worth
+fixing" signal.
+
+**Per stage** — `in` and `out` for `synthesis`, `verify` and `report`, each the union of that report's
+four finding arrays. `report` carries the `--min-confidence` attrition. There is no `find` entry:
+nothing goes into it.
+
+`rounds` is the rounds the numbers were read from. A round prepared but never run is not one, and
+neither is one an interrupted run left half-written — those are skipped rather than counted at zero.
+
+`degraded_rounds` and `retries` come out zero on a healthy corpus, and zero means supervision never had
+to intervene. It is an absence, not a finding, and nothing should be inferred from it.
 
 ## Environment
 

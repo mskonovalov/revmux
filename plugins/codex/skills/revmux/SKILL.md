@@ -1,6 +1,6 @@
 ---
 name: revmux
-description: Run a supervised multi-agent code review by composing a task directory and driving the revmux CLI, then report or act on the findings it returns. revmux spawns and watches parallel claude and codex subprocesses with stall detection, retry, per-agent progress and a full run archive; this skill is the caller that writes the review context, launches it, reads the JSON back, and re-runs it after fixes. Also answers questions about revmux itself — profiles, lenses, task directories, flags, the JSON shape, exit codes and the run archive. Activates on "revmux", "run revmux", "multi-agent review", "supervised review", "review with revmux", "revmux this branch", "revmux the last commit", "run a revmux round", "re-review after fixes", "revmux profiles", "revmux lenses", "what does revmux return", "revmux exit codes", "revmux task directory".
+description: Run a supervised multi-agent code review by composing a task directory and driving the revmux CLI, then report or act on the findings it returns. revmux spawns and watches parallel claude and codex subprocesses with stall detection, retry, per-agent progress and a full run archive; this skill is the caller that writes the review context, launches it, reads the JSON back, and re-runs it after fixes. It also has a self mode that reads what past rounds produced and proposes tuning changes to the local profiles, lenses and knobs, one suggestion at a time with the numbers behind it. Also answers questions about revmux itself — profiles, lenses, task directories, flags, the JSON shape, exit codes and the run archive. Activates on "revmux", "run revmux", "multi-agent review", "supervised review", "review with revmux", "revmux this branch", "revmux the last commit", "run a revmux round", "re-review after fixes", "revmux self", "self-improve revmux", "tune revmux", "revmux profiles", "revmux lenses", "what does revmux return", "revmux exit codes", "revmux task directory".
 argument-hint: 'optional: what to review, plus "focused" / "final" / "lenses a,b"'
 allowed-tools: [Bash, Read, Edit, Write, Grep, Glob]
 ---
@@ -39,8 +39,8 @@ ln -s "$PWD/plugins/codex/skills/revmux" ~/.codex/skills/revmux
 
 ## Asking the user
 
-Two decision points need a choice: an ambiguous scope, and headless versus overlay. Codex has no
-structured question tool — present a numbered list and ask for a number:
+Three decision points need a choice: an ambiguous scope, headless versus overlay, and each self-mode
+suggestion. Codex has no structured question tool — present a numbered list and ask for a number:
 
 ```
 Which scope?
@@ -56,6 +56,7 @@ Before applying fixes, write the plan inline as markdown and ask for explicit co
 - "multi-agent review", "supervised review", "parallel agent review"
 - "revmux this branch", "revmux the last commit", "revmux the uncommitted changes"
 - "another revmux round", "re-review after fixes"
+- "revmux self", "self-improve revmux", "tune revmux" — the self mode below, which reviews nothing
 - questions: "revmux profiles", "what lenses are there", "revmux exit codes"
 
 ## Answering questions without running anything
@@ -362,6 +363,96 @@ The archive is the round directory `revmux new` reported, beside the `input/` it
 | what was this agent asked? | `prompts/agents/<name>.md` |
 | which lens text, from which layer? | `manifest.json` |
 
+## Self mode — tune the configuration from the record
+
+Triggered by "revmux self", "self-improve revmux", "tune revmux". **It reviews nothing**: no round is
+opened, no agent is spawned, and the code in the working directory is never read. It reads what past
+rounds produced and proposes changes to the review configuration itself.
+
+### Step S1: Read the two sources
+
+```bash
+revmux stats  > /tmp/revmux-stats.json     # the evidence: what each agent and lens actually produced
+revmux config > /tmp/revmux-config.json    # what resolved, so a proposal edits the file in force
+```
+
+Both are read-only, run no pipeline and return immediately. `references/invocation.md` has each shape.
+
+**Propose against `revmux config`, never against the shipped defaults.** A user with his own
+`comprehensive.md` runs a roster this skill has never seen, and a suggestion phrased against the
+embedded one edits a profile that is not the one running.
+
+`revmux stats --task <id>` narrows to a single task. Use the whole corpus unless the user named one —
+narrowing a thin sample makes it thinner.
+
+### Step S2: Decide where a change would be written
+
+**`./.revmux/` and nowhere else.** Never `~/.config/revmux/`, which is the user's cross-project layer
+and not this project's to edit. Never the embedded tree, which is inside the binary.
+
+If `.paths.project_dir` from `revmux config` holds no prompt tree yet, materialize one first:
+
+```bash
+revmux init
+```
+
+It writes `./.revmux/` with every prompt file as it currently **resolves**, so a user-layer override is
+what gets copied down and editing the result changes what already runs rather than reverting it to the
+shipped text. It creates nothing that is already there and prints every path as JSON. **Edit only the
+paths it printed** — never compose one.
+
+When `.revmux/` is tracked in git, which is the usual arrangement since only `.revmux/tasks/` needs
+ignoring, `git checkout` reverts an edit the user regrets. Say so if he hesitates over one.
+
+### Step S3: Read the numbers honestly
+
+**A counter that is zero across the whole corpus is nothing to say, not a finding.** `degraded_rounds`
+and `retries` at zero everywhere means supervision never had to intervene — the timeouts are working,
+not unvalidated. Do not manufacture advice from an empty set: on a healthy corpus those two are
+uniformly zero and the knob candidate simply does not fire.
+
+**Per-agent numbers are structurally sound; per-lens numbers are not.** revmux stamps `sources` from
+the process that emitted the finding, so `raised`, `survived` and `corroborated` per agent are exact.
+A finding's `lenses` is model-supplied and falls back to the agent's whole lens set when the model
+named none — which is what `ambiguous` counts. **Quote `ambiguous` beside every per-lens number, in
+the suggestion itself**: "bugs raised 14, 3 of them ambiguous". A lens whose `ambiguous` share is a
+large fraction of its `raised` cannot carry a suggestion on its own; report the number and propose
+nothing.
+
+**`raised` is stage 1, the verdict map is survivors.** A finding the verifier rejected is dropped and
+appears in neither, so rejection shows up as the gap between a lens's `raised` and its verdict total.
+`immaterial` in that map is the other signal — real, and judged not worth fixing.
+
+**Say the sample size.** Five rounds of one task on one codebase is a sample, not a trend, and the
+user weighs it.
+
+### Step S4: Build the candidates
+
+| candidate | evidence | the change |
+|---|---|---|
+| drop or keep an agent | `raised` high, `survived` near zero, `corroborated` zero — it produces nothing that lasts | remove the entry from the `agents:` list in `.revmux/prompts/profiles/<name>.md`, or keep it and say why |
+| split a lens pair | one agent carrying two lenses, both raising, its `corroborated` near zero | one agent per lens in that roster — two processes can corroborate, one cannot |
+| create a profile | the roster or `--lenses` set actually used matches nothing in `.profiles[]` | a new `.revmux/prompts/profiles/<name>.md` with that roster and its own `description:` |
+| retune a knob | `retries` or `degraded_rounds` non-zero — an agent is being killed and relaunched | `idle-timeout` or `hard-timeout` in `.revmux/config`, with the counter as the reason |
+| rewrite a lens | `raised` far above its verdict total, or `immaterial` dominating that map | an edit to `.revmux/lenses/<name>.md`, shown as a diff before it is applied |
+
+**A candidate with no number behind it is not a candidate.** If nothing fires, say the corpus supports
+no change and stop. That is a real answer, and inventing one from an empty set is worse than silence.
+
+### Step S5: Present one at a time
+
+**One suggestion, not a list and not a ranked table of five.** Each one is three things:
+
+1. **what to change** — the file, at the path `revmux init` printed, and the edit in concrete terms
+2. **the evidence** — the actual numbers from `revmux stats`, `ambiguous` beside any per-lens one
+3. **why it follows** — the step from the number to the change, stated so the user can reject the step
+   rather than only the conclusion
+
+Put the choice as a numbered list — 1. apply it, 2. skip it, 3. stop here — and wait for the number.
+
+Then act on the answer and move to the next candidate. Stop when the user says stop or the candidates
+run out. Never batch the edits, and never apply one that was not asked about.
+
 ## Example sessions
 
 ```
@@ -398,4 +489,15 @@ User: "revmux the branch, I want to watch it"
 ```
 User: "what lenses does revmux have?"
 → no run; `revmux config`, report .lenses[] with descriptions
+```
+
+```
+User: "revmux self"
+→ revmux stats → 1 task, 5 rounds; revmux config → comprehensive, roster of 4
+→ degraded_rounds 0 and retries 0 on every agent → no knob candidate; say so, invent nothing
+→ candidate: quality raised 4, 2 of them ambiguous, verdicts 1 confirmed / 1 refined / 1 immaterial
+   → half the attribution is a fallback; report the numbers, propose no rewrite
+→ candidate: arch+quality raised 10, survived 9, corroborated 4 across 5 rounds → it earns its slot
+→ .revmux/ has no prompt tree → revmux init, then edit only the paths it printed
+→ one numbered list per candidate, apply / skip / stop
 ```
