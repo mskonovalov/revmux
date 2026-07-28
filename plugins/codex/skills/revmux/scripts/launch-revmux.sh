@@ -179,11 +179,15 @@ print_report_and_exit() {
     # failures are 1. Passing it on would tell a caller a review that never started found nothing, or
     # found things it then cannot parse, and both are codes it is told never to retry.
     #
-    # The qualifier is load-bearing: --help, --init and --dump-defaults all write to stderr and return 0
-    # with stdout untouched, so they land here legitimately. This script takes `[any other revmux flag]`
-    # and so can be handed one, and re-coding it says the launcher failed when revmux did the work. That
-    # is the inverse error, and it is accepted only because none of the three is a review - there is no
-    # report to lose, and their own output already reached the terminal.
+    # The qualifier is load-bearing: --help and --dump-defaults write to stderr and return 0 with stdout
+    # untouched, so they land here legitimately. This script takes `[any other revmux flag]` and so can be
+    # handed one, and re-coding it says the launcher failed when revmux did the work. That is the inverse
+    # error, and it is accepted only because neither is a review - there is no report to lose, and their
+    # own output already reached the terminal.
+    #
+    # --init is not one of them: it materializes ./.revmux/ and prints the paths as JSON on stdout, so it
+    # is returned by the report branch above with its own exit code and never reaches this one. The test
+    # for a new flag is therefore what it writes to stdout, not whether it runs a review.
     if [ "$rc" = "0" ] || [ "$rc" = "1" ]; then
         rc=$RC_LAUNCH_FAIL
     fi

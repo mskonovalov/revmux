@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -608,6 +609,26 @@ func TestOptions_dumpDefaults(t *testing.T) {
 		err := options{DumpDefaults: filepath.Join(blocked, "out")}.dumpDefaults(&strings.Builder{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "dump defaults")
+	})
+
+	// --init writes what resolved; this one stays the escape hatch for the shipped text, which is the only
+	// way a customized lens can be diffed against it
+	t.Run("a project override does not change what is extracted", func(t *testing.T) {
+		proj := isolate(t)
+		mine := filepath.Join(proj, projectDirName, "lenses", "bugs.md")
+		require.NoError(t, os.MkdirAll(filepath.Dir(mine), 0o750))
+		require.NoError(t, os.WriteFile(mine, []byte("---\ndescription: mine\n---\nonly crashes\n"), 0o600))
+
+		dumped := filepath.Join(proj, "dumped")
+		o, err := parseArgs([]string{"--dump-defaults", dumped})
+		require.NoError(t, err)
+		r := newRunOpts(t, o)
+		require.Equal(t, 0, run(r.opts()))
+
+		embedded, err := fs.ReadFile(prompt.Defaults(), "lenses/bugs.md")
+		require.NoError(t, err)
+		assert.Equal(t, string(embedded), readFile(t, filepath.Join(dumped, "lenses", "bugs.md")))
+		assert.Empty(t, r.stdout.String(), "only --init reports a payload; this one narrates on stderr")
 	})
 }
 

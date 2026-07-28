@@ -66,7 +66,7 @@ type options struct {
 	Profile      string        `long:"profile" ini-name:"profile" default:"comprehensive" description:"profile naming the roster to run"`
 
 	ConfigDir    string `long:"config-dir" no-ini:"true" description:"directory holding the config file and the prompt tree"`
-	Init         bool   `long:"init" no-ini:"true" description:"write the commented-out config template to ./.revmux/"`
+	Init         bool   `long:"init" no-ini:"true" description:"materialize the resolved config and prompt tree into ./.revmux/"`
 	DumpDefaults string `long:"dump-defaults" no-ini:"true" description:"extract the embedded prompt tree into a directory"`
 	Version      bool   `long:"version" no-ini:"true" description:"show version and exit"`
 

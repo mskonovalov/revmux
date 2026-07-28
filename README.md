@@ -334,9 +334,11 @@ so an invocation that stays outside never picks up the reviewed repository's own
     └── quality.md  docs.md  tests.md  adversarial.md
 ```
 
-`--config-dir` relocates the user layer. `--init` writes the commented-out config template to `./.revmux/`,
-and `--dump-defaults <dir>` extracts the embedded prompt tree; neither overwrites a file you have customized,
-and a normal run writes no config at all.
+`--config-dir` relocates the user layer. `--init` — the flag spelling of `revmux init`, same implementation —
+materializes `./.revmux/`: the commented-out config template plus whatever each prompt file actually resolved
+to, with the paths printed as JSON on stdout. `--dump-defaults <dir>` extracts the **embedded** prompt tree
+instead, which is how a customized file is diffed against the shipped one. Neither overwrites a file you have
+customized, and a normal run writes no config at all.
 
 Paths resolve against the **process working directory** — the project config layer, and `--tasks-dir`'s
 `./.revmux/tasks` default. `--workdir` is separate: it sets where the subprocesses run and what `{{WORKDIR}}`
@@ -430,7 +432,7 @@ A prompt file naming anything else fails at load, which is what makes a typo lou
 | `--markdown` | | write the report as markdown instead of JSON |
 | `--preserve-anthropic-api-key` | | pass `ANTHROPIC_API_KEY` to the model CLIs |
 | `--config-dir=<dir>` | `~/.config/revmux` | directory holding the config file and the prompt tree |
-| `--init` | | write the commented-out config template to `./.revmux/` |
+| `--init` | | materialize the resolved config and prompt tree into `./.revmux/` |
 | `--dump-defaults=<dir>` | | extract the embedded prompt tree into a directory |
 | `--version` | | show version and exit |
 

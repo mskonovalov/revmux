@@ -402,9 +402,20 @@ Do not reintroduce a delete to bound growth. Growth is bounded by the user.
 
 ### Config-management flags
 
-- `--init` materializes `./.revmux/` with the config commented out, ready to customize.
-- `--dump-defaults <dir>` extracts the embedded prompt tree for comparison or as a starting point for overrides.
+- `--init` materializes `./.revmux/` with the config commented out and every prompt file as it **resolved**,
+  ready to customize, and prints the paths as JSON on stdout.
+- `--dump-defaults <dir>` extracts the **embedded** prompt tree for comparison or as a starting point for overrides.
 - Neither ever overwrites a file the user has customized.
+
+**`--init` and `revmux init` are one implementation, not two spellings that each materialize a tree.**
+The flag routes into `runOpts.writeInitPaths` exactly as the subcommand does, so what the two write cannot
+diverge — and it is the flag, not the subcommand, that a launcher script is handed as "any other revmux flag".
+
+**Which layer each one reads is the whole difference between them, and it must stay that way.**
+`--init` writes what resolved, so a user with an overridden lens gets his own text and a tree that loads with
+no fallback under it; `--dump-defaults` writes the embedded bytes at an arbitrary path, which is the only way
+to diff a customized lens against the shipped one. Pointing either at the other's layer removes the one thing
+it is for.
 
 **Those two are the only things that write config, and a normal run writes none of it.**
 Loading never installs defaults into `~/.config/revmux/` as a side effect: the embedded copy is already the

@@ -262,9 +262,11 @@ per file. Overriding one lens does not orphan the others, and deleting an overri
 embedded copy rather than disabling the lens. To actually drop a lens, remove it from the profile
 roster.
 
-`--init` writes the commented-out config template to `./.revmux/`. `--dump-defaults <dir>` extracts
-the embedded prompt tree so it can be edited. Neither overwrites a customized file, and a normal run
-writes no config at all.
+`--init`, and the identical `revmux init`, materialize `./.revmux/`: the commented-out config template
+plus every prompt file as it **resolved**, with the paths printed as JSON on stdout.
+`--dump-defaults <dir>` extracts the **embedded** prompt tree at an arbitrary path instead, which is how
+a customized file is diffed against the shipped one. Neither overwrites a customized file, and a normal
+run writes no config at all.
 
 ## `revmux config` — ask rather than guess
 
@@ -345,7 +347,7 @@ each process group down itself rather than leaving model CLIs running unsupervis
 | `--markdown` | | write the report as markdown instead of JSON |
 | `--preserve-anthropic-api-key` | | pass `ANTHROPIC_API_KEY` to the model CLIs |
 | `--config-dir=<dir>` | `~/.config/revmux` | directory holding the config file and the prompt tree |
-| `--init` | | write the commented-out config template to `./.revmux/` |
+| `--init` | | materialize the resolved config and prompt tree into `./.revmux/` |
 | `--dump-defaults=<dir>` | | extract the embedded prompt tree into a directory |
 | `--version` | | show version and exit |
 

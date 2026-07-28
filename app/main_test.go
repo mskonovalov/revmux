@@ -82,13 +82,18 @@ func TestRun_metaCommands(t *testing.T) {
 		assert.Empty(t, r.stderr.String())
 	})
 
-	t.Run("init writes the template and says so on stderr", func(t *testing.T) {
+	t.Run("init materializes the tree and reports it on stdout", func(t *testing.T) {
 		dir := isolate(t)
 		r := newRunOpts(t, options{Init: true})
 		assert.Equal(t, 0, run(r.opts()))
 		assert.FileExists(t, filepath.Join(dir, projectDirName, configFileName))
-		assert.Empty(t, r.stdout.String(), "stdout carries the report and nothing else")
-		assert.Contains(t, r.stderr.String(), "wrote")
+		assert.FileExists(t, filepath.Join(dir, projectDirName, "lenses", "bugs.md"))
+		assert.Empty(t, r.stderr.String(), "the paths are the whole output")
+
+		var p initPaths
+		require.NoError(t, json.Unmarshal([]byte(r.stdout.String()), &p))
+		assert.Equal(t, filepath.Join(dir, projectDirName), p.Dir)
+		assert.NotEmpty(t, p.Files)
 	})
 
 	t.Run("dump-defaults extracts the tree", func(t *testing.T) {

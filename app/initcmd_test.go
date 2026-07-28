@@ -199,14 +199,48 @@ func TestRun_init(t *testing.T) {
 	})
 }
 
+// --init is the flag spelling of the subcommand and shares its implementation, so what it writes and what
+// it reports both have to be the subcommand's own.
+func TestRun_initFlag(t *testing.T) {
+	t.Run("the flag materializes exactly what the subcommand does", func(t *testing.T) {
+		byFlag, byCommand := materialized(t, "--init"), materialized(t, "init")
+		assert.Equal(t, byCommand, byFlag, "two materializations of one tree would drift")
+		assert.Contains(t, byFlag, "lenses/bugs.md", "the prompt tree, not the settings template alone")
+		assert.Equal(t, string(defaultConfig), byFlag[configFileName])
+	})
+
+	t.Run("the payload is JSON on stdout with nothing on stderr", func(t *testing.T) {
+		dir := isolate(t)
+		p, r := runInit(t, "--init")
+
+		assert.Empty(t, r.stderr.String(), "the prose --init used to print landed on stderr; the payload does not")
+		assert.Contains(t, r.stdout.String(), "\n  \"dir\"")
+		assert.Equal(t, filepath.Join(dir, projectDirName), p.Dir)
+		assert.Equal(t, filepath.Join(p.Dir, configFileName), p.Config)
+
+		require.NotEmpty(t, p.Files)
+		for _, f := range p.Files {
+			assert.True(t, f.Created, f.Path)
+			assert.Equal(t, prompt.LayerEmbedded, f.Layer, f.Path)
+		}
+	})
+}
+
 // initialize runs `revmux init` through the parser rather than a hand-built options value, so the
 // project layer is whatever is on disk at the moment of the call — which is what makes a second run
 // resolve from the tree the first one wrote.
 func initialize(t *testing.T, args ...string) (initPaths, *runHarness) {
 	t.Helper()
-	o, err := parseArgs(append(args, "init"))
+	return runInit(t, append(args, "init")...)
+}
+
+// runInit drives one materialization end to end. Both spellings go through it, so the test asserting they
+// agree cannot pass by exercising two harnesses that differ.
+func runInit(t *testing.T, args ...string) (initPaths, *runHarness) {
+	t.Helper()
+	o, err := parseArgs(args)
 	require.NoError(t, err)
-	require.True(t, o.showInit)
+	require.True(t, o.showInit || o.Init, "neither spelling of init was selected by %v", args)
 
 	r := newRunOpts(t, o)
 	require.Equal(t, 0, run(r.opts()))
@@ -215,6 +249,27 @@ func initialize(t *testing.T, args ...string) (initPaths, *runHarness) {
 	var p initPaths
 	require.NoError(t, json.Unmarshal([]byte(r.stdout.String()), &p), "the caller model parses this")
 	return p, r
+}
+
+// materialized runs init in its own isolated project and returns the tree it left, keyed by the path
+// relative to ./.revmux/ so two runs in two temp directories compare by content rather than by location.
+func materialized(t *testing.T, args ...string) map[string]string {
+	t.Helper()
+	dir := isolate(t)
+	runInit(t, args...)
+
+	root := filepath.Join(dir, projectDirName)
+	out := map[string]string{}
+	for _, rel := range treeOf(t, root) {
+		path := filepath.Join(root, rel)
+		fi, err := os.Stat(path)
+		require.NoError(t, err)
+		if fi.IsDir() {
+			continue
+		}
+		out[filepath.ToSlash(rel)] = readFile(t, path)
+	}
+	return out
 }
 
 func filesByPath(files []initFile) map[string]initFile {

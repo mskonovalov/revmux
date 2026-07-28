@@ -354,13 +354,13 @@ Exports (justification per item: who outside the package calls this?):
 - Modify: `.claude-plugin/skills/revmux/scripts/launch-revmux.sh`
 - Modify: `plugins/codex/skills/revmux/scripts/launch-revmux.sh`
 
-- [ ] make `--init` take the same path as `revmux init`, so there is one materialization implementation rather than two that can drift
-- [ ] leave `--dump-defaults` unchanged — it stays the escape hatch for embedded text at an arbitrary path, which is how a customized lens is diffed against the shipped one
-- [ ] update the `--init` flag description (`app/config.go:69`), `README.md:337` and `:433`, and `.claude/rules/config.md:405`: it now materializes the whole tree and prints JSON on **stdout**
-- [ ] update `references/invocation.md:265` and `:348` in **both** trees, and the comment at `scripts/launch-revmux.sh:182` in **both** trees — that comment states `--init` writes to stderr with stdout untouched, and it is load-bearing for the empty-report branch that re-codes exit 0 to `RC_LAUNCH_FAIL`
-- [ ] write a test asserting `--init` and `revmux init` produce identical files, and one asserting `--init` writes JSON to stdout and nothing to stderr
-- [ ] write a test asserting `--dump-defaults` still writes embedded bytes even when a project override exists
-- [ ] run `make check-plugins` and tests - must pass before next task
+- [x] make `--init` take the same path as `revmux init`, so there is one materialization implementation rather than two that can drift
+- [x] leave `--dump-defaults` unchanged — it stays the escape hatch for embedded text at an arbitrary path, which is how a customized lens is diffed against the shipped one
+- [x] update the `--init` flag description (`app/config.go:69`), `README.md:337` and `:433`, and `.claude/rules/config.md:405`: it now materializes the whole tree and prints JSON on **stdout**
+- [x] update `references/invocation.md:265` and `:348` in **both** trees, and the comment at `scripts/launch-revmux.sh:182` in **both** trees — that comment states `--init` writes to stderr with stdout untouched, and it is load-bearing for the empty-report branch that re-codes exit 0 to `RC_LAUNCH_FAIL`
+- [x] write a test asserting `--init` and `revmux init` produce identical files, and one asserting `--init` writes JSON to stdout and nothing to stderr
+- [x] write a test asserting `--dump-defaults` still writes embedded bytes even when a project override exists
+- [x] run `make check-plugins` and tests - must pass before next task
 
 ### Task 6: Read one round's numbers in app/archive
 

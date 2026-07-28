@@ -64,8 +64,10 @@ func run(o runOpts) int {
 			return o.fail(err)
 		}
 		return 0
-	case o.opts.Init:
-		if err := o.opts.initConfig(o.stderr); err != nil {
+	// --init is the flag spelling of `revmux init` and shares its implementation: two materializations of
+	// one tree would drift, and the one that drifted would be the one nobody re-read
+	case o.opts.Init || o.opts.showInit:
+		if err := o.writeInitPaths(); err != nil {
 			return o.fail(err)
 		}
 		return 0
@@ -81,11 +83,6 @@ func run(o runOpts) int {
 		return 0
 	case o.opts.showNew:
 		if err := o.writeTaskPaths(); err != nil {
-			return o.fail(err)
-		}
-		return 0
-	case o.opts.showInit:
-		if err := o.writeInitPaths(); err != nil {
 			return o.fail(err)
 		}
 		return 0
