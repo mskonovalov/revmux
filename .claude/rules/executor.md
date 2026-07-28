@@ -213,6 +213,18 @@ Codex is a peer executor, not a special case in the pipeline — but the executo
   nothing else, the file is found by globbing `~/.codex/sessions/*/*/*/rollout-*-<id>.jsonl`, and the tail
   outlives the process so the last reasoning step and the answer are not lost.
   Never parse stderr prose for activity — that is what the rollout exists to spare.
+- **The glob repeats on every pass; a single look at the banner is a race, and it loses.**
+  Codex prints `session id:` *before* it creates the rollout — measured at 32ms between the two — so the
+  tail is asked for a file that is not there yet. Returning at that first miss made a codex source silent
+  for an entire eleven-minute review while its rollout filled beside it with 28 reasoning records and 12
+  tool calls, and one silent source is indistinguishable from a codex that never worked.
+  The tail therefore keeps looking until the run's context ends. Nothing is lost by finding the file a
+  poll interval late: the read starts at offset zero, so the records written before it was found are
+  still reported.
+  A test for this must assert the tail has **not** returned before the file is created. Asserting only
+  that the records eventually arrive races the test's own write against the tail's first glob, and a
+  single-glob tail passes whenever the write wins — which is most of the time. That test was written
+  that way first and let the reverted code through.
 - **Take reasoning from `response_item`/`reasoning` only.**
   Codex writes an `event_msg`/`agent_reasoning` record for the same step as well, so handling both reports
   every step twice. Only the first line of a summary is used: some versions append a whole paragraph after

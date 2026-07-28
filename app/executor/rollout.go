@@ -88,16 +88,40 @@ func (c *Codex) codexHome() string {
 // review. Its stderr carries the reasoning as prose, but parsing prose is what the rollout exists to
 // spare us; stderr is read for the session id and nothing else.
 //
+// **The file is looked for on every pass, not once at the start, and that is not a refinement.** Codex
+// prints the session id before it creates the rollout — measured at 32ms between the two — so a single
+// glob at the banner loses a race it has no reason to win, and losing it once silenced a codex source
+// for a whole eleven-minute review while the file beside it filled with 28 reasoning records. Giving up
+// there is indistinguishable from a codex that never worked. Nothing is lost by finding it late either:
+// the read starts at offset zero, so a file discovered a poll interval in is still read from its first
+// record.
+//
 // Blocks until ctx is done, so the caller runs it in its own goroutine and cancels it once the process
 // has exited AND flushed its last record.
 func (c *Codex) tailRollout(ctx context.Context, sessionID string, sink EventSink, touch func()) {
-	path := c.rolloutPath(sessionID)
-	if path == "" {
-		return // no rollout to follow; the run still works, it is just quiet
-	}
-
-	var offset int64
+	var (
+		path   string
+		offset int64
+	)
 	for {
+		if path == "" {
+			path = c.rolloutPath(sessionID)
+		}
+		if path == "" {
+			// nothing to read yet, but the run may still be about to create it
+			select {
+			case <-ctx.Done():
+				// one last look, for the same reason the read below takes one: a short run can create
+				// the rollout and be over inside a single interval
+				if path = c.rolloutPath(sessionID); path != "" {
+					c.readRollout(path, 0, sink)
+				}
+				return
+			case <-time.After(rolloutPollInterval):
+				continue
+			}
+		}
+
 		// **liveness is the file advancing, not a record that happens to render.** Touching from the
 		// sink instead ties the watchdog to the display filter: a tool call, a function_call_output, an
 		// event_msg or a reasoning record with an empty summary all move the file without producing an

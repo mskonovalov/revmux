@@ -158,18 +158,67 @@ func TestCodex_readRollout(t *testing.T) {
 }
 
 func TestCodex_tailRollout(t *testing.T) {
-	t.Run("an unknown session finds no file and returns", func(t *testing.T) {
+	t.Run("an unknown session reports nothing and stops when the run does", func(t *testing.T) {
 		c := NewCodex(nil, Opts{})
+		sink := &recordSink{}
+		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			c.tailRollout(context.Background(), "no-such-session-id", &recordSink{}, nil)
+			c.tailRollout(ctx, "no-such-session-id", sink, nil)
 		}()
+		cancel()
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
-			t.Fatal("a session with no rollout must return rather than poll forever")
+			t.Fatal("the tail must end with the run rather than outlive it")
 		}
+		assert.Empty(t, sink.all(), "a session with no rollout reports nothing at all")
+	})
+
+	// codex prints the session id before it creates the rollout, so the file is not there for the first
+	// glob. Giving up at that one look silenced a real codex source for a whole review while its rollout
+	// filled beside it, which is why the tail keeps looking rather than returning.
+	t.Run("a rollout created after the tail starts is still picked up, from its first record", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("CODEX_HOME", home)
+		id := "019fa762-cebb-7703-a1f6-c1d1832b3bef"
+		dir := filepath.Join(home, "sessions", "2026", "07", "28")
+		require.NoError(t, os.MkdirAll(dir, 0o750))
+
+		c := NewCodex(nil, Opts{})
+		require.Empty(t, c.rolloutPath(id), "the file must be absent when the tail starts, or this proves nothing")
+
+		sink := &recordSink{}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			c.tailRollout(ctx, id, sink, nil)
+		}()
+
+		// **this is the assertion that catches a tail giving up at its first look, and it has to come
+		// before the file is written.** Asserting only that the records arrive races the goroutine's
+		// first glob against this test's own write: a tail that returns immediately still passes
+		// whenever the write wins, which is most of the time. Waiting on the tail NOT returning is the
+		// half that cannot be won by luck — a single-glob tail is finished within microseconds here.
+		select {
+		case <-done:
+			t.Fatal("the tail gave up at its first look instead of waiting for a file codex had not created yet")
+		case <-time.After(2 * rolloutPollInterval):
+		}
+
+		body := `{"type":"response_item","payload":{"type":"reasoning","summary":[{"text":"**First**"}]}}` + "\n" +
+			`{"type":"response_item","payload":{"type":"reasoning","summary":[{"text":"**Second**"}]}}` + "\n"
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "rollout-2026-07-28T01-21-38-"+id+".jsonl"), []byte(body), 0o600))
+
+		require.Eventually(t, func() bool { return len(sink.all()) == 2 }, 5*time.Second, 20*time.Millisecond,
+			"both records must be reported, and from offset zero rather than from wherever the file was found")
+		cancel()
+		<-done
+		assert.Equal(t, "First", sink.all()[0].Text, "the record written before the file was found is not skipped")
+		assert.Equal(t, "Second", sink.all()[1].Text)
 	})
 
 	t.Run("an empty id never globs", func(t *testing.T) {
