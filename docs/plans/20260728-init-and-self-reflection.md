@@ -547,14 +547,71 @@ Exports (justification per item: who outside the package calls this?):
 
 ### Task 10: Verify acceptance criteria
 
-- [ ] verify `revmux init` with a `~/.config/revmux/` override materializes the override, not embedded text, and that `prompt.Load` over the result succeeds
-- [ ] verify `revmux init` twice in a row changes nothing the second time
-- [ ] verify `revmux stats` against the real `./.revmux/tasks/` produces numbers consistent with those rounds' reports, spot-checked by hand against round `03-followups` (26 found → 10+7 synthesized → 9+8 verified)
-- [ ] verify the reliability counters read zero on the current corpus and that this reads as absence rather than as a finding
-- [ ] verify `revmux config` and `revmux stats` report the same task set
-- [ ] run full test suite: `make test`
-- [ ] run `make check-plugins` and `golangci-lint run --max-issues-per-linter=0 --max-same-issues=0`
-- [ ] verify test coverage meets the project standard (80%+ excluding mocks)
+- [x] verify `revmux init` with a `~/.config/revmux/` override materializes the override, not embedded text, and that `prompt.Load` over the result succeeds
+- [x] verify `revmux init` twice in a row changes nothing the second time
+- [x] verify `revmux stats` against the real `./.revmux/tasks/` produces numbers consistent with those rounds' reports, spot-checked by hand against round `03-followups` (26 found → 10+7 synthesized → 9+8 verified)
+- [x] verify the reliability counters read zero on the current corpus and that this reads as absence rather than as a finding
+- [x] verify `revmux config` and `revmux stats` report the same task set
+- [x] run full test suite: `make test`
+- [x] run `make check-plugins` and `golangci-lint run --max-issues-per-linter=0 --max-same-issues=0`
+- [x] verify test coverage meets the project standard (80%+ excluding mocks)
+
+**Verification results (observed, not asserted):**
+
+- **Override materialization.** A temp `HOME` carrying `~/.config/revmux/lenses/bugs.md` and
+  `prompts/profiles/focused.md` with added marker text: `revmux init` in a clean project dir wrote 12
+  prompt files plus `config`, reporting `layer: "user"` for exactly those two and `"embedded"` for the
+  other ten. Both materialized files are byte-identical to the user override (`diff` empty) and differ
+  from the embedded copy; `lenses/quality.md` is byte-identical to the embedded one. Nothing was written
+  outside `./.revmux/`, and the user config dir still held only the two seeded files.
+- **The materialized tree loads.** `revmux config` over the written tree with an empty `HOME` — so
+  `./.revmux/` is the only on-disk layer — exits `0` with all three profiles and all seven lenses
+  resolved, and reports the override's own `description:` for `bugs`. Negative control: stripping the
+  front matter from one materialized profile makes the same command exit `2` with
+  `load prompts: profile focused: roster is empty`, so the load check would catch a stripped write.
+- **Idempotence.** Second `revmux init`: all 13 files' SHA-256 hashes identical, `created=true` on 12/12
+  files in run 1 and 0/12 in run 2, `layer` correctly flipping to `project` once the files are local.
+  Exit `0`, zero bytes on stderr both times.
+- **Real-corpus stats, hand-checked.** Every number `revmux stats` reported over `.revmux/tasks/` was
+  recomputed independently with `jq` over the same artifacts and matched exactly:
+  - stage attrition — synthesis `62 → 46`, verify `46 → 46`, report `46 → 46`; per-round stage-1 totals
+    `17, 9, 26, 7, 3` (sum 62) and stage-2/3/report totals `14, 7, 17, 6, 2` (sum 46 each). Round
+    `03-followups` alone is the plan's calibration: 26 found → 10 findings + 7 pre-existing → 9 + 8.
+  - agents (raised / survived / corroborated / tokens) — `bugs+impl` 8/8/5/10441185,
+    `arch+quality` 10/9/4/6450453, `docs+tests` 10/10/4/13939683, `codex` 24/24/9/815048,
+    `bugs` 10/10/4/11598445.
+  - lenses (raised, ambiguous) — `bugs` 14/3, `impl` 7/3, `architecture` 8/2, `quality` 4/2, `docs` 8/1,
+    `tests` 3/1, `adversarial` 24/0. The pairing is self-consistent: ambiguity is only ever counted for a
+    multi-lens agent, so the three two-lens agents contribute 3, 2 and 1 findings to both of their lenses.
+  - verdict mix per lens matched entry for entry, including the empty-verdict → `unverified` mapping
+    (13 survivors carry `""`): `adversarial` confirmed 6 / refined 11 / immaterial 2 / pre_existing 2 /
+    unverified 3, `bugs` 4/6/-/-/4, `impl` 3/2/-/-/2, `architecture` 1/3/-/-/3, `docs` 4/2/-/-/2,
+    `quality` 1/1/1/-/-, `tests` 2/1.
+  - `git status --porcelain` byte-identical before and after, confirming `stats` is read-only.
+- **Reliability counters.** The corpus event histogram is 638 `agent_progress`, 466 `agent_activity`,
+  32 `agent_started`, 32 `agent_done`, 21 `agent_state`, 19 `findings`, 15 `stage` — and zero
+  `agent_retried`, `agent_degraded` and `rate_limit`, matching the plan's recorded reality exactly. Every
+  stage snapshot reports `degraded: []` with no agent flagged. `degraded_rounds` and `retries` are
+  therefore `0` for all five agents, and both fields are **present** in the JSON rather than omitted, so
+  the reading is a measured zero. Both `SKILL.md` trees carry the rule that a corpus-wide zero is nothing
+  to say rather than a finding.
+- **Same task set.** The real corpus has one task, so the check was repeated on a synthetic tasks root
+  covering `task.List`'s edge cases: a task that ran, a scaffolded-but-never-run task, a stray file, a
+  relative symlink aliasing a sibling task, and a symlink escaping the root. `config` and `stats` reported
+  the identical id set — `alias-relative`, `never-ran`, `ran-task` — with matching round counts
+  (`1, 0, 1`); the stray file and the escaping link appear in neither. `--task alias-relative` narrows to
+  that one task in `stats`, and a typo'd `--task rantask` exits `2` with `task rantask not found` rather
+  than reporting zeros.
+- **Gate.** `make test` green across all nine packages (`app` 89.5%, `archive` 93.2%, `executor` 94.8%,
+  `finding` 100%, `frontmatter` 100%, `pipeline` 97.6%, `prompt` 97.3%, `task` 90.5%, `ui` 98.8%),
+  total **94.9%** excluding mocks against the 80% standard. `make check-plugins` reports "plugin trees
+  agree", `golangci-lint run --max-issues-per-linter=0 --max-same-issues=0` reports `0 issues.`, and
+  `gofmt -s -l` lists no files.
+
+**[decision] No code changed.** Every check passed on the first real run; the one apparent discrepancy —
+`stats` reporting `rounds=0` where `config` reported a round — was traced to the hand-built fixture
+encoding `"scope"` as a string where `finding.Report.Scope` is a struct, so the round was correctly skipped
+as undecodable per Task 6's tolerant-decode rule. Corrected fixture, both commands agree.
 
 ### Task 11: [Final] Update documentation
 
