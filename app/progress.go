@@ -235,10 +235,16 @@ func (pr *progress) prefix(agent string) string {
 	return pr.paint(agent) + strings.Repeat(" ", max(0, width-lipgloss.Width(agent))) + "  "
 }
 
-// minNameWidth is the floor the column holds whatever the roster is called, so the names revmux derives
-// rather than reads fit beside a short one. The focused roster is `bugs` and `codex`, five cells wide,
-// while every stage banner and every `verify <group>` row is wider — without a floor those start to the
-// right of the agent lines and the closing summary returns to the shorter column.
+// minNameWidth is the floor the column holds whatever the roster is called, so the `verify <group>` rows
+// revmux derives fit beside a short one: the focused roster is `bugs` and `codex`, five cells wide, and
+// without a floor those rows start to the right of every agent line.
+//
+// Stage banners need no floor — one carries no agent, so prefix("") indents it to the column by
+// construction whatever the width is.
+//
+// The value covers `verify root`, the no-directories fallback, and a group named after a short
+// directory. A longer one still runs past it, which the nameWidth godoc records: raising the floor to
+// fit the longest possible name would indent every line of every run to pay for the rarest.
 const minNameWidth = len("verify root")
 
 // nameWidth is the widest name in the roster, floored so derived names fit, so every line's text starts

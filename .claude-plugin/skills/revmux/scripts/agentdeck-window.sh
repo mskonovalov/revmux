@@ -74,5 +74,7 @@ fi
 # no sentinel means the window died mid-review; that is a launcher failure, never revmux's exit 1
 _rm_rc="$RC_LAUNCH_FAIL"
 [ -f "$_rm_sentinel" ] && _rm_rc=$(read_rc "$_rm_sentinel")
-rm -f "$_rm_sentinel" "$_rm_sentinel".tmp "$_rm_sentinel".pid
+# `|| true` because the exit code is already read: this is tidying, and letting it abort here would
+# lose a report that is sitting in $REPORT_FILE with print_report_and_exit one line away
+rm -f "$_rm_sentinel" "$_rm_sentinel".tmp "$_rm_sentinel".pid || true
 print_report_and_exit "${_rm_rc:-$RC_LAUNCH_FAIL}"

@@ -234,6 +234,44 @@ func TestProgress_line_progressIsThrottled(t *testing.T) {
 	})
 }
 
+// the column is padded in display cells, and every ASCII name has as many cells as runes — so only a
+// name where the two differ can tell the two implementations apart. Without a case like this, reverting
+// nameWidth to len([]rune(...)) leaves the rest of this file green.
+func TestProgress_alignsByDisplayCellsNotRunes(t *testing.T) {
+	// textCol is the column a line's text starts at, measured the way a terminal measures it: the
+	// prefix carries color escapes, which occupy bytes and no cells.
+	textCol := func(t *testing.T, line, text string) int {
+		t.Helper()
+		at := strings.Index(line, text)
+		require.GreaterOrEqual(t, at, 0, "the line must carry its text")
+		return lipgloss.Width(line[:at])
+	}
+
+	tests := []struct {
+		name  string
+		agent string
+	}{
+		{"a CJK name is twice as many cells as runes", "数据审查代理"},
+		{"a combining mark is one cell across two runes", "éclair"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("COLUMNS", "200")
+			require.NotEqual(t, len([]rune(tc.agent)), lipgloss.Width(tc.agent),
+				"a name whose runes and cells agree cannot tell the two implementations apart")
+
+			pr := &progress{roster: []prompt.AgentSpec{{Name: tc.agent}}}
+			agentLine := pr.line(pipeline.Event{Kind: pipeline.EventAgentActivity, Agent: tc.agent,
+				Text: "tool: Read", At: progressAt})
+			stageLine := pr.line(pipeline.Event{Kind: pipeline.EventStage, Stage: "find", At: progressAt})
+
+			assert.Equal(t, textCol(t, stageLine, "── find ──"), textCol(t, agentLine, "tool: Read"),
+				"an agent line and an agentless one start at one column")
+		})
+	}
+}
+
 func TestProgress_clipsToTerminalWidth(t *testing.T) {
 	progRoster := []prompt.AgentSpec{{Name: "bugs", Color: "6"}}
 	// the other half of "display width belongs to the renderers". The TUI clips against a width

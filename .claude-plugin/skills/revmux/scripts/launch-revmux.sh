@@ -64,7 +64,7 @@ fi
 TMPBASE="${TMPDIR:-/tmp}"
 REPORT_FILE=$(mktemp "$TMPBASE/revmux-report-XXXXXX")
 STDERR_FILE=$(mktemp "$TMPBASE/revmux-stderr-XXXXXX")
-trap 'rm -f "$REPORT_FILE" "$STDERR_FILE"' EXIT
+trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" || true' EXIT
 
 # shell-quote a single argument for safe embedding in sh -c strings
 sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
@@ -170,10 +170,16 @@ print_report_and_exit() {
         exit "$rc"
     fi
 
-    # revmux writes the report before it returns 0 or 1, so neither code can reach here over an empty
-    # one - the status came from the backend the overlay was driven through, whose own failures are 1.
-    # Passing it on would tell a caller a review that never started found nothing, or found things it
-    # then cannot parse, and both are codes it is told never to retry.
+    # a revmux run OF A REVIEW writes its report before returning 0 or 1, so neither code can reach here
+    # over an empty one - the status came from the backend the overlay was driven through, whose own
+    # failures are 1. Passing it on would tell a caller a review that never started found nothing, or
+    # found things it then cannot parse, and both are codes it is told never to retry.
+    #
+    # The qualifier is load-bearing: --help, --init and --dump-defaults all write to stderr and return 0
+    # with stdout untouched, so they land here legitimately. This script takes `[any other revmux flag]`
+    # and so can be handed one, and re-coding it says the launcher failed when revmux did the work. That
+    # is the inverse error, and it is accepted only because none of the three is a review - there is no
+    # report to lose, and their own output already reached the terminal.
     if [ "$rc" = "0" ] || [ "$rc" = "1" ]; then
         rc=$RC_LAUNCH_FAIL
     fi
@@ -281,7 +287,7 @@ if [ -n "${ZELLIJ:-}" ] && command -v zellij >/dev/null 2>&1; then
     SENTINEL=$(mktemp "$TMPBASE/revmux-done-XXXXXX")
     rm -f "$SENTINEL"
     LAUNCH_SCRIPT=$(mktemp "$TMPBASE/revmux-launch-XXXXXX")
-    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" "$LAUNCH_SCRIPT"' EXIT
+    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" "$LAUNCH_SCRIPT" || true' EXIT
     cat > "$LAUNCH_SCRIPT" <<LAUNCHER
 #!/bin/sh
 $(write_rc_cmd "$SENTINEL")
@@ -316,7 +322,7 @@ if [ "${HERDR_ENV:-}" = "1" ] && command -v herdr >/dev/null 2>&1; then
     SENTINEL=$(mktemp "$TMPBASE/revmux-done-XXXXXX")
     rm -f "$SENTINEL"
     LAUNCH_SCRIPT=$(mktemp "$TMPBASE/revmux-launch-XXXXXX")
-    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" "$LAUNCH_SCRIPT"' EXIT
+    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" "$LAUNCH_SCRIPT" || true' EXIT
     cat > "$LAUNCH_SCRIPT" <<LAUNCHER
 #!/bin/sh
 $(write_rc_cmd "$SENTINEL")
@@ -366,7 +372,7 @@ KITTY_SOCK="${KITTY_LISTEN_ON:-}"
 if [ -n "$KITTY_SOCK" ] && command -v kitty >/dev/null 2>&1; then
     SENTINEL=$(mktemp "$TMPBASE/revmux-done-XXXXXX")
     rm -f "$SENTINEL"
-    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid"' EXIT
+    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" || true' EXIT
 
     KITTY_ARGS=(kitty @ --to "$KITTY_SOCK" launch --type=overlay --title="$OVERLAY_TITLE" --cwd=current)
     [ -n "${KITTY_WINDOW_ID:-}" ] && KITTY_ARGS+=(--match "window_id:${KITTY_WINDOW_ID}")
@@ -390,7 +396,7 @@ if [ -n "${WEZTERM_PANE:-}" ]; then
     if [ ${#WEZTERM_CLI[@]} -gt 0 ]; then
         SENTINEL=$(mktemp "$TMPBASE/revmux-done-XXXXXX")
         rm -f "$SENTINEL"
-        trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid"' EXIT
+        trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" || true' EXIT
 
         WEZTERM_PCT="${REVMUX_POPUP_HEIGHT:-90%}"
         WEZTERM_PCT="${WEZTERM_PCT%%%}"
@@ -412,7 +418,7 @@ if is_cmux_session; then
     SENTINEL=$(mktemp "$TMPBASE/revmux-done-XXXXXX")
     rm -f "$SENTINEL"
     LAUNCH_SCRIPT=$(mktemp "$TMPBASE/revmux-launch-XXXXXX")
-    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" "$LAUNCH_SCRIPT"' EXIT
+    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" "$LAUNCH_SCRIPT" || true' EXIT
     cat > "$LAUNCH_SCRIPT" <<LAUNCHER
 #!/bin/sh
 $(write_rc_cmd "$SENTINEL")
@@ -439,7 +445,7 @@ if [ "${TERM_PROGRAM:-}" = "ghostty" ] && command -v osascript >/dev/null 2>&1; 
     SENTINEL=$(mktemp "$TMPBASE/revmux-done-XXXXXX")
     rm -f "$SENTINEL"
     LAUNCH_SCRIPT=$(mktemp "$TMPBASE/revmux-launch-XXXXXX")
-    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" "$LAUNCH_SCRIPT"' EXIT
+    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" "$LAUNCH_SCRIPT" || true' EXIT
     cat > "$LAUNCH_SCRIPT" <<LAUNCHER
 #!/bin/sh
 $(write_rc_cmd "$SENTINEL")
@@ -468,7 +474,11 @@ APPLESCRIPT
 
     await_sentinel "$SENTINEL" || print_report_and_exit "$RC_LAUNCH_FAIL"
     rc=$(read_rc "$SENTINEL")
-    osascript - "$GHOSTTY_TERM_ID" <<'APPLESCRIPT' 2>/dev/null
+    # `|| true` because the review is already over and its report is in hand: closing the surface is
+    # tidying, and its failure is never the run's result. Ghostty closes itself once the inner script
+    # exits, so this often races an id that is already gone - and an unguarded failure here would abort
+    # before print_report_and_exit, losing a report the EXIT trap then deletes.
+    osascript - "$GHOSTTY_TERM_ID" <<'APPLESCRIPT' 2>/dev/null || true
 on run argv
     tell application "Ghostty" to close terminal id (item 1 of argv)
 end run
@@ -481,7 +491,7 @@ if [ -n "${ITERM_SESSION_ID:-}" ] && command -v osascript >/dev/null 2>&1; then
     SENTINEL=$(mktemp "$TMPBASE/revmux-done-XXXXXX")
     rm -f "$SENTINEL"
     LAUNCH_SCRIPT=$(mktemp "$TMPBASE/revmux-launch-XXXXXX")
-    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" "$LAUNCH_SCRIPT"' EXIT
+    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.tmp" "$SENTINEL.pid" "$LAUNCH_SCRIPT" || true' EXIT
     cat > "$LAUNCH_SCRIPT" <<LAUNCHER
 #!/bin/sh
 cd "\$1" && $REVMUX_CMD; rc=\$?; printf "%s" "\$rc" > "\$2.tmp" && mv -f "\$2.tmp" "\$2"
@@ -527,7 +537,9 @@ APPLESCRIPT
 
     await_sentinel "$SENTINEL" || print_report_and_exit "$RC_LAUNCH_FAIL"
     rc=$(read_rc "$SENTINEL")
-    osascript - "$ITERM_NEW_SESSION" <<'APPLESCRIPT' 2>/dev/null
+    # `|| true` for the same reason as ghostty: the report is already in hand and closing the session
+    # is tidying, so an AppleScript error on a session the user closed himself must not take it down
+    osascript - "$ITERM_NEW_SESSION" <<'APPLESCRIPT' 2>/dev/null || true
 on run argv
     set sid to item 1 of argv
     tell application id "com.googlecode.iterm2"
@@ -552,7 +564,7 @@ if [ "${INSIDE_EMACS:-}" = "vterm" ] && command -v emacsclient >/dev/null 2>&1; 
     SENTINEL=$(mktemp "$TMPBASE/revmux-done-XXXXXX")
     rm -f "$SENTINEL"
     LAUNCH_SCRIPT=$(mktemp "$TMPBASE/revmux-launch-XXXXXX")
-    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.pid" "$LAUNCH_SCRIPT"' EXIT
+    trap 'rm -f "$REPORT_FILE" "$STDERR_FILE" "$SENTINEL" "$SENTINEL.pid" "$LAUNCH_SCRIPT" || true' EXIT
     cat > "$LAUNCH_SCRIPT" <<LAUNCHER
 #!/bin/sh
 cd $(sq "$CWD") && $(write_fifo_rc_cmd "$SENTINEL")
@@ -597,7 +609,7 @@ LAUNCHER
           (when-let ((b (and bn (get-buffer bn)))) (kill-buffer b))))
       (when-let ((f (cl-find-if (lambda (f) (frame-parameter f 'revmux-caller)) (frame-list))))
         (set-frame-parameter f 'revmux-caller nil)
-        (select-frame-set-input-focus f)))" >/dev/null 2>&1
+        (select-frame-set-input-focus f)))" >/dev/null 2>&1 || true
     print_report_and_exit "${rc:-$RC_LAUNCH_FAIL}"
 fi
 
