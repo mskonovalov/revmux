@@ -1,7 +1,7 @@
 ---
 name: revmux
 description: Run a supervised multi-agent code review by composing a task directory and driving the revmux CLI, then report or act on the findings it returns. revmux spawns and watches parallel claude and codex subprocesses with stall detection, retry, per-agent progress and a full run archive; this skill is the caller that writes the review context, launches it, reads the JSON back, and re-runs it after fixes. It also has a self mode that reads what past rounds produced and proposes tuning changes to the local profiles, lenses and knobs, one suggestion at a time with the numbers behind it. Also answers questions about revmux itself — profiles, lenses, task directories, flags, the JSON shape, exit codes and the run archive. Activates on "revmux", "run revmux", "multi-agent review", "supervised review", "review with revmux", "revmux this branch", "revmux the last commit", "run a revmux round", "re-review after fixes", "revmux self", "self-improve revmux", "tune revmux", "revmux profiles", "revmux lenses", "what does revmux return", "revmux exit codes", "revmux task directory".
-argument-hint: 'optional: what to review, plus "focused" / "final" / "lenses a,b"'
+argument-hint: 'optional: what to review, plus "focused" / "final" / "loop" / "lenses a,b"'
 allowed-tools: [Bash, Read, Edit, Write, Grep, Glob, AskUserQuestion]
 ---
 
@@ -26,6 +26,7 @@ It does no scope detection, no git, no PR fetching, no source modification. This
 - "multi-agent review", "supervised review", "parallel agent review"
 - "revmux this branch", "revmux the last commit", "revmux the uncommitted changes"
 - "another revmux round", "re-review after fixes"
+- "revmux loop", "loop it", "keep going until clean" — the review-fix loop, `references/loop.md`
 - "revmux self", "self-improve revmux", "tune revmux" — the self mode below, which reviews nothing
 - questions: "revmux profiles", "what lenses are there", "revmux exit codes"
 
@@ -36,6 +37,7 @@ If asked **about** revmux rather than for a review, answer from the references a
 - `references/task-dir.md` — the round's context files, task and run naming
 - `references/invocation.md` — flags, profiles, lenses, overlay backends, config precedence
 - `references/output.md` — JSON shape, verdicts, exit codes, run archive
+- `references/loop.md` — the autonomous review-fix loop, entered from Step 6
 
 For anything about current configuration, run `revmux config` and read the answer. It reports what
 resolved including user overrides, runs no pipeline, and is always safe to call.
@@ -292,7 +294,7 @@ Recommend the option that fits the outcome:
 | the run came back | recommend |
 |---|---|
 | `sources.degraded` non-empty | re-run the missing source first — a partial review's silence is not evidence, so nothing else is worth deciding yet |
-| any `critical` or `major` | fix those, then a new round on the same task |
+| any `critical` or `major` | fix those, then a new round on the same task — or the loop below, if the user wants it run to the end |
 | `minor` only, verdicts not `unverified` | fix now, or note for later — verification weighed each fix's cost against its consequence, so what is left is a question of timing |
 | `minor` only, verdicts `unverified` | say nothing was checked, and weigh each one before acting — `--no-verify` drops nothing and produces no `immaterial` list |
 | `open_questions` non-empty, no findings | answer them — they are decisions, and the review found nothing to edit |
@@ -304,6 +306,11 @@ Put it as an AskUserQuestion, the recommendation first and marked `(Recommended)
 
 **Never start fixing because the findings look clear.** A review produces findings; editing is a
 separate decision, and this is where the user makes it.
+
+**Offer the loop as a third way out of that question**, alongside stopping and fixing-then-one-more-round:
+review, fix, commit, re-review, until a round comes back with nothing gating. It is for the user's own
+branch, never a fetched PR, and it commits without pushing. `references/loop.md` is the whole procedure —
+read it when he picks it, not before.
 
 ### Step 7: Fix and re-run, if asked
 
