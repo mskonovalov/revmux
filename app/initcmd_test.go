@@ -228,19 +228,33 @@ func TestRun_init(t *testing.T) {
 	})
 
 	// a link where a prompt file goes is a link, not a missing file: written through, it would put the
-	// shipped text wherever it points, and ./.revmux/ is the one place init writes
+	// shipped text wherever it points, and ./.revmux/ is the one place init writes.
+	// the directory is unlistable so the loader's glob never sees the link and the lens falls back to
+	// embedded — a link prompt.Load can read fails two steps earlier and materialization never runs
 	t.Run("a dangling symlink is refused rather than written through", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root lists a directory with no read permission")
+		}
 		dir := isolate(t)
 		outside := filepath.Join(t.TempDir(), "elsewhere.md")
-		require.NoError(t, os.MkdirAll(filepath.Join(dir, projectDirName, "lenses"), 0o750))
-		require.NoError(t, os.Symlink(outside, filepath.Join(dir, projectDirName, "lenses", "bugs.md")))
+		lenses := filepath.Join(dir, projectDirName, "lenses")
+		require.NoError(t, os.MkdirAll(lenses, 0o750))
+		require.NoError(t, os.Symlink(outside, filepath.Join(lenses, "bugs.md")))
+		//nolint:gosec // traversable and writable but not listable, which is what hides the link from the glob
+		require.NoError(t, os.Chmod(lenses, 0o300))
+		t.Cleanup(func() { _ = os.Chmod(lenses, 0o750) }) //nolint:gosec // restores the temp dir for cleanup
 
-		o, err := parseArgs([]string{"init"})
-		require.NoError(t, err)
-		r := newRunOpts(t, o)
-		assert.Equal(t, 2, run(r.opts()))
+		p, _ := initialize(t)
 		assert.NoFileExists(t, outside, "the target sits outside the project directory and init writes nowhere else")
-		assert.Empty(t, r.stdout.String())
+
+		files := filesByPath(p.Files)
+		linked, ok := files[filepath.Join(lenses, "bugs.md")]
+		require.True(t, ok, "the entry is still reported, as one already there")
+		assert.False(t, linked.Created, "a dangling link is an entry, not a missing file")
+
+		sibling, ok := files[filepath.Join(lenses, "adversarial.md")]
+		require.True(t, ok)
+		assert.True(t, sibling.Created, "the rest of the tree materialized, so the link is what was refused")
 	})
 
 	t.Run("an unwritable stdout exits 2", func(t *testing.T) {
