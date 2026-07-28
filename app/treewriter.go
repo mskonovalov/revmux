@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -76,6 +77,68 @@ func (w *treeWriter) write(relPath string, data []byte) (bool, error) {
 		return false, fmt.Errorf("write %s: %w", dst, err)
 	}
 	return true, nil
+}
+
+// checkRegular reports whether relPath is there, refusing anything that is not a regular file.
+//
+// os.Root refuses a link that leaves the destination but follows one landing back inside it, and the
+// read-then-overwrite pair below is the one place that distinction bites: a config symlinked to another
+// file in the tree would be read through the alias and then truncated through it. That is the predicate
+// task.CheckMarker applies to manifest.json, for the same reason.
+func (w *treeWriter) checkRegular(relPath string) (bool, error) {
+	fi, err := w.root.Lstat(relPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", w.dest(relPath), err)
+	}
+	if !fi.Mode().IsRegular() {
+		return false, fmt.Errorf("read %s: not a regular file", w.dest(relPath))
+	}
+	return true, nil
+}
+
+// read returns what relPath holds, or nil when it is absent — an absent entry is not an error, since
+// the caller's next move is to create it.
+func (w *treeWriter) read(relPath string) ([]byte, error) {
+	found, err := w.checkRegular(relPath)
+	if err != nil || !found {
+		return nil, err
+	}
+	f, err := w.root.Open(relPath)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", w.dest(relPath), err)
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", w.dest(relPath), err)
+	}
+	return data, nil
+}
+
+// replace writes data over relPath, creating it when absent.
+//
+// It is what the config needs and write cannot give it: a config holding no uncommented key is rewritten
+// so an upgrade can move a default nobody set, and that is an O_TRUNC the O_EXCL in write exists to
+// refuse. Prompt files take write instead — one already there is never overwritten at all.
+func (w *treeWriter) replace(relPath string, data []byte) error {
+	if _, err := w.checkRegular(relPath); err != nil {
+		return err
+	}
+	f, err := w.root.OpenFile(relPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("write %s: %w", w.dest(relPath), err)
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write %s: %w", w.dest(relPath), err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("write %s: %w", w.dest(relPath), err)
+	}
+	return nil
 }
 
 // dest renders one entry the way every message and every reported path names it.

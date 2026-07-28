@@ -52,37 +52,39 @@ func (o runOpts) writeInitPaths() error {
 	if err != nil {
 		return err
 	}
-	// settings ship commented out so an upgrade can still overwrite them, which is the whole reason the
-	// config is not materialized the way the prompt files are; its prose report is not the payload, and
-	// the path it reports back is what the payload carries rather than a second composition of it
-	cfg, err := o.opts.initConfig(io.Discard)
+	// one handle on ./.revmux/ for everything init writes into it, config included: a second writer is a
+	// second chance for one of them to be the one that resolves a path instead of holding a root
+	w, err := newTreeWriter(dir)
 	if err != nil {
 		return err
 	}
-	files, err := o.materializePrompts(set, dir)
+	defer w.close() //nolint:errcheck // nothing is written after this point
+
+	// settings ship commented out so an upgrade can still overwrite them, which is the whole reason the
+	// config is not materialized the way the prompt files are; its prose report is not the payload, and
+	// the path it reports back is what the payload carries rather than a second composition of it
+	cfg, err := o.opts.initConfig(w, io.Discard)
+	if err != nil {
+		return err
+	}
+	files, err := o.materializePrompts(set, w)
 	if err != nil {
 		return err
 	}
 	return o.writeJSON(initPaths{Dir: dir, Config: cfg, Files: files}, "init paths")
 }
 
-// materializePrompts writes what each prompt file resolved to into dir, leaving one already there
+// materializePrompts writes what each prompt file resolved to through w, leaving one already there
 // untouched. The bytes are the winning file's own, front matter included: a stripped write produces a
 // tree the next prompt.Load rejects, so init would break the project it just initialized.
 //
-// Every write goes through a treeWriter anchored on dir, which is what keeps ./.revmux/ the one place
-// init writes: a symlinked subdirectory under it is refused where it sits rather than followed.
+// Every write goes through w's root, which is what keeps ./.revmux/ the one place init writes: a
+// symlinked subdirectory under it is refused where it sits rather than followed.
 //
 // A file that cannot be written stops the run with the path named, leaving what was already materialized
 // on disk. The tree is resumed by running init again — every file already there is reported and skipped,
 // so a second call completes exactly what the first did not.
-func (o runOpts) materializePrompts(set *prompt.Set, dir string) ([]initFile, error) {
-	w, err := newTreeWriter(dir)
-	if err != nil {
-		return nil, err
-	}
-	defer w.close() //nolint:errcheck // nothing is written after this point
-
+func (o runOpts) materializePrompts(set *prompt.Set, w *treeWriter) ([]initFile, error) {
 	origins := set.Provenance()
 	out := make([]initFile, 0, len(origins))
 	for _, org := range origins {

@@ -185,7 +185,13 @@ func iniKeys(file string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", file, err)
 	}
+	return iniKeysFrom(data), nil
+}
 
+// iniKeysFrom is the parse alone, over bytes the caller has already read. `revmux init` reads its config
+// through the destination root rather than by path, so the two callers differ in how the bytes are
+// obtained and not at all in what counts as a set key.
+func iniKeysFrom(data []byte) []string {
 	var keys []string
 	for line := range strings.Lines(string(data)) {
 		line = strings.TrimSpace(line)
@@ -196,7 +202,7 @@ func iniKeys(file string) ([]string, error) {
 			keys = append(keys, strings.ToLower(strings.TrimSpace(k)))
 		}
 	}
-	return keys, nil
+	return keys
 }
 
 // knobNames lists the INI-backed settings, in struct order. The config key is the long flag name, so a
@@ -481,26 +487,26 @@ func (o options) checkNames() error {
 
 // initConfig materializes the commented-out template under ./.revmux/, leaving a customized file alone.
 // It returns the config path so a caller reporting it does not compose the same path a second time.
-func (o options) initConfig(w io.Writer) (string, error) {
-	dir, err := projectDir()
+//
+// **It reads and writes through tw, the same handle the prompt tree is materialized with, and that is
+// what makes ./.revmux/ the one place init writes rather than the one place it names.** By path this
+// was the last unhardened leaf on the init path: a dangling `config -> ../../elsewhere` had os.ReadFile
+// report the file absent and os.WriteFile then create the target outside the project, and a link to an
+// existing file carrying no `key = value` line was truncated and replaced with the template — while the
+// payload reported `<cwd>/.revmux/config` either way. Hardening the tree and leaving its config beside
+// it is how the same hole came back a level down twice.
+func (o options) initConfig(tw *treeWriter, w io.Writer) (string, error) {
+	path := tw.dest(configFileName)
+	data, err := tw.read(configFileName)
 	if err != nil {
 		return "", err
 	}
-	if mkErr := os.MkdirAll(dir, 0o750); mkErr != nil {
-		return "", fmt.Errorf("create %s: %w", dir, mkErr)
-	}
-
-	path := filepath.Join(dir, configFileName)
-	keys, err := iniKeys(path)
-	if err != nil {
-		return "", err
-	}
-	if len(keys) > 0 {
+	if len(iniKeysFrom(data)) > 0 {
 		_, _ = fmt.Fprintf(w, "%s is customized, left unchanged\n", path)
 		return path, nil
 	}
-	if err := os.WriteFile(path, defaultConfig, 0o600); err != nil {
-		return "", fmt.Errorf("write %s: %w", path, err)
+	if err := tw.replace(configFileName, defaultConfig); err != nil {
+		return "", err
 	}
 	_, _ = fmt.Fprintf(w, "wrote %s\n", path)
 	return path, nil

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -550,9 +551,19 @@ func TestOptions_promptSetUnknownProfile(t *testing.T) {
 func TestOptions_initConfig(t *testing.T) {
 	dir := isolate(t)
 	path := filepath.Join(dir, projectDirName, configFileName)
-	out := &strings.Builder{}
 
-	got, err := options{}.initConfig(out)
+	// initConfig writes through the same handle the prompt tree is materialized with, so every case
+	// here opens one rather than handing it a path
+	initCfg := func(t *testing.T, out io.Writer) (string, error) {
+		t.Helper()
+		w, err := newTreeWriter(filepath.Join(dir, projectDirName))
+		require.NoError(t, err)
+		defer func() { _ = w.close() }()
+		return options{}.initConfig(w, out)
+	}
+
+	out := &strings.Builder{}
+	got, err := initCfg(t, out)
 	require.NoError(t, err)
 	assert.Equal(t, path, got, "the payload reports this path rather than composing it a second time")
 	written, err := os.ReadFile(path) //nolint:gosec // path built from t.TempDir
@@ -563,7 +574,7 @@ func TestOptions_initConfig(t *testing.T) {
 	t.Run("comment-only file is replaced", func(t *testing.T) {
 		require.NoError(t, os.WriteFile(path, []byte("# only a comment\n"), 0o600))
 		out := &strings.Builder{}
-		got, err := options{}.initConfig(out)
+		got, err := initCfg(t, out)
 		require.NoError(t, err)
 		assert.Equal(t, path, got)
 		written, err := os.ReadFile(path) //nolint:gosec // path built from t.TempDir
@@ -574,13 +585,41 @@ func TestOptions_initConfig(t *testing.T) {
 	t.Run("customized file is left alone", func(t *testing.T) {
 		require.NoError(t, os.WriteFile(path, []byte("verify-groups = 42\n"), 0o600))
 		out := &strings.Builder{}
-		got, err := options{}.initConfig(out)
+		got, err := initCfg(t, out)
 		require.NoError(t, err)
 		assert.Equal(t, path, got, "a file left alone is still the path the caller reports")
 		written, err := os.ReadFile(path) //nolint:gosec // path built from t.TempDir
 		require.NoError(t, err)
 		assert.Equal(t, "verify-groups = 42\n", string(written))
 		assert.Contains(t, out.String(), "customized")
+	})
+
+	// the config was the last leaf on the init path still written by name. os.ReadFile reports a
+	// dangling link as an absent file and os.WriteFile then creates its target, so the two cases below
+	// are the write escaping ./.revmux/ entirely and an existing file outside it being truncated.
+	t.Run("a dangling symlink at the config is refused rather than written through", func(t *testing.T) {
+		outside := filepath.Join(t.TempDir(), "elsewhere.ini")
+		require.NoError(t, os.Remove(path))
+		require.NoError(t, os.Symlink(outside, path))
+
+		_, err := initCfg(t, io.Discard)
+		require.Error(t, err, "a link is an entry, not a missing file")
+		assert.Contains(t, err.Error(), "not a regular file")
+		assert.NoFileExists(t, outside, "and its target sits outside the project, so nothing may land there")
+	})
+
+	t.Run("a symlink to an existing file is refused rather than truncated", func(t *testing.T) {
+		outside := filepath.Join(t.TempDir(), "notes.txt")
+		// no `key = value` line, so iniKeysFrom finds nothing set and the rewrite branch is the one taken
+		require.NoError(t, os.WriteFile(outside, []byte("# just a note\n"), 0o600))
+		require.NoError(t, os.Remove(path))
+		require.NoError(t, os.Symlink(outside, path))
+
+		_, err := initCfg(t, io.Discard)
+		require.Error(t, err)
+		kept, readErr := os.ReadFile(outside) //nolint:gosec // path built from t.TempDir
+		require.NoError(t, readErr)
+		assert.Equal(t, "# just a note\n", string(kept), "the file the link points at is left exactly as it was")
 	})
 }
 

@@ -432,6 +432,19 @@ with: a dangling link is a link rather than a missing file, and `Stat` plus `os.
 Hardening one materializer and leaving the other is how the hole came back a level down; there is one now,
 and a second copy of it is the same bug waiting.
 
+**The config is written through that same handle, and it is the leaf where this was learned twice.**
+`revmux init` opens one `treeWriter` on `./.revmux/` and hands it to `initConfig` and to the prompt
+materialization alike, so nothing on the init path resolves a path instead of holding a root.
+Written by name it was the last hole: `os.ReadFile` reports a dangling `config -> ../../elsewhere` as an
+absent file and `os.WriteFile` then creates that target outside the project, while a link to an existing
+file carrying no `key = value` line was truncated and replaced with the template — and the payload
+reported `<cwd>/.revmux/config` in both cases, so the caller was told the tree was local.
+The config takes `treeWriter.replace` rather than `write`, because a comments-only config is deliberately
+rewritten and that is an `O_TRUNC` the `O_EXCL` in `write` exists to refuse.
+Both are gated by `checkRegular`, which refuses an entry that is not a regular file: `os.Root` refuses a
+link leaving the destination but follows one landing back inside it, and a config read and then truncated
+through an alias is the case that distinction decides.
+
 **Which layer each one reads is the whole difference between them, and it must stay that way.**
 `--init` writes what resolved, so a user with an overridden lens gets his own text and a tree that loads with
 no fallback under it; `--dump-defaults` writes the embedded bytes at an arbitrary path, which is the only way
