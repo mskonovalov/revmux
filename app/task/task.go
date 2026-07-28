@@ -409,6 +409,41 @@ func (p *Paths) checkRealDir(parent *os.Root, name, path string) error {
 	return nil
 }
 
+// List names every task under root, in the lexical order os.ReadDir returns. An absent tasks root is a
+// clean install rather than a failure to read one, so it has no tasks and is not an error.
+//
+// Which entries are tasks is decided through an os.Root on the tasks root, so this reports exactly what
+// archive.New can open: a task reached through a relative symlink to a sibling is a task a review runs
+// under, and omitting that id is how a caller mints a second one for a task already in flight. A link the
+// archive cannot walk — absolute, or pointing out of the root — is left out for the same reason reversed,
+// since listing it advertises a review that cannot run.
+//
+// It is the single enumerator every caller reads: `revmux config` reports these ids and `revmux stats`
+// aggregates them, and two walks over the tasks root are two chances to disagree about what a task is.
+func List(root string) ([]string, error) {
+	out := []string{}
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, fs.ErrNotExist) {
+		return out, nil
+	}
+	if err != nil {
+		return out, fmt.Errorf("read tasks root %s: %w", root, err)
+	}
+	tasksRoot, err := os.OpenRoot(root)
+	if err != nil {
+		return out, fmt.Errorf("open tasks root %s: %w", root, err)
+	}
+	defer tasksRoot.Close()
+
+	for _, e := range entries {
+		if fi, statErr := tasksRoot.Stat(e.Name()); statErr != nil || !fi.IsDir() {
+			continue
+		}
+		out = append(out, e.Name())
+	}
+	return out, nil
+}
+
 // CheckContained verifies a path resolves to somewhere inside the tasks root: the lexical check on a name
 // cannot see a symlink planted under the root, so a task reached through one is refused rather than read.
 //

@@ -285,4 +285,19 @@ func TestOptions_tasks(t *testing.T) {
 		assert.Contains(t, got[idx].RoundsError, dir,
 			"no rounds and unreadable are the opposite advice to a caller picking a --run name")
 	})
+
+	// `revmux stats` aggregates task.List directly, so a catalog naming a different set is a caller told
+	// about tasks the aggregate never counted, and the reverse
+	t.Run("the catalog reports exactly the ids task.List enumerates", func(t *testing.T) {
+		got, tasksErr := options{TasksDir: root}.tasks(root)
+		require.NoError(t, tasksErr)
+		ids := make([]string, 0, len(got))
+		for _, ti := range got {
+			ids = append(ids, ti.ID)
+		}
+
+		names, listErr := task.List(root)
+		require.NoError(t, listErr)
+		assert.Equal(t, names, ids, "one enumerator, so the two commands cannot disagree about what a task is")
+	})
 }

@@ -274,11 +274,11 @@ func CollectStats(q StatsQuery) (Corpus, error)
 - Modify: `app/introspect.go`
 - Modify: `app/introspect_test.go`
 
-- [ ] move the body of `(o options) tasks(root)` (`app/introspect.go:203-236`) to `task.List(root)`, preserving the `os.Root` containment exactly — it is what makes the list agree with what `archive.New` can open
-- [ ] have `revmux config` call `task.List` so there is one enumerator; `revmux stats` will call the same one in Task 7
-- [ ] write tests for `task.List`: ordinary tasks, a non-directory entry ignored, `task.md` not reported as a task, a symlink pointing out of the root excluded, a missing root yielding an empty list rather than an error
-- [ ] write a test asserting `revmux config`'s task list is unchanged by the move
-- [ ] run tests - must pass before next task
+- [x] move the body of `(o options) tasks(root)` (`app/introspect.go:203-236`) to `task.List(root)`, preserving the `os.Root` containment exactly — it is what makes the list agree with what `archive.New` can open
+- [x] have `revmux config` call `task.List` so there is one enumerator; `revmux stats` will call the same one in Task 7
+- [x] write tests for `task.List`: ordinary tasks, a non-directory entry ignored, `task.md` not reported as a task, a symlink pointing out of the root excluded, a missing root yielding an empty list rather than an error
+- [x] write a test asserting `revmux config`'s task list is unchanged by the move
+- [x] run tests - must pass before next task
 
 ### Task 3: Retain and expose the winning file's bytes
 

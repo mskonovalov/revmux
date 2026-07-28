@@ -665,6 +665,63 @@ func TestRounds(t *testing.T) {
 	})
 }
 
+func TestList(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"pr-1", "pr-2"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(root, name), 0o750))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "stray.txt"), []byte("x"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, metaFile), []byte("---\n---\n"), 0o600))
+
+	got, err := List(root)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"pr-1", "pr-2"}, got,
+		"only directories are tasks, and the ids come back in a stable order")
+
+	t.Run("an absent tasks root is a clean install, not a failure to read one", func(t *testing.T) {
+		got, err := List(filepath.Join(t.TempDir(), "nope"))
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("a relative link to a sibling is a task the review path runs under", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "pr-1"), 0o750))
+		require.NoError(t, os.Symlink("pr-1", filepath.Join(dir, "alias")))
+
+		got, err := List(dir)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"alias", "pr-1"}, got,
+			"archive.New opens the alias, and omitting it is how a caller mints a second id for it")
+	})
+
+	t.Run("a link the archive cannot walk is left out", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "pr-1"), 0o750))
+		outside := t.TempDir()
+		require.NoError(t, os.Symlink(outside, filepath.Join(dir, "away")))
+		require.NoError(t, os.Symlink(filepath.Join(dir, "pr-1"), filepath.Join(dir, "absolute")))
+
+		got, err := List(dir)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"pr-1"}, got,
+			"listing a task no review can open advertises one that cannot run")
+	})
+
+	t.Run("an unreadable tasks root is an error, never an empty list", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root reads a directory with no permissions")
+		}
+		dir := filepath.Join(t.TempDir(), "tasks")
+		require.NoError(t, os.MkdirAll(dir, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o750) }) //nolint:gosec // restores the temp dir so cleanup can remove it
+
+		got, err := List(dir)
+		require.Error(t, err, "no tasks and unreadable are the opposite advice to a caller matching an id")
+		assert.Empty(t, got)
+	})
+}
+
 func TestCheckContained(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "real"), 0o750))

@@ -1,10 +1,7 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"reflect"
 	"time"
@@ -195,33 +192,19 @@ func (o options) paths() pathInfo {
 // key becomes a duplicate task id — the exact failure task.md exists to prevent. Rounds come from
 // task.Rounds, the same enumeration the prior-round inventory is built from.
 //
-// Which entries are tasks is decided through an os.Root on the tasks root, so this lists exactly what
-// archive.New can open: a task reached through a relative symlink to a sibling is a task a review runs
-// under, and omitting that id is how a caller mints a second one for a task already in flight. A link
-// the archive cannot walk — absolute, or pointing out of the root — is left out for the same reason
-// reversed, since listing it advertises a review that cannot run.
+// Which ids exist is task.List, the single enumerator `revmux stats` reads too, so the catalog and the
+// aggregate cannot disagree about what a task is.
 func (o options) tasks(root string) ([]taskInfo, error) {
 	out := []taskInfo{}
-	entries, err := os.ReadDir(root)
-	if errors.Is(err, fs.ErrNotExist) {
-		return out, nil
-	}
+	names, err := task.List(root)
 	if err != nil {
-		return out, fmt.Errorf("read tasks root %s: %w", root, err)
+		return out, fmt.Errorf("list tasks: %w", err)
 	}
-	tasksRoot, err := os.OpenRoot(root)
-	if err != nil {
-		return out, fmt.Errorf("open tasks root %s: %w", root, err)
-	}
-	defer tasksRoot.Close()
 
-	for _, e := range entries {
-		if fi, statErr := tasksRoot.Stat(e.Name()); statErr != nil || !fi.IsDir() {
-			continue
-		}
-		dir := filepath.Join(root, e.Name())
+	for _, name := range names {
+		dir := filepath.Join(root, name)
 		meta, loadErr := task.Load(dir)
-		info := taskInfo{ID: e.Name(), Meta: meta, Rounds: []string{}}
+		info := taskInfo{ID: name, Meta: meta, Rounds: []string{}}
 		if loadErr != nil {
 			info.MetaError = loadErr.Error()
 		}
