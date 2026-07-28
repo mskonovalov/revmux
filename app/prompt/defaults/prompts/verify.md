@@ -50,8 +50,16 @@ Answer three questions:
    guarded upstream, or a condition the type system already excludes is immaterial.
 2. **Does it matter when it happens?** Name the consequence — wrong output, data loss, a crash, a
    security hole, a maintainer misled. An outcome nobody would observe is immaterial.
-3. **Is the fix worth it?** A restructuring larger than the problem it removes is immaterial. Say so
-   rather than confirming it and leaving the caller to weigh it.
+3. **Is the fix worth it?** Severity measures the value of fixing; the fix's blast radius measures what
+   fixing costs and risks. They are independent, and you are better placed to weigh them than the
+   reviewer was — you have read the surrounding code and he had only the finding. For a minor finding,
+   ask whether the fix edits shared code, changes control flow, alters a signature, or reaches callers
+   beyond the finding's own site. Any of those makes it a bad trade: touching working code to correct
+   something nobody suffers from is how a nit becomes a regression, and the finding is immaterial. Say
+   which of the four it is rather than confirming it and leaving the caller to weigh it.
+
+   This applies to minor findings only. A critical or major is worth a wide fix by definition, and a
+   restructuring larger than the problem it removes is immaterial at any severity.
 
 A finding that survives all three is confirmed or refined. Style preferences, hypothetical futures and
 restatements of the code as written are immaterial by definition.
