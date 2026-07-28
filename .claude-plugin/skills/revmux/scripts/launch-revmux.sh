@@ -27,11 +27,20 @@
 #   REVMUX_POPUP_HEIGHT    tmux/zellij/wezterm popup height (default 90%)
 #   REVMUX_AUTO_EXIT       TUI self-close delay            (default 30s; 0 waits for a keypress)
 
-set -euo pipefail
+set -euEo pipefail
 
 # the launcher's own failure code, outside revmux's 0/1/2 vocabulary. See the exit-code note above:
 # every path that fails before revmux produced a report must use this and never 1.
 RC_LAUNCH_FAIL=3
+
+# the backstop that makes the rule above true of the whole file rather than of the paths that remembered
+# it. Under `set -e` an unguarded failure aborts with the failing command's OWN status, and 1 is the
+# ordinary failure code of every CLI this script drives - kitty, wezterm, tmux, zellij, emacsclient,
+# mktemp - so a backend that cannot start would surface as revmux's "findings reported, do not retry".
+# Anything landing here failed before revmux produced a report, so a code in revmux's vocabulary is not
+# revmux's to claim. Guarded paths never reach it: a command in an `if` condition or followed by `||` is
+# not a `set -e` failure. `-E` above is what extends this into functions and subshells.
+trap 'rc=$?; if [ "$rc" -le 2 ]; then rc=$RC_LAUNCH_FAIL; fi; exit "$rc"' ERR
 
 # how long to wait for the overlay's inner shell to publish its pid before giving up on it. Only
 # covers process startup, never the review itself, so it stays short.
@@ -158,13 +167,25 @@ print_report_and_exit() {
     local rc="${1:-0}"
     if [ -s "$REPORT_FILE" ]; then
         cat "$REPORT_FILE"
-    elif [ "$rc" = "$RC_LAUNCH_FAIL" ]; then
+        exit "$rc"
+    fi
+
+    # revmux writes the report before it returns 0 or 1, so neither code can reach here over an empty
+    # one - the status came from the backend the overlay was driven through, whose own failures are 1.
+    # Passing it on would tell a caller a review that never started found nothing, or found things it
+    # then cannot parse, and both are codes it is told never to retry.
+    if [ "$rc" = "0" ] || [ "$rc" = "1" ]; then
+        rc=$RC_LAUNCH_FAIL
+    fi
+
+    if [ "$rc" = "$RC_LAUNCH_FAIL" ]; then
         # never attribute this code to revmux: it is the launcher's, and revmux may never have run
         echo "error: no report produced (overlay closed, or revmux never started)" >&2
-        [ -s "$STDERR_FILE" ] && sed 's/^/  /' "$STDERR_FILE" >&2
-    elif [ "$rc" != "0" ]; then
+    else
         echo "error: revmux exited $rc without writing a report" >&2
-        [ -s "$STDERR_FILE" ] && sed 's/^/  /' "$STDERR_FILE" >&2
+    fi
+    if [ -s "$STDERR_FILE" ]; then
+        sed 's/^/  /' "$STDERR_FILE" >&2
     fi
     exit "$rc"
 }

@@ -88,6 +88,12 @@ func TestProgress_paint(t *testing.T) {
 	roster := []prompt.AgentSpec{{Name: "bugs+impl", Color: "6"}, {Name: "codex", Color: "#ff8800"}}
 	pr := &progress{roster: roster}
 
+	// every name here is narrower than the floor derived names need, so the column is that floor and
+	// each line pads from it. Stated as the rule rather than as counted spaces, which is what let the
+	// floor change break these cases rather than prove them.
+	require.Less(t, lipgloss.Width("bugs+impl"), minNameWidth, "the roster must be the narrow case")
+	col := func(name string) string { return strings.Repeat(" ", minNameWidth-lipgloss.Width(name)+2) }
+
 	tests := []struct {
 		name string
 		ev   pipeline.Event
@@ -96,22 +102,27 @@ func TestProgress_paint(t *testing.T) {
 		{
 			"the agent's own color prefixes its line",
 			pipeline.Event{Kind: pipeline.EventAgentActivity, Agent: "bugs+impl", Text: "tool: Read", At: progressAt},
-			"16:02:11 \x1b[36mbugs+impl\x1b[39m  tool: Read",
+			"16:02:11 \x1b[36mbugs+impl\x1b[39m" + col("bugs+impl") + "tool: Read",
 		},
 		{
-			"a hex color reaches the line as truecolor, padded out to the widest name",
+			"a hex color reaches the line as truecolor, padded out to the column",
 			pipeline.Event{Kind: pipeline.EventAgentActivity, Agent: "codex", Text: "tool: Grep", At: progressAt},
-			"16:02:11 \x1b[38;2;255;136;0mcodex\x1b[39m      tool: Grep",
+			"16:02:11 \x1b[38;2;255;136;0mcodex\x1b[39m" + col("codex") + "tool: Grep",
 		},
 		{
 			"an agent the roster does not name is colored from the same place the TUI colors it",
 			pipeline.Event{Kind: pipeline.EventAgentActivity, Agent: "stranger", Text: "tool: Read", At: progressAt},
-			"16:02:11 " + painted("stranger") + "   tool: Read",
+			"16:02:11 " + painted("stranger") + col("stranger") + "tool: Read",
 		},
 		{
 			"a stage change belongs to no agent and is indented to the same column",
 			pipeline.Event{Kind: pipeline.EventStage, Stage: "find", At: progressAt},
-			"16:02:11            ── find ──",
+			"16:02:11 " + col("") + "── find ──",
+		},
+		{
+			"a derived verify group fits the column a short roster would not have given it",
+			pipeline.Event{Kind: pipeline.EventAgentDone, Agent: "verify root", Text: "5 of 5 kept", At: progressAt},
+			"16:02:11 " + painted("verify root") + col("verify root") + "done, 5 of 5 kept",
 		},
 	}
 
@@ -284,7 +295,8 @@ func TestProgress_finish(t *testing.T) {
 		Sources: finding.SourceStatus{Expected: 2, Reported: 2},
 		Stats:   finding.Stats{FinishedAt: finishedAt, DurationMS: 291000},
 	}
-	indent := strings.Repeat(" ", len("bugs")+2)
+	// "bugs" is narrower than the floor the column takes for derived names, so the indent is the floor
+	indent := strings.Repeat(" ", minNameWidth+2)
 
 	tests := []struct {
 		name string

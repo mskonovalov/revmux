@@ -274,8 +274,13 @@ func TestRun_review(t *testing.T) {
 		assert.Contains(t, out, "4210")
 
 		assert.Contains(t, r.stderr.String(), "── find ──", "the stage line, not the word inside \"1 findings\"")
-		// the plain renderer prefixes the agent in its own resolved color, the same one the ui uses
-		assert.Contains(t, r.stderr.String(), prompt.AgentSpec{Color: "6"}.Paint("lenses")+"  done, 1 findings")
+		// the plain renderer prefixes the agent in its own resolved color, the same one the ui uses,
+		// padded to the column a one-agent roster still holds open for the derived verify group below it
+		pad := func(name string) string { return strings.Repeat(" ", minNameWidth-len(name)+2) }
+		assert.Contains(t, r.stderr.String(), prompt.AgentSpec{Color: "6"}.Paint("lenses")+pad("lenses")+"done, 1 findings")
+		assert.Contains(t, r.stderr.String(),
+			prompt.DerivedSpec("verify app").Paint("verify app")+pad("verify app")+"started [app]",
+			"and a derived name lands in that same column rather than past it")
 	})
 
 	t.Run("json to stdout, which is the default", func(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
 
 	"github.com/umputun/revmux/app/finding"
@@ -224,23 +225,38 @@ func (pr *progress) cols() int {
 // Padding is measured on the plain name and applied before painting, because a color sequence has no
 // display width — pad afterwards and each line indents by however many bytes that agent's color takes.
 func (pr *progress) prefix(agent string) string {
+	width := pr.nameWidth()
 	if agent == "" {
-		if pr.nameWidth() == 0 {
+		if width == 0 {
 			return "" // no roster means no column to line up with, so nothing to indent past
 		}
-		return strings.Repeat(" ", pr.nameWidth()+2)
+		return strings.Repeat(" ", width+2)
 	}
-	pad := strings.Repeat(" ", max(0, pr.nameWidth()-len([]rune(agent))))
-	return pr.paint(agent) + pad + "  "
+	return pr.paint(agent) + strings.Repeat(" ", max(0, width-lipgloss.Width(agent))) + "  "
 }
 
-// nameWidth is the widest name in the roster, so every line's text starts at one column.
+// minNameWidth is the floor the column holds whatever the roster is called, so the names revmux derives
+// rather than reads fit beside a short one. The focused roster is `bugs` and `codex`, five cells wide,
+// while every stage banner and every `verify <group>` row is wider — without a floor those start to the
+// right of the agent lines and the closing summary returns to the shorter column.
+const minNameWidth = len("verify root")
+
+// nameWidth is the widest name in the roster, floored so derived names fit, so every line's text starts
+// at one column. Measured in display cells rather than runes, the way the TUI measures it: a CJK or
+// combining-character name is not as many columns wide as it has runes, and the two renderers padding
+// one agent differently is the thing this column exists to avoid.
+//
+// A verify group named after a long directory can still run past it. That is the one ragged case left,
+// and it is preferred to clipping a name the reader uses to match a row against a finding.
 func (pr *progress) nameWidth() int {
 	width := 0
 	for _, spec := range pr.roster {
-		width = max(width, len([]rune(spec.Name)))
+		width = max(width, lipgloss.Width(spec.Name))
 	}
-	return width
+	if width == 0 {
+		return 0
+	}
+	return max(width, minNameWidth)
 }
 
 // paint colors the agent's name from its own roster entry. An agent the roster does not name — a

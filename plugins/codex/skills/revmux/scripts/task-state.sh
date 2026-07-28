@@ -28,6 +28,7 @@
 #   branch       task.md front matter, printed only when set
 #   base         task.md front matter, printed only when set
 #   meta_error   why the anchors are empty, printed only when task.md would not parse
+#   rounds_error why the round list is empty, printed only when the rounds could not be read
 #   rounds       round names in order, or `none`
 #   round        one per round: <name> ran|claimed|prepared scope=present|MISSING goal=present|absent
 #                profile=present|absent context=<number of files>

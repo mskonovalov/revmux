@@ -68,6 +68,14 @@ ${CLAUDE_SKILL_DIR}/scripts/preflight.sh [profile]
 Checks revmux plus every executor the profile's roster and stages need. Exits `1` naming what is
 missing.
 
+**Pass the profile that will actually run.** Which executors are needed comes from that profile's
+roster, and with no argument preflight checks the resolved *default* instead — so a run under a
+profile the default does not share a roster with is never checked at all, and degrades mid-review over
+a CLI that was missing the whole time. If the user named a profile in any form, resolve it to an exact
+name first — that is Step 3's rule, and nothing in it depends on the scope, so it can be applied here.
+A word passed through unresolved fails preflight as an unknown name. If he named none, run it bare and
+run it again once Step 3 has chosen one.
+
 If revmux is absent:
 
 ```
@@ -294,7 +302,9 @@ separate decision, and this is where the user makes it.
 
 ### Step 7: Fix and re-run, if asked
 
-1. Agree which findings to act on. A `rejected` or `immaterial` verdict means revmux already dismissed it.
+1. Agree which findings to act on. An `immaterial` verdict means revmux already dismissed it — it is in
+   its own list, not in `findings`. A `rejected` one appears nowhere at all: the verifier judged it not
+   real and dropped it, so only the archive's stage snapshots still hold it.
 2. Make the fixes.
 3. Open the next round on the same task and write its own `scope` — the fixes and the range they land
    in — then run it:
