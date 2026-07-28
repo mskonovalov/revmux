@@ -164,6 +164,8 @@ will not read, and an unwritable `./.revmux/` under `revmux init`.
 | `comprehensive` | `bugs+impl`, `arch+quality`, `docs+tests` on claude, plus an adversarial codex peer | default; a real change with real risk |
 | `focused` | one `bugs` agent plus the codex peer | small or time-boxed change, correctness is the concern |
 | `final` | `bugs+impl` plus the codex peer, nothing below major reported | last look before merging |
+| `claude-only` | `bugs+impl`, `arch+quality`, `docs+tests`, `adversarial` — all on claude | codex is unavailable or unwanted |
+| `codex-only` | the same four splits, every one on codex | claude is unavailable or unwanted |
 
 `--profile <name>`. The default is `comprehensive` and is itself a config knob.
 

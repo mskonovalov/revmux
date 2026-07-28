@@ -78,7 +78,7 @@ func TestRun_init(t *testing.T) {
 		for _, org := range set.Provenance() {
 			assert.Equal(t, prompt.LayerProject, org.Layer, "%s fell back, so the tree is not self-sufficient", org.Path)
 		}
-		assert.Equal(t, []string{"comprehensive", "final", "focused"}, set.ProfileNames())
+		assert.Equal(t, []string{"claude-only", "codex-only", "comprehensive", "final", "focused"}, set.ProfileNames())
 		for _, l := range set.Lenses() {
 			assert.NotEmpty(t, l.Description, "lens %s lost its front matter on the way to disk", l.Name)
 		}

@@ -328,7 +328,9 @@ so an invocation that stays outside never picks up the reviewed repository's own
 │   ├── profiles/
 │   │   ├── comprehensive.md  roster front matter + shared preamble + severity bar
 │   │   ├── focused.md
-│   │   └── final.md
+│   │   ├── final.md
+│   │   ├── claude-only.md
+│   │   └── codex-only.md
 │   ├── synthesis.md
 │   └── verify.md
 └── lenses/
@@ -387,6 +389,8 @@ Shipped profiles:
 | `comprehensive` | `bugs+impl`, `arch+quality`, `docs+tests` on claude, plus an adversarial codex peer |
 | `focused` | one `bugs` agent plus the codex peer, for a small or time-boxed change |
 | `final` | `bugs+impl` plus the codex peer, nothing below major reported |
+| `claude-only` | the same four lens splits on claude, no codex peer — for a machine with no codex |
+| `codex-only` | the same four lens splits, every one on codex — no claude reviewer |
 
 ### Lenses
 

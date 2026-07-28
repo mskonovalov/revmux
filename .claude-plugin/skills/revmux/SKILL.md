@@ -179,6 +179,8 @@ writing over it.
 | `comprehensive` (default) | `bugs+impl`, `arch+quality`, `docs+tests`, codex peer | real change, real risk |
 | `focused` | one `bugs` agent plus codex peer | small or time-boxed |
 | `final` | `bugs+impl` plus codex peer, nothing below major | pre-merge |
+| `claude-only` | the same four lens splits, all on claude | no codex available |
+| `codex-only` | the same four lens splits, all on codex | no claude available |
 
 **A profile word is not a profile name.** Map whatever the user said onto the profiles `revmux config`
 reports, matching the name first and the `description` second. revmux rejects an unknown `--profile` at
@@ -190,6 +192,8 @@ fails the run.
 | full, everything, deep, thorough, the works | `comprehensive` |
 | short, quick, fast, light, small, time-boxed | `focused` |
 | last, pre-merge, before merge, strict | `final` |
+| claude only, no codex, skip codex | `claude-only` |
+| codex only, no claude, codex alone | `codex-only` |
 
 Examples, not the list. Match on intent — breadth wants `comprehensive`, speed wants `focused`, a merge
 gate wants `final` — and read the resolved catalog rather than this table, since a user with his own
