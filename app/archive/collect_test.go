@@ -1,0 +1,429 @@
+package archive
+
+import (
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/umputun/revmux/app/finding"
+)
+
+func TestRoundReader_readFullRound(t *testing.T) {
+	// the shape a real four-agent round leaves behind: 26 found, 10 findings plus 7 pre-existing after
+	// synthesis, 9 plus 8 after verification, and a findings.json --min-confidence cut down to 13
+	dir := t.TempDir()
+	writeArtifact(t, dir, foundFile, finding.Report{Sources: roster(), Findings: stageOne()})
+	// verification reclassified one of the ten synthesized findings as pre-existing rather than rejecting it
+	writeArtifact(t, dir, synthesizedFile, finding.Report{
+		Sources:     roster(),
+		Findings:    append(verifiedFindings(), preExisting()[7]),
+		PreExisting: preExisting()[:7],
+	})
+	writeArtifact(t, dir, verifiedFile, finding.Report{
+		Sources: roster(), Findings: verifiedFindings(), PreExisting: preExisting(),
+	})
+	// the four dropped here are two codex findings and two docs+tests ones, so reading survivors from the
+	// filtered report would report 8 and 5 rather than the 10 and 7 the stage snapshot carries
+	writeArtifact(t, dir, findingsFile, finding.Report{
+		Sources: roster(), Findings: []finding.Finding{
+			verifiedFindings()[0], verifiedFindings()[3], verifiedFindings()[5],
+			verifiedFindings()[7], verifiedFindings()[8],
+		},
+		PreExisting: preExisting(),
+	})
+
+	r := newRoundReader(dir)
+	require.NoError(t, r.read())
+	got := r.stats()
+
+	t.Run("agent tallies follow the roster order and the stage snapshots", func(t *testing.T) {
+		assert.Equal(t, []agentStats{
+			{Name: "bugs+impl", Raised: 5, Survived: 5, Corroborated: 4, Tokens: 4986379},
+			{Name: "arch+quality", Raised: 4, Survived: 4, Corroborated: 3, Tokens: 3644082},
+			{Name: "docs+tests", Raised: 7, Survived: 7, Corroborated: 3, Tokens: 6374878},
+			{Name: "codex", Raised: 10, Survived: 10, Corroborated: 4, Tokens: 168467},
+		}, got.agents, "survived comes from stage 3, never from the filtered findings.json")
+	})
+
+	t.Run("lens tallies come from stage 1 and carry their verdict mix", func(t *testing.T) {
+		assert.Equal(t, []lensStats{
+			{Name: "bugs", Raised: 3, Ambiguous: 2, Verdicts: map[finding.Verdict]int{
+				finding.Confirmed: 1, finding.Refined: 1, finding.Unverified: 1}},
+			{Name: "impl", Raised: 4, Ambiguous: 2, Verdicts: map[finding.Verdict]int{
+				finding.Confirmed: 2, finding.Refined: 1, finding.Unverified: 1}},
+			{Name: "architecture", Raised: 3, Ambiguous: 1, Verdicts: map[finding.Verdict]int{
+				finding.Refined: 2, finding.Unverified: 1}},
+			{Name: "quality", Raised: 2, Ambiguous: 1, Verdicts: map[finding.Verdict]int{
+				finding.Confirmed: 1, finding.Refined: 1}},
+			{Name: "docs", Raised: 6, Ambiguous: 1, Verdicts: map[finding.Verdict]int{
+				finding.Confirmed: 2, finding.Refined: 2, finding.Unverified: 2}},
+			{Name: "tests", Raised: 2, Ambiguous: 1, Verdicts: map[finding.Verdict]int{finding.Confirmed: 2}},
+			{Name: "adversarial", Raised: 10, Verdicts: map[finding.Verdict]int{
+				finding.Confirmed: 3, finding.Refined: 3, finding.Unverified: 3, finding.PreExisting: 1}},
+		}, got.lenses)
+	})
+
+	t.Run("stage attrition chains the artifacts the round carries", func(t *testing.T) {
+		assert.Equal(t, []stageFlow{
+			{Name: "synthesis", In: 26, Out: 17},
+			{Name: "verify", In: 17, Out: 17},
+			{Name: "report", In: 17, Out: 13},
+		}, got.stages, "the report flow is what --min-confidence removed")
+	})
+}
+
+func TestRoundReader_read(t *testing.T) {
+	t.Run("an agent whose findings all get dropped survives nothing", func(t *testing.T) {
+		dir := t.TempDir()
+		writeArtifact(t, dir, foundFile, finding.Report{
+			Sources: sources(agent("keeper", "bugs"), agent("noise", "quality")),
+			Findings: slices.Concat(
+				raised(2, "keeper", "bugs"),
+				raised(3, "noise", "quality"),
+			),
+		})
+		writeArtifact(t, dir, verifiedFile, finding.Report{
+			Sources:  sources(agent("keeper", "bugs"), agent("noise", "quality")),
+			Findings: raised(2, "keeper", "bugs"),
+		})
+
+		r := newRoundReader(dir)
+		require.NoError(t, r.read())
+		assert.Equal(t, []agentStats{
+			{Name: "keeper", Raised: 2, Survived: 2},
+			{Name: "noise", Raised: 3},
+		}, r.stats().agents, "raised and survived are read from different snapshots and must not track each other")
+	})
+
+	t.Run("a run that skipped verification counts survivors from the synthesis snapshot", func(t *testing.T) {
+		dir := t.TempDir()
+		writeArtifact(t, dir, foundFile, finding.Report{
+			Sources: sources(agent("solo", "bugs")), Findings: raised(4, "solo", "bugs"),
+		})
+		writeArtifact(t, dir, synthesizedFile, finding.Report{
+			Sources: sources(agent("solo", "bugs")), Findings: raised(2, "solo", "bugs"),
+		})
+
+		r := newRoundReader(dir)
+		require.NoError(t, r.read())
+		got := r.stats()
+		assert.Equal(t, []agentStats{{Name: "solo", Raised: 4, Survived: 2}}, got.agents,
+			"stages/3-verified.json was never written, so the stage before it is the last word")
+		assert.Equal(t, []stageFlow{{Name: "synthesis", In: 4, Out: 2}}, got.stages,
+			"a stage nothing wrote is not a transition that happened")
+	})
+
+	t.Run("a survivor with no verdict counts as unverified", func(t *testing.T) {
+		dir := t.TempDir()
+		writeArtifact(t, dir, foundFile, finding.Report{
+			Sources: sources(agent("solo", "bugs")), Findings: raised(2, "solo", "bugs"),
+		})
+		writeArtifact(t, dir, verifiedFile, finding.Report{
+			Sources:     sources(agent("solo", "bugs")),
+			Findings:    []finding.Finding{{Sources: []string{"solo"}, Lenses: []string{"bugs"}, Verdict: finding.Confirmed}},
+			PreExisting: []finding.Finding{{Sources: []string{"solo"}, Lenses: []string{"bugs"}}},
+		})
+
+		r := newRoundReader(dir)
+		require.NoError(t, r.read())
+		assert.Equal(t, map[finding.Verdict]int{finding.Confirmed: 1, finding.Unverified: 1},
+			r.stats().lenses[0].Verdicts, "a pre-existing issue is never verified, and unverified says exactly that")
+	})
+
+	t.Run("degraded is the per-agent flag as well as the explicit list", func(t *testing.T) {
+		dir := t.TempDir()
+		flagged := agent("flagged", "bugs")
+		flagged.Degraded = true
+		writeArtifact(t, dir, foundFile, finding.Report{
+			Sources: finding.SourceStatus{
+				Expected: 3, Reported: 1, DegradedSources: []string{"listed"},
+				Agents: []finding.SourceStat{agent("fine", "docs"), flagged, agent("listed", "tests")},
+			},
+			Findings: raised(1, "fine", "docs"),
+		})
+
+		r := newRoundReader(dir)
+		require.NoError(t, r.read())
+		assert.Equal(t, []agentStats{
+			{Name: "fine", Raised: 1, Survived: 1},
+			{Name: "flagged", DegradedRounds: 1},
+			{Name: "listed", DegradedRounds: 1},
+		}, r.stats().agents, "the two records of a degrade disagree, so both count")
+	})
+
+	t.Run("a round with no stages/1-found.json is refused", func(t *testing.T) {
+		dir := t.TempDir()
+		writeArtifact(t, dir, findingsFile, finding.Report{Sources: sources(agent("solo", "bugs"))})
+
+		err := newRoundReader(dir).read()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), foundFile)
+	})
+
+	t.Run("an unreadable snapshot is refused rather than read as an absent one", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root reads a file with no permissions")
+		}
+		dir := t.TempDir()
+		writeArtifact(t, dir, foundFile, finding.Report{Sources: sources(agent("solo", "bugs"))})
+		unreadable(t, filepath.Join(dir, foundFile))
+
+		err := newRoundReader(dir).read()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), foundFile)
+	})
+
+	t.Run("a malformed snapshot is refused rather than half-counted", func(t *testing.T) {
+		dir := t.TempDir()
+		writeArtifact(t, dir, foundFile, finding.Report{
+			Sources: sources(agent("solo", "bugs")), Findings: raised(1, "solo", "bugs"),
+		})
+		require.NoError(t, os.WriteFile(filepath.Join(dir, verifiedFile), []byte(`{"findings":`), 0o600))
+
+		err := newRoundReader(dir).read()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), verifiedFile)
+	})
+}
+
+func TestRoundReader_ambiguousLenses(t *testing.T) {
+	tests := []struct {
+		name      string
+		lensSet   []string
+		named     []string
+		ambiguous bool
+	}{
+		{name: "the agent's whole set says only that the agent raised it", lensSet: []string{"bugs", "impl"},
+			named: []string{"bugs", "impl"}, ambiguous: true},
+		{name: "the whole set in another order is the same set", lensSet: []string{"bugs", "impl"},
+			named: []string{"impl", "bugs"}, ambiguous: true},
+		{name: "one lens of two is attributable", lensSet: []string{"bugs", "impl"},
+			named: []string{"impl"}, ambiguous: false},
+		{name: "two lenses of three are attributable", lensSet: []string{"bugs", "impl", "docs"},
+			named: []string{"bugs", "docs"}, ambiguous: false},
+		{name: "a single-lens agent can never be ambiguous", lensSet: []string{"adversarial"},
+			named: []string{"adversarial"}, ambiguous: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeArtifact(t, dir, foundFile, finding.Report{
+				Sources:  sources(agent("one", tt.lensSet...)),
+				Findings: []finding.Finding{{Sources: []string{"one"}, Lenses: tt.named}},
+			})
+
+			r := newRoundReader(dir)
+			require.NoError(t, r.read())
+			want := 0
+			if tt.ambiguous {
+				want = 1
+			}
+			for _, l := range r.stats().lenses {
+				if !slices.Contains(tt.named, l.Name) {
+					continue
+				}
+				assert.Equal(t, want, l.Ambiguous, "lens %s", l.Name)
+			}
+		})
+	}
+}
+
+func TestRoundReader_readEvents(t *testing.T) {
+	t.Run("retries are counted per agent", func(t *testing.T) {
+		dir := t.TempDir()
+		writeArtifact(t, dir, foundFile, finding.Report{
+			Sources: sources(agent("bugs+impl", "bugs"), agent("codex", "adversarial")),
+		})
+		writeEvents(t, dir,
+			`{"kind":"stage","stage":"find"}`,
+			`{"kind":"agent_retried","agent":"bugs+impl","text":"stalled"}`,
+			`{"kind":"agent_activity","agent":"codex","text":"agent_retried"}`,
+			`{"kind":"agent_retried","agent":"codex","text":"rate limited"}`,
+			`{"kind":"agent_retried","agent":"bugs+impl","text":"stalled again"}`,
+			`{"kind":"agent_done","agent":"codex"}`,
+		)
+
+		r := newRoundReader(dir)
+		require.NoError(t, r.read())
+		assert.Equal(t, []agentStats{{Name: "bugs+impl", Retries: 2}, {Name: "codex", Retries: 1}}, r.stats().agents,
+			"the kind decides, not a text that happens to name one")
+	})
+
+	t.Run("a round with no events.jsonl has no retries", func(t *testing.T) {
+		dir := t.TempDir()
+		writeArtifact(t, dir, foundFile, finding.Report{
+			Sources: sources(agent("solo", "bugs")), Findings: raised(1, "solo", "bugs"),
+		})
+
+		r := newRoundReader(dir)
+		require.NoError(t, r.read())
+		assert.Equal(t, []agentStats{{Name: "solo", Raised: 1, Survived: 1}}, r.stats().agents)
+	})
+
+	t.Run("a last line an interrupted run never finished is skipped", func(t *testing.T) {
+		dir := t.TempDir()
+		writeArtifact(t, dir, foundFile, finding.Report{Sources: sources(agent("solo", "bugs"))})
+		require.NoError(t, os.WriteFile(filepath.Join(dir, eventsFile),
+			[]byte("{\"kind\":\"agent_retried\",\"agent\":\"solo\"}\n{\"kind\":\"agent_ret"), 0o600))
+
+		r := newRoundReader(dir)
+		require.NoError(t, r.read(), "a run killed mid-write leaves exactly this")
+		assert.Equal(t, []agentStats{{Name: "solo", Retries: 1}}, r.stats().agents)
+	})
+
+	t.Run("an unreadable events.jsonl is refused rather than counted as none", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root reads a file with no permissions")
+		}
+		dir := t.TempDir()
+		writeArtifact(t, dir, foundFile, finding.Report{Sources: sources(agent("solo", "bugs"))})
+		writeEvents(t, dir, `{"kind":"agent_retried","agent":"solo"}`)
+		unreadable(t, filepath.Join(dir, eventsFile))
+
+		err := newRoundReader(dir).read()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), eventsFile)
+	})
+
+	t.Run("an event line larger than a scan buffer is still read", func(t *testing.T) {
+		dir := t.TempDir()
+		writeArtifact(t, dir, foundFile, finding.Report{Sources: sources(agent("solo", "bugs"))})
+		big := `{"kind":"findings","agent":"solo","text":"` + fill(200_000) + `"}`
+		writeEvents(t, dir, big, `{"kind":"agent_retried","agent":"solo"}`)
+
+		r := newRoundReader(dir)
+		require.NoError(t, r.read())
+		assert.Equal(t, 1, r.stats().agents[0].Retries, "a findings event carries every finding's body")
+	})
+}
+
+// fill is n bytes of filler for an oversized event line.
+func fill(n int) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = 'x'
+	}
+	return string(b)
+}
+
+// writeArtifact stores one findings artifact the way a run leaves it, creating the stages/ directory the
+// snapshots live in.
+func writeArtifact(t *testing.T, dir, name string, rep finding.Report) {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
+	f, err := os.Create(path) //nolint:gosec // path built from t.TempDir
+	require.NoError(t, err)
+	require.NoError(t, rep.JSON(f))
+	require.NoError(t, f.Close())
+}
+
+// unreadable strips a written artifact of every permission, restoring them afterwards so the temp
+// directory can still be removed.
+func unreadable(t *testing.T, path string) {
+	t.Helper()
+	require.NoError(t, os.Chmod(path, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+}
+
+// writeEvents stores the run's decision record, one JSON object per line.
+func writeEvents(t *testing.T, dir string, lines ...string) {
+	t.Helper()
+	out := strings.Join(lines, "\n") + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, eventsFile), []byte(out), 0o600))
+}
+
+// agent is one roster entry as a stage snapshot records it.
+func agent(name string, lenses ...string) finding.SourceStat {
+	return finding.SourceStat{Name: name, Lenses: lenses, Executor: "claude"}
+}
+
+func sources(agents ...finding.SourceStat) finding.SourceStatus {
+	return finding.SourceStatus{Expected: len(agents), Reported: len(agents), Agents: agents}
+}
+
+// raised is n stage-1 findings from one agent under one lens combination, which is the only shape stage 1
+// carries: find stamps sources with the executing agent alone.
+func raised(n int, source string, lenses ...string) []finding.Finding {
+	out := make([]finding.Finding, n)
+	for i := range out {
+		out[i] = finding.Finding{
+			ID:      source + "-" + strconv.Itoa(i+1),
+			Sources: []string{source},
+			Lenses:  lenses,
+		}
+	}
+	return out
+}
+
+func roster() finding.SourceStatus {
+	return finding.SourceStatus{
+		Expected: 4, Reported: 4,
+		Agents: []finding.SourceStat{
+			{Name: "bugs+impl", Lenses: []string{"bugs", "impl"}, Executor: "claude", Tokens: 4986379},
+			{Name: "arch+quality", Lenses: []string{"architecture", "quality"}, Executor: "claude", Tokens: 3644082},
+			{Name: "docs+tests", Lenses: []string{"docs", "tests"}, Executor: "claude", Tokens: 6374878},
+			{Name: "codex", Lenses: []string{"adversarial"}, Executor: "codex", Tokens: 168467},
+		},
+	}
+}
+
+// stageOne is the 26 findings the four agents raised, in the lens distribution a real round produced.
+func stageOne() []finding.Finding {
+	return slices.Concat(
+		raised(2, "bugs+impl", "bugs", "impl"),
+		raised(2, "bugs+impl", "impl"),
+		raised(1, "bugs+impl", "bugs"),
+		raised(1, "arch+quality", "quality"),
+		raised(1, "arch+quality", "architecture", "quality"),
+		raised(2, "arch+quality", "architecture"),
+		raised(1, "docs+tests", "docs", "tests"),
+		raised(5, "docs+tests", "docs"),
+		raised(1, "docs+tests", "tests"),
+		raised(10, "codex", "adversarial"),
+	)
+}
+
+// verifiedFindings is what verification left, each carrying the union of sources and lenses synthesis
+// derived for it.
+func verifiedFindings() []finding.Finding {
+	return []finding.Finding{
+		merged(finding.Refined, []string{"docs+tests", "codex"}, "docs", "adversarial"),
+		merged(finding.Confirmed, []string{"codex"}, "adversarial"),
+		merged(finding.Refined, []string{"codex"}, "adversarial"),
+		merged(finding.Refined, []string{"bugs+impl", "arch+quality", "docs+tests", "codex"},
+			"impl", "architecture", "docs", "adversarial"),
+		merged(finding.Confirmed, []string{"docs+tests"}, "docs"),
+		merged(finding.Confirmed, []string{"bugs+impl", "arch+quality", "docs+tests", "codex"},
+			"bugs", "impl", "quality", "docs", "tests", "adversarial"),
+		merged(finding.Confirmed, []string{"docs+tests"}, "tests"),
+		merged(finding.Refined, []string{"bugs+impl", "arch+quality"}, "bugs", "architecture", "quality"),
+		merged(finding.Confirmed, []string{"bugs+impl", "codex"}, "impl", "adversarial"),
+	}
+}
+
+// preExisting is the eight issues verification routed out of the findings list. Seven carry no verdict at
+// all — synthesis split them off before the stage ran — and one was reclassified by it.
+func preExisting() []finding.Finding {
+	return []finding.Finding{
+		merged("", []string{"codex"}, "adversarial"),
+		merged("", []string{"bugs+impl"}, "bugs", "impl"),
+		merged("", []string{"docs+tests"}, "docs"),
+		merged("", []string{"codex"}, "adversarial"),
+		merged("", []string{"codex"}, "adversarial"),
+		merged("", []string{"docs+tests"}, "docs"),
+		merged("", []string{"arch+quality"}, "architecture"),
+		merged(finding.PreExisting, []string{"codex"}, "adversarial"),
+	}
+}
+
+func merged(verdict finding.Verdict, srcs []string, lenses ...string) finding.Finding {
+	return finding.Finding{Sources: srcs, Lenses: lenses, Verdict: verdict}
+}

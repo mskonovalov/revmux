@@ -391,14 +391,31 @@ Exports (justification per item: who outside the package calls this?):
 - Create: `app/archive/stats_test.go`
 - Create: `app/archive/collect_test.go`
 
-- [ ] define the shapes from Technical Details in `app/archive/stats.go`, each field's godoc naming the artifact its number comes from
-- [ ] implement `roundReader` in `app/archive/collect.go` with the round directory as a **field** set by `newRoundReader`, not a per-call argument that two methods could disagree about
-- [ ] decode the three stage snapshots as `finding.Report`: `Raised`/`Ambiguous` from stage 1, `Survived`/`Corroborated`/`Verdicts` from stage 3 as the union of all four arrays, roster and tokens from `sources.agents[]`
-- [ ] take degraded from `SourceStatus.DegradedNames()` rather than the event stream alone, since that method exists precisely because the two records disagree
-- [ ] implement `readEvents` for retry counts using a local partial struct like `history.record`, not an `app/pipeline` import
-- [ ] decode tolerantly like `History` — an unreadable or half-written round is skipped, never fatal
-- [ ] write tests over a hand-built temp round: agent tallies, lens tallies including an ambiguous case and a genuinely-both-lenses case, stage attrition, a round with no `events.jsonl`, and a round where `findings.json` is filtered smaller than stage 3 (asserting `Survived` follows stage 3)
-- [ ] run tests - must pass before next task
+- [x] define the shapes from Technical Details in `app/archive/stats.go`, each field's godoc naming the artifact its number comes from
+- [x] implement `roundReader` in `app/archive/collect.go` with the round directory as a **field** set by `newRoundReader`, not a per-call argument that two methods could disagree about
+- [x] decode the three stage snapshots as `finding.Report`: `Raised`/`Ambiguous` from stage 1, `Survived`/`Corroborated`/`Verdicts` from stage 3 as the union of all four arrays, roster and tokens from `sources.agents[]`
+- [x] take degraded from `SourceStatus.DegradedNames()` rather than the event stream alone, since that method exists precisely because the two records disagree
+- [x] implement `readEvents` for retry counts using a local partial struct like `history.record`, not an `app/pipeline` import
+- [x] decode tolerantly like `History` — an unreadable or half-written round is skipped, never fatal
+- [x] write tests over a hand-built temp round: agent tallies, lens tallies including an ambiguous case and a genuinely-both-lenses case, stage attrition, a round with no `events.jsonl`, and a round where `findings.json` is filtered smaller than stage 3 (asserting `Survived` follows stage 3)
+- [x] run tests - must pass before next task
+
+**Decisions taken while implementing (nothing in the plan settled them):**
+
+- **Survivors come from the last stage snapshot the round carries, which is `stages/3-verified.json` for a
+  full pipeline.** `--no-synthesis` and `--no-verify` each write no snapshot for the stage they skip, and
+  counting `Survived` as zero for every agent on such a round is exactly the undercount the plan warns
+  about. `findings.json` is still never a survivor source.
+- **A survivor with no verdict counts as `finding.Unverified`.** Pre-existing issues and open questions are
+  split off before verification and carry `""`, which would emit a `"": n` key in the verdict map;
+  `unverified` is what "was not checked" already means in the vocabulary.
+- **A fourth `stageFlow` entry named `report` carries the `--min-confidence` attrition**, since Technical
+  Details lists "the report's own findings" among the counts. `find` has no entry: nothing goes into it.
+- **`namedReport` is a fourth unexported type beyond the Design Contract's list**, holding one findings
+  artifact and the stage that produced it, so the attrition chain runs over only the artifacts on disk.
+- **`stageFind`/`stageSynthesis`/`stageVerify`/`stageReport` are spelled in `app/archive`**, the same
+  duplication the plan already sanctions for `agent_retried`, and for the same reason: the artifact package
+  must not import the orchestrator.
 
 ### Task 7: Aggregate rounds and tasks
 

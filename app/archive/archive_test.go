@@ -23,11 +23,15 @@ const taskName = "pr-123"
 // so reading them from the same constants the implementation joins its paths from would assert nothing.
 // Every test file in this package uses these rather than app/task's, so the pinning is not half-done.
 const (
-	inputDir     = "input"
-	manifestFile = "manifest.json"
-	findingsFile = "findings.json"
-	scopeFile    = "scope.md"
-	metaFile     = "task.md"
+	inputDir        = "input"
+	manifestFile    = "manifest.json"
+	findingsFile    = "findings.json"
+	scopeFile       = "scope.md"
+	metaFile        = "task.md"
+	eventsFile      = "events.jsonl"
+	foundFile       = "stages/1-found.json"
+	synthesizedFile = "stages/2-synthesized.json"
+	verifiedFile    = "stages/3-verified.json"
 )
 
 func TestNew(t *testing.T) {
