@@ -280,15 +280,25 @@ existing `pr-123`.
 **`revmux init` materializes what resolved; `revmux stats` reports what the archive recorded.**
 Between them a caller can localize the review configuration and then judge it from the runs it produced,
 which is what makes the configuration something other than text authored once and never revisited.
-`init` writes the winning layer's own bytes into `./.revmux/`, front matter included, and never overwrites —
-materializing the embedded text under a user who has overrides hands him a tree that reverts his review, and
-a body-only write produces one the next `prompt.Load` rejects.
+`init` writes the winning layer's own bytes into `./.revmux/`, front matter included, and never overwrites a
+prompt file — materializing the embedded text under a user who has overrides hands him a tree that reverts
+his review, and a body-only write produces one the next `prompt.Load` rejects.
+The config is the deliberate exception, because settings and prompt text are different kinds of thing: a
+`./.revmux/config` holding no uncommented key is rewritten with the current template, which is what lets an
+upgrade move a default the user never set. Only one carrying a setting is left alone, so `created` in the
+payload describes the prompt files and the config is reported as a path.
 `--dump-defaults` stays the opposite direction and the only way to reach the embedded bytes.
-`stats` takes every number from the per-stage snapshots and never from `findings.json`, which is the
-`--min-confidence`-filtered report: counting survivors there undercounts them, and the agent that looks
-unproductive as a result is the one a reflection agent drops.
-It reads and writes nothing, and it enumerates tasks through `task.List` exactly as `revmux config` does, so
-the two can never name different task sets.
+`stats` takes every survivor and every per-lens number from the per-stage snapshots, never from
+`findings.json`, which is the `--min-confidence`-filtered report: counting survivors there undercounts them,
+and the agent that looks unproductive as a result is the one a reflection agent drops.
+Two numbers come from elsewhere by design, and each says so in its godoc — the `report` entry in the stage
+chain reads `findings.json` precisely to measure what that filter removed, and `retries` is recorded by
+`events.jsonl` alone, since no stage snapshot carries a relaunch.
+It opens no round, claims nothing and writes nothing, and it enumerates tasks through `task.List` exactly as
+`revmux config` does, so the two can never name different task sets.
+A round whose artifacts will not decode is named in `skipped` rather than dropped without a word: three
+rounds where five ran reads as a smaller corpus, and the numbers that shrank are the ones a reflection agent
+acts on.
 
 **The layout is revmux's own detail, so a caller is handed paths rather than a shape to reproduce.**
 `revmux new --task <id> --run <name>` creates the round and prints every path the caller writes to, absolute,
@@ -331,6 +341,15 @@ Stamping happens in `find`, not synthesis, or `--no-synthesis` runs carry invent
   local partial struct that spells `"agent_retried"` itself, rather than importing the orchestrator into
   the artifact package, so a rename that misses it compiles, passes and silently reports every agent's
   retry count as zero — which reads as supervision never having to intervene.
+  The stage names are the same duplication for the same reason: `app/archive` spells `find`, `synthesis`,
+  `verify` and `report` itself, and `stageFlow.Name` puts them in the JSON beside the ones `app/pipeline`
+  fills `finding.Report.Stats.Stages[].Name` with. A rename on one side compiles and passes, and leaves one
+  archive's two arrays calling the same stage different things.
+- A new subcommand needs: the `options` field with its `command:` tag, the `show*` selection field, the
+  back-pointer in `parseArgs`, and the case in `run()`. Then five places enumerate the set literally and go
+  stale silently — the stdout carve-out above, the same list in `.claude/rules/config.md`, the
+  "four subcommands" sentence plus the section in README, the project-structure list in this file, and the
+  subcommand sections in **both** skill trees.
 - A new lens file needs an entry in at least one shipped profile, or nothing will ever run it.
 - A change to the task-directory layout starts at the constants in `app/task`, which `app/archive`,
   `app/pipeline` and `package main` join every path from — the run's own artifacts included, so a stage

@@ -120,6 +120,26 @@ func TestRoundReader_read(t *testing.T) {
 			"a stage nothing wrote is not a transition that happened")
 	})
 
+	// --no-synthesis --no-verify writes neither snapshot, so stages/1-found.json is the last word and
+	// nothing filtered anything: survived equals raised because no stage ran, not because the agent earned it
+	t.Run("a run that skipped both stages counts stage 1 as its own survivors", func(t *testing.T) {
+		dir := t.TempDir()
+		writeArtifact(t, dir, foundFile, finding.Report{
+			Sources: sources(agent("solo", "bugs")), Findings: raised(6, "solo", "bugs"),
+		})
+		writeArtifact(t, dir, findingsFile, finding.Report{
+			Sources: sources(agent("solo", "bugs")), Findings: raised(2, "solo", "bugs"),
+		})
+
+		r := newRoundReader(dir)
+		require.NoError(t, r.read())
+		got := r.stats()
+		assert.Equal(t, []agentStats{{Name: "solo", Raised: 6, Survived: 6}}, got.agents,
+			"the last stage snapshot is stage 1 itself, and findings.json is never a survivor source")
+		assert.Equal(t, []stageFlow{{Name: "report", In: 6, Out: 2}}, got.stages,
+			"only the --min-confidence cut happened, and neither skipped stage is reported as a transition")
+	})
+
 	t.Run("a survivor with no verdict counts as unverified", func(t *testing.T) {
 		dir := t.TempDir()
 		writeArtifact(t, dir, foundFile, finding.Report{
@@ -226,12 +246,15 @@ func TestRoundReader_ambiguousLenses(t *testing.T) {
 			if tt.ambiguous {
 				want = 1
 			}
+			checked := 0
 			for _, l := range r.stats().lenses {
 				if !slices.Contains(tt.named, l.Name) {
 					continue
 				}
 				assert.Equal(t, want, l.Ambiguous, "lens %s", l.Name)
+				checked++
 			}
+			assert.Len(t, tt.named, checked, "every named lens must be asserted on, or the case checks nothing")
 		})
 	}
 }
@@ -255,6 +278,25 @@ func TestRoundReader_readEvents(t *testing.T) {
 		require.NoError(t, r.read())
 		assert.Equal(t, []agentStats{{Name: "bugs+impl", Retries: 2}, {Name: "codex", Retries: 1}}, r.stats().agents,
 			"the kind decides, not a text that happens to name one")
+	})
+
+	// the synthesis stage retries under the same event kind, naming itself as the agent. Counted blind it
+	// becomes a source no roster contains, reported beside the agents that really ran
+	t.Run("a stage retry is not an agent", func(t *testing.T) {
+		dir := t.TempDir()
+		writeArtifact(t, dir, foundFile, finding.Report{
+			Sources: sources(agent("bugs+impl", "bugs")), Findings: raised(1, "bugs+impl", "bugs"),
+		})
+		writeEvents(t, dir,
+			`{"kind":"agent_retried","agent":"synthesis","text":"529"}`,
+			`{"kind":"agent_retried","agent":"bugs+impl","text":"stalled"}`,
+			`{"kind":"agent_retried","text":"no agent at all"}`,
+		)
+
+		r := newRoundReader(dir)
+		require.NoError(t, r.read())
+		assert.Equal(t, []agentStats{{Name: "bugs+impl", Raised: 1, Survived: 1, Retries: 1}}, r.stats().agents,
+			"only a name the roster registered is an agent, and synthesis is not one")
 	})
 
 	t.Run("a round with no events.jsonl has no retries", func(t *testing.T) {
@@ -364,7 +406,7 @@ func TestCollectStats(t *testing.T) {
 
 	t.Run("totals match names across tasks and append the ones only one task ran", func(t *testing.T) {
 		assert.Equal(t, taskStats{
-			Rounds: 3,
+			Rounds: 3, Skipped: []string{},
 			Agents: []agentStats{
 				{Name: "bugs+impl", Raised: 4, Survived: 1, Corroborated: 1},
 				{Name: "codex", Raised: 4, Survived: 3, Corroborated: 1},
@@ -450,7 +492,7 @@ func TestCollectStats_roundGating(t *testing.T) {
 			"an open round's artifacts belong to a run that never finished")
 	})
 
-	t.Run("a round whose artifacts will not decode is left out rather than folded in half", func(t *testing.T) {
+	t.Run("a round whose artifacts will not decode is left out and named", func(t *testing.T) {
 		root := t.TempDir()
 		recordRound(t, filepath.Join(root, "pr-123", "01-initial"), map[string]finding.Report{
 			foundFile: {Sources: sources(agent("solo", "bugs")), Findings: raised(2, "solo", "bugs")},
@@ -465,6 +507,10 @@ func TestCollectStats_roundGating(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, got.Tasks[0].Rounds, "rounds counts the ones these numbers were read from")
 		assert.Equal(t, []agentStats{{Name: "solo", Raised: 2, Survived: 2}}, got.Tasks[0].Agents)
+
+		require.Len(t, got.Tasks[0].Skipped, 1, "a corpus that shrank silently reads as a smaller one")
+		assert.Contains(t, got.Tasks[0].Skipped[0], verifiedFile, "the reason names the artifact that would not decode")
+		assert.Equal(t, got.Tasks[0].Skipped, got.Totals.Skipped, "the totals carry it too, or the fold hides it")
 	})
 
 	t.Run("a task with no rounds is still reported, so both commands name the same tasks", func(t *testing.T) {
@@ -536,7 +582,7 @@ func TestCollectStats_tasksRoot(t *testing.T) {
 func TestTaskStats_add(t *testing.T) {
 	t.Run("an empty accumulator takes the other side whole", func(t *testing.T) {
 		got := newTaskStats("pr-123")
-		got.add(taskStats{Rounds: 1,
+		got.add(taskStats{Rounds: 1, Skipped: []string{"02-broken: decode stages/3-verified.json"},
 			Agents: []agentStats{{Name: "solo", Raised: 2, Survived: 1, Corroborated: 1,
 				DegradedRounds: 1, Retries: 3, Tokens: 100}},
 			Lenses: []lensStats{{Name: "bugs", Raised: 2, Ambiguous: 1,
@@ -545,6 +591,7 @@ func TestTaskStats_add(t *testing.T) {
 		})
 
 		assert.Equal(t, taskStats{ID: "pr-123", Rounds: 1,
+			Skipped: []string{"02-broken: decode stages/3-verified.json"},
 			Agents: []agentStats{{Name: "solo", Raised: 2, Survived: 1, Corroborated: 1,
 				DegradedRounds: 1, Retries: 3, Tokens: 100}},
 			Lenses: []lensStats{{Name: "bugs", Raised: 2, Ambiguous: 1,
@@ -633,12 +680,18 @@ func writeArtifact(t *testing.T, dir, name string, rep finding.Report) {
 	require.NoError(t, f.Close())
 }
 
-// unreadable strips a written artifact of every permission, restoring them afterwards so the temp
-// directory can still be removed.
+// unreadable strips an artifact of every permission, restoring them afterwards so the temp directory can
+// still be removed. A directory gets its execute bit back too, or cleanup cannot walk into it.
 func unreadable(t *testing.T, path string) {
 	t.Helper()
+	fi, err := os.Stat(path)
+	require.NoError(t, err)
+	restore := os.FileMode(0o600)
+	if fi.IsDir() {
+		restore = 0o700
+	}
 	require.NoError(t, os.Chmod(path, 0o000))
-	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	t.Cleanup(func() { _ = os.Chmod(path, restore) })
 }
 
 // writeEvents stores the run's decision record, one JSON object per line.

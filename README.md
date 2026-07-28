@@ -517,6 +517,10 @@ listed in the TUI. Open questions, pre-existing and immaterial findings pass thr
 | `1` | findings above `--min-confidence` |
 | `2` | tool error: bad config, unreadable prompt tree, an omitted `--run`, a round with no `input/` or an empty `scope.md`, a round that has already run or is being written by another run, an unwritable run artifact, or every source degraded |
 
+The subcommands use the same `2` for their own tool errors: a `revmux stats --task` naming no task under the
+tasks root, a tasks root or task directory that could not be read, and an unwritable `./.revmux/` under
+`revmux init`. None of them ever exits `1` — there is no report and so no threshold to be above.
+
 `1` is a normal outcome, not a failure. Callers script against these values.
 
 A per-agent tee is the one artifact whose failure degrades a source rather than failing the run; every other
@@ -689,12 +693,14 @@ It writes nothing outside `./.revmux/` and prints the paths as JSON on stdout:
 ```
 
 `layer` is where the content came from — `project`, `user` or `embedded`. `created` is false for a file
-already there: it is reported and left byte-identical, so a second run changes nothing and nothing you
-customized is ever overwritten. Take the paths from that output rather than joining them yourself.
+already there: it is reported and left byte-identical, so a second run changes nothing and no prompt file
+you customized is ever overwritten. Take the paths from that output rather than joining them yourself.
 
-The config ships commented out and the prompt files ship live, because they are different kinds of thing: a
-settings file holding only comments can be replaced wholesale on upgrade, while prompt markdown is the text
-an agent executes and has to be there to be read.
+`created` describes the entries in `files[]`. The config is reported as a path alone because it is not
+materialized the same way: it ships commented out, and one holding no uncommented key — including a fresh
+one and one you have only annotated — is rewritten with the current template, which is what lets an upgrade
+move a default you never set. A config carrying an actual setting is left exactly as it is. Prompt files
+ship live instead, because they are the text an agent executes and have to be there to be read.
 
 ## `revmux stats`
 
@@ -709,7 +715,7 @@ $ revmux stats --task pr-123      # one task
 ```json
 {
   "tasks": [
-    {"id": "pr-123", "rounds": 5,
+    {"id": "pr-123", "rounds": 5, "skipped": [],
      "agents": [{"name": "bugs+impl", "raised": 8, "survived": 8, "corroborated": 5,
                  "degraded_rounds": 0, "retries": 0, "tokens": 10441185}],
      "lenses": [{"name": "bugs", "raised": 14, "ambiguous": 3,
@@ -718,7 +724,7 @@ $ revmux stats --task pr-123      # one task
                 {"name": "verify", "in": 46, "out": 46},
                 {"name": "report", "in": 46, "out": 46}]}
   ],
-  "totals": {"rounds": 5, "agents": [], "lenses": [], "stages": []}
+  "totals": {"rounds": 5, "skipped": [], "agents": [], "lenses": [], "stages": []}
 }
 ```
 
@@ -727,7 +733,9 @@ carries those same three arrays folded across tasks rather than the empty ones s
 
 `totals` is every task folded together and carries no `id`. `rounds` is the rounds the numbers were read
 from: a round prepared but never run is not one, and neither is a round an interrupted run left
-half-written — those are skipped rather than counted as zeroes.
+half-written — those are skipped rather than counted as zeroes. A round skipped because its artifacts would
+not decode is named in `skipped`, with the artifact and the reason, so a corpus that shrank does not read as
+a corpus that is simply smaller.
 
 **Per agent.** `raised` is what it put on the table before synthesis merged anything; `survived` is what was
 still there in the round's last stage snapshot, counted across all four of that report's arrays; and
@@ -738,16 +746,23 @@ than model-supplied — revmux stamps `sources` from the process that emitted th
 across merged findings from different agents. `ambiguous` is the part of it attributable only by the raising
 agent's whole lens set, which is what the find stage falls back to when the model named no valid lens — so a
 per-lens number is only as good as its `ambiguous` share, and the two belong together wherever either is
-quoted. `verdicts` counts survivors only, so a finding the verifier rejected appears in none of them:
-rejection shows up as the gap between `raised` and the verdict total.
+quoted. `verdicts` counts survivors only, so a finding the verifier rejected appears in none of them.
+
+A lens whose `raised` sits well above its verdict total lost findings somewhere between the two, but not
+necessarily to the verifier: synthesis merging two findings that carry the same lens produces the same gap,
+and nothing in the output tells the two apart. Read it as attrition to look into rather than as rejections
+counted.
 
 **Per stage.** `in` and `out` for `synthesis`, `verify` and `report`, each the union of that report's four
 finding arrays. `report` carries the `--min-confidence` attrition. There is no `find` entry, since nothing
-goes into it.
+goes into it. A run with `--no-synthesis` or `--no-verify` has no entry for the stage it skipped, and one
+that skipped both reports `survived` equal to `raised` for every agent — nothing filtered anything.
 
-Every number comes from the per-stage snapshots under `stages/`, never from the round's `findings.json` —
-that one is the filtered report, and counting survivors there undercounts them. The single exception is the
-`report` stage entry, which reads `findings.json` precisely to measure what the filter removed.
+Every survivor and every per-lens number comes from the per-stage snapshots under `stages/`, never from the
+round's `findings.json` — that one is the filtered report, and counting survivors there undercounts them.
+Two numbers come from elsewhere and say so: the `report` stage entry reads `findings.json` precisely to
+measure what the filter removed, and `retries` comes from `events.jsonl`, the only artifact that records a
+relaunch.
 
 An empty tasks root is a valid empty document rather than an error; a `--task` naming no task under the root
 exits `2`, because a typo answered with zeroes reads as a task with no history. `degraded_rounds` and

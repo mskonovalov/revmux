@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/umputun/revmux/app/task"
@@ -31,10 +30,5 @@ func (o runOpts) writeTaskPaths() error {
 	if err != nil {
 		return fmt.Errorf("create round: %w", err)
 	}
-	enc := json.NewEncoder(o.stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(paths); err != nil {
-		return fmt.Errorf("write task paths: %w", err)
-	}
-	return nil
+	return o.writeJSON(paths, "task paths")
 }

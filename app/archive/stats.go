@@ -5,9 +5,9 @@ import "github.com/umputun/revmux/app/finding"
 // Corpus is every task's review record under one tasks root: what each agent and each lens produced across
 // the rounds that ran, and how many findings the pipeline dropped between stages.
 //
-// It is read back out of what revmux itself wrote, so every number below names the artifact it came from.
-// That attribution is the whole point: the same count taken from findings.json instead of from a stage
-// snapshot is the --min-confidence-filtered one, and a reflection agent acting on it drops a working agent.
+// It is read back out of what revmux itself wrote, so every number below names the artifact it came from:
+// the same count is a different number depending on which one it was taken from, and a reflection agent
+// acting on the wrong one drops a working agent.
 type Corpus struct {
 	Tasks  []taskStats `json:"tasks"`
 	Totals taskStats   `json:"totals"`
@@ -21,6 +21,11 @@ type taskStats struct {
 	// ran is not one, and its artifacts decoded, so a round left half-written by an interrupted run is not
 	// one either. It is the denominator of everything beside it.
 	Rounds int `json:"rounds"`
+
+	// Skipped is one entry per round left out of Rounds because its artifacts would not decode, each naming
+	// the artifact and why. A count that shrank silently reads as a corpus that is simply smaller, which is
+	// the same wrong advice `revmux config` refuses to give by reporting rounds_error rather than no rounds.
+	Skipped []string `json:"skipped"`
 
 	Agents []agentStats `json:"agents"`
 	Lenses []lensStats  `json:"lenses"`
@@ -39,7 +44,9 @@ type agentStats struct {
 	// Survived is findings naming this agent in the round's last stage snapshot, counted across all four of
 	// that report's arrays: a finding reclassified as an open question or a pre-existing issue still came
 	// from this agent. It is stages/3-verified.json for a full pipeline and the stage before it for a run
-	// that skipped verification. findings.json is never read for it — that is the filtered report.
+	// that skipped verification — down to stages/1-found.json itself for one that skipped both, where
+	// nothing filtered anything and Survived therefore equals Raised. findings.json is never read for it:
+	// that is the --min-confidence-filtered report.
 	Survived int `json:"survived"`
 
 	// Corroborated is the Survived subset whose sources names more than one agent, so another process

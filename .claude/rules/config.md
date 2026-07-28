@@ -375,6 +375,10 @@ Both forms are archived regardless of the flag, so the choice affects stdout alo
 
 `1` is a normal outcome, not a failure. Callers script against this, so do not repurpose these values.
 
+The subcommands share `2` for their own tool errors — a `revmux stats --task` naming no task under the root,
+a tasks root or task directory that will not read, an unwritable `./.revmux/` under `revmux init` — and none
+of them can exit `1`: there is no report, so there is no threshold to be above.
+
 Two of those deserve spelling out, because the obvious implementation gets both wrong.
 
 **Every source degraded is not a clean empty report.** The degrade policy continues past a dead agent, but a
@@ -408,7 +412,11 @@ Do not reintroduce a delete to bound growth. Growth is bounded by the user.
 - `--init` materializes `./.revmux/` with the config commented out and every prompt file as it **resolved**,
   ready to customize, and prints the paths as JSON on stdout.
 - `--dump-defaults <dir>` extracts the **embedded** prompt tree for comparison or as a starting point for overrides.
-- Neither ever overwrites a file the user has customized.
+- Neither ever overwrites a prompt file the user has customized.
+- The config is the deliberate exception, and it is the reason settings ship commented out: one holding no
+  uncommented key is rewritten with the current template, so an upgrade can still move a default nobody set.
+  Only a config carrying an actual setting is left alone, and `created` in the payload therefore describes
+  `files[]` — the config is reported as a path.
 
 **`--init` and `revmux init` are one implementation, not two spellings that each materialize a tree.**
 The flag routes into `runOpts.writeInitPaths` exactly as the subcommand does, so what the two write cannot
@@ -546,11 +554,15 @@ declaration on the subcommand parses both spellings and lands them in different 
 `revmux --task pr-1 stats` and `revmux stats --task pr-1` would disagree about which task was asked for and
 nothing else in the suite would notice.
 
-**Every number comes from the per-stage snapshots, never from `findings.json`.** That file is the
-`--min-confidence`-filtered report and its survivors are split across four arrays; counting them there
-undercounts, and the agent that looks unproductive as a result is the one a reflection agent proposes
-dropping. The one exception is the `report` entry in the stage chain, which exists precisely to measure that
-filter's attrition.
+**Every survivor and every per-lens number comes from the per-stage snapshots, never from `findings.json`.**
+That file is the `--min-confidence`-filtered report and its survivors are split across four arrays; counting
+them there undercounts, and the agent that looks unproductive as a result is the one a reflection agent
+proposes dropping. Two numbers come from elsewhere by design, and each field's godoc names its artifact: the
+`report` entry in the stage chain reads `findings.json` precisely to measure that filter's attrition, and
+`retries` is in `events.jsonl` alone, since no snapshot records a relaunch.
+Survivors come from the **last** snapshot the round carries rather than a fixed name, so a `--no-verify` run
+is not read as one where nothing survived — and a run that skipped both stages reports `survived` equal to
+`raised`, which is honest: nothing filtered anything.
 
 **An empty tasks root is an empty document; a `--task` naming no task is an error.** The first is a project
 that has never run a review, the second is a typo — and a typo answered with zeros reads as a task with no
@@ -558,10 +570,16 @@ history, which is the `pr123`-beside-`pr-123` failure one level down. An unreada
 fails the call for the same reason `revmux config` refuses to report `"tasks": []` for one.
 A round whose artifacts will not decode is still skipped rather than fatal: an interrupted run leaves
 exactly that, and `Rounds` counts what was read, so it stays the denominator of everything beside it.
+**Skipping it is not the same as saying nothing about it.** The round is named in `skipped` with the reason,
+the way an entry carries `rounds_error`: a corpus that quietly shrank reads as a corpus that is smaller, and
+the numbers that shrank are the ones a reflection agent acts on.
 
 **`app/archive` decodes `events.jsonl` with a local partial struct, as `history.record` already does for
 `findings.json`.** The artifact package must not import the orchestrator to read back what it wrote. The
 cost is that `"agent_retried"` is spelled in a second place, and CLAUDE.md's keep-in-sync list carries it.
+**Only a name the round's roster registered is counted under it.** The stages retry under that same event
+kind — synthesis emits one naming itself — so counting every name the log carries invents a source no roster
+contains and reports it beside the agents that ran.
 
 **Those four subcommands are the only carve-outs in "stdout belongs to the report", along with `--init` and
 `--version`.** None of them runs a pipeline, so there is no report to collide with and no TUI to gate; every

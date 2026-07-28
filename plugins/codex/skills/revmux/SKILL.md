@@ -390,7 +390,7 @@ narrowing a thin sample makes it thinner.
 **`./.revmux/` and nowhere else.** Never `~/.config/revmux/`, which is the user's cross-project layer
 and not this project's to edit. Never the embedded tree, which is inside the binary.
 
-If `.paths.project_dir` from `revmux config` holds no prompt tree yet, materialize one first:
+Materialize the local tree first, every time — it is idempotent, and it is what prints the paths:
 
 ```bash
 revmux init
@@ -398,8 +398,8 @@ revmux init
 
 It writes `./.revmux/` with every prompt file as it currently **resolves**, so a user-layer override is
 what gets copied down and editing the result changes what already runs rather than reverting it to the
-shipped text. It creates nothing that is already there and prints every path as JSON. **Edit only the
-paths it printed** — never compose one.
+shipped text. A file already local is reported and left byte-identical, so running it over a tree that is
+already there changes nothing. **Edit only the paths it printed** — never compose one.
 
 When `.revmux/` is tracked in git, which is the usual arrangement since only `.revmux/tasks/` needs
 ignoring, `git checkout` reverts an edit the user regrets. Say so if he hesitates over one.
@@ -419,9 +419,16 @@ the suggestion itself**: "bugs raised 14, 3 of them ambiguous". A lens whose `am
 large fraction of its `raised` cannot carry a suggestion on its own; report the number and propose
 nothing.
 
-**`raised` is stage 1, the verdict map is survivors.** A finding the verifier rejected is dropped and
-appears in neither, so rejection shows up as the gap between a lens's `raised` and its verdict total.
-`immaterial` in that map is the other signal — real, and judged not worth fixing.
+**`raised` is stage 1, the verdict map is survivors.** A rejected finding is counted in `raised` and
+under no verdict, so it widens the gap between the two — but so does synthesis merging two findings that
+carry the same lens, and nothing in the output tells them apart. Check the `synthesis` stage's own `in`
+and `out` before reading a per-lens gap as rejections: a corpus that loses a quarter of its findings at
+synthesis explains most of those gaps by itself. `immaterial` in that map is the separate signal — real,
+and judged not worth fixing.
+
+**`rounds` is the denominator and `skipped` is what is missing from it.** A task reporting rounds beside a
+non-empty `skipped` was read from fewer rounds than it ran; quote both, and treat the sample as that much
+thinner.
 
 **Say the sample size.** Five rounds of one task on one codebase is a sample, not a trend, and the
 user weighs it.
@@ -433,8 +440,14 @@ user weighs it.
 | drop or keep an agent | `raised` high, `survived` near zero, `corroborated` zero — it produces nothing that lasts | remove the entry from the `agents:` list in `.revmux/prompts/profiles/<name>.md`, or keep it and say why |
 | split a lens pair | one agent carrying two lenses, both raising, its `corroborated` near zero | one agent per lens in that roster — two processes can corroborate, one cannot |
 | create a profile | the roster or `--lenses` set actually used matches nothing in `.profiles[]` | a new `.revmux/prompts/profiles/<name>.md` with that roster and its own `description:` |
-| retune a knob | `retries` or `degraded_rounds` non-zero — an agent is being killed and relaunched | `idle-timeout` or `hard-timeout` in `.revmux/config`, with the counter as the reason |
-| rewrite a lens | `raised` far above its verdict total, or `immaterial` dominating that map | an edit to `.revmux/lenses/<name>.md`, shown as a diff before it is applied |
+| retune a knob | `degraded_rounds` non-zero, or `retries` non-zero and the retry's own log says it stalled | `idle-timeout` or `hard-timeout` in `.revmux/config`, with the counter as the reason |
+| rewrite a lens | `immaterial` dominating that lens's verdict map | an edit to `.revmux/lenses/<name>.md`, shown as a diff before it is applied |
+
+**`retries` names a retry, not a timeout.** The find stage retries an agent on a stall, a rate limit, a
+dead process, a transport error, **or a clean exit carrying no JSON** — the codex path's own failure mode,
+since it has no `--json-schema` to enforce one. Only the first two are what a timeout knob moves. Read
+`<round>/agents/<name>.retry.jsonl` for the reason before proposing one, and propose nothing when the
+reason is not a stall.
 
 **A candidate with no number behind it is not a candidate.** If nothing fires, say the corpus supports
 no change and stop. That is a real answer, and inventing one from an empty set is worse than silence.
@@ -498,6 +511,6 @@ User: "revmux self"
 → candidate: quality raised 4, 2 of them ambiguous, verdicts 1 confirmed / 1 refined / 1 immaterial
    → half the attribution is a fallback; report the numbers, propose no rewrite
 → candidate: arch+quality raised 10, survived 9, corroborated 4 across 5 rounds → it earns its slot
-→ .revmux/ has no prompt tree → revmux init, then edit only the paths it printed
+→ revmux init first (idempotent), then edit only the paths it printed
 → one numbered list per candidate, apply / skip / stop
 ```

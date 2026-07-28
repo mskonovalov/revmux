@@ -69,6 +69,7 @@ func TestRun_stats(t *testing.T) {
 	}
 
 	t.Run("every task under the root is reported on stdout", func(t *testing.T) {
+		isolate(t)
 		root := t.TempDir()
 		recordRound(t, filepath.Join(root, "alpha", "01-initial"), map[string]finding.Report{
 			task.FoundFile:    {Sources: roster("bugs+impl", "bugs"), Findings: raised(3, "bugs+impl", "bugs")},
@@ -85,10 +86,35 @@ func TestRun_stats(t *testing.T) {
 		assert.Equal(t, []statsAgent{{Name: "bugs+impl", Raised: 3, Survived: 1, Tokens: 100}},
 			doc.Tasks[0].Agents, "survived comes from the stage snapshot, never from the filtered report")
 		assert.Equal(t, []statsStage{{Name: "verify", In: 3, Out: 1}}, doc.Tasks[0].Stages)
-		assert.Equal(t, []statsLens{{Name: "bugs", Raised: 3}}, doc.Tasks[0].Lenses)
+		assert.Equal(t, []statsLens{{Name: "bugs", Raised: 3, Verdicts: map[string]int{"unverified": 1}}},
+			doc.Tasks[0].Lenses)
+		assert.Empty(t, doc.Tasks[0].Skipped, "every round here decodes, and the field is present rather than absent")
+	})
+
+	// ambiguous and the verdict map are the two per-lens numbers a suggestion has to quote, so they have to
+	// survive the trip through the payload rather than only through the archive types
+	t.Run("per-lens ambiguity and verdicts reach stdout", func(t *testing.T) {
+		isolate(t)
+		root := t.TempDir()
+		pair := roster("bugs+impl", "bugs", "impl")
+		recordRound(t, filepath.Join(root, "pr-123", "01-initial"), map[string]finding.Report{
+			// naming the agent's whole lens set is what the find stage falls back to when the model named none
+			task.FoundFile: {Sources: pair, Findings: raised(2, "bugs+impl", "bugs", "impl")},
+			task.VerifiedFile: {Sources: pair, Findings: []finding.Finding{
+				{ID: "bugs+impl-1", Sources: []string{"bugs+impl"}, Lenses: []string{"bugs"},
+					Verdict: finding.Confirmed},
+			}},
+		})
+
+		doc, _ := corpusOf(t, options{TasksDir: root})
+		assert.Equal(t, []statsLens{
+			{Name: "bugs", Raised: 2, Ambiguous: 2, Verdicts: map[string]int{"confirmed": 1}},
+			{Name: "impl", Raised: 2, Ambiguous: 2, Verdicts: map[string]int{}},
+		}, doc.Tasks[0].Lenses, "a per-lens number is only as good as its ambiguous share, so both are reported")
 	})
 
 	t.Run("--task narrows the corpus to one task", func(t *testing.T) {
+		isolate(t)
 		root := t.TempDir()
 		recordRound(t, filepath.Join(root, "alpha", "01-initial"), map[string]finding.Report{
 			task.FoundFile: {Sources: roster("bugs+impl", "bugs"), Findings: raised(3, "bugs+impl", "bugs")},
@@ -103,6 +129,7 @@ func TestRun_stats(t *testing.T) {
 	})
 
 	t.Run("a tasks root nobody has reviewed under is an empty document, not an error", func(t *testing.T) {
+		isolate(t)
 		doc, r := corpusOf(t, options{TasksDir: filepath.Join(t.TempDir(), "never-created")})
 		assert.Empty(t, doc.Tasks)
 		assert.Contains(t, r.stdout.String(), `"tasks": []`, "a null would make every caller special-case it")
@@ -110,6 +137,7 @@ func TestRun_stats(t *testing.T) {
 	})
 
 	t.Run("retries come from the event log", func(t *testing.T) {
+		isolate(t)
 		root := t.TempDir()
 		dir := filepath.Join(root, "pr-123", "01-initial")
 		recordRound(t, dir, map[string]finding.Report{
@@ -123,6 +151,7 @@ func TestRun_stats(t *testing.T) {
 	})
 
 	t.Run("a task the root does not carry exits 2", func(t *testing.T) {
+		isolate(t)
 		root := t.TempDir()
 		recordRound(t, filepath.Join(root, "pr-123", "01-initial"), map[string]finding.Report{
 			task.FoundFile: {Sources: roster("codex", "adversarial")},
@@ -135,6 +164,7 @@ func TestRun_stats(t *testing.T) {
 	})
 
 	t.Run("an unwritable stdout exits 2", func(t *testing.T) {
+		isolate(t)
 		r := newRunOpts(t, options{TasksDir: t.TempDir(), showStats: true})
 		ro := r.opts()
 		ro.stdout = failingWriter{}
@@ -152,11 +182,12 @@ type statsDoc struct {
 }
 
 type statsTask struct {
-	ID     string       `json:"id"`
-	Rounds int          `json:"rounds"`
-	Agents []statsAgent `json:"agents"`
-	Lenses []statsLens  `json:"lenses"`
-	Stages []statsStage `json:"stages"`
+	ID      string       `json:"id"`
+	Rounds  int          `json:"rounds"`
+	Skipped []string     `json:"skipped"`
+	Agents  []statsAgent `json:"agents"`
+	Lenses  []statsLens  `json:"lenses"`
+	Stages  []statsStage `json:"stages"`
 }
 
 type statsAgent struct {
@@ -168,8 +199,10 @@ type statsAgent struct {
 }
 
 type statsLens struct {
-	Name   string `json:"name"`
-	Raised int    `json:"raised"`
+	Name      string         `json:"name"`
+	Raised    int            `json:"raised"`
+	Ambiguous int            `json:"ambiguous"`
+	Verdicts  map[string]int `json:"verdicts"`
 }
 
 type statsStage struct {
@@ -204,18 +237,18 @@ func recordRound(t *testing.T, dir string, reps map[string]finding.Report) {
 }
 
 // roster is a one-agent source list as a stage snapshot records it.
-func roster(name, lens string) finding.SourceStatus {
+func roster(name string, lenses ...string) finding.SourceStatus {
 	return finding.SourceStatus{
 		Expected: 1, Reported: 1,
-		Agents: []finding.SourceStat{{Name: name, Lenses: []string{lens}, Executor: "claude", Tokens: 100}},
+		Agents: []finding.SourceStat{{Name: name, Lenses: lenses, Executor: "claude", Tokens: 100}},
 	}
 }
 
-// raised is n findings from one agent under one lens, the shape the find stage stamps.
-func raised(n int, source, lens string) []finding.Finding {
+// raised is n findings from one agent under one lens combination, the shape the find stage stamps.
+func raised(n int, source string, lenses ...string) []finding.Finding {
 	out := make([]finding.Finding, n)
 	for i := range out {
-		out[i] = finding.Finding{ID: source + "-" + strconv.Itoa(i+1), Sources: []string{source}, Lenses: []string{lens}}
+		out[i] = finding.Finding{ID: source + "-" + strconv.Itoa(i+1), Sources: []string{source}, Lenses: lenses}
 	}
 	return out
 }

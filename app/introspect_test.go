@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/umputun/revmux/app/archive"
 	"github.com/umputun/revmux/app/prompt"
 	"github.com/umputun/revmux/app/task"
 )
@@ -286,18 +287,27 @@ func TestOptions_tasks(t *testing.T) {
 			"no rounds and unreadable are the opposite advice to a caller picking a --run name")
 	})
 
-	// `revmux stats` aggregates task.List directly, so a catalog naming a different set is a caller told
-	// about tasks the aggregate never counted, and the reverse
-	t.Run("the catalog reports exactly the ids task.List enumerates", func(t *testing.T) {
+	// /revmux self reads both commands, so a task present in one and absent from the other is a
+	// disagreement with nothing on stdout to explain it. This drives the aggregate rather than comparing
+	// the catalog against the enumerator it is built from, which is true by construction
+	t.Run("the catalog and revmux stats report the same task set", func(t *testing.T) {
 		got, tasksErr := options{TasksDir: root}.tasks(root)
 		require.NoError(t, tasksErr)
 		ids := make([]string, 0, len(got))
 		for _, ti := range got {
 			ids = append(ids, ti.ID)
 		}
+		assert.Subset(t, ids, []string{"bare", "pr-123", "alias", "burned", "sealed"},
+			"every task this tree carries is named, aliases and unreadable ones included")
+		assert.NotContains(t, ids, "away", "a task the review path cannot open is advertised by neither")
+		assert.NotContains(t, ids, "stray.txt")
 
-		names, listErr := task.List(root)
-		require.NoError(t, listErr)
-		assert.Equal(t, names, ids, "one enumerator, so the two commands cannot disagree about what a task is")
+		corpus, statsErr := archive.CollectStats(archive.StatsQuery{TasksDir: root})
+		require.NoError(t, statsErr)
+		var doc statsDoc
+		data, marshalErr := json.Marshal(corpus)
+		require.NoError(t, marshalErr)
+		require.NoError(t, json.Unmarshal(data, &doc))
+		assert.Equal(t, ids, taskIDs(doc), "one enumerator, so the two commands cannot disagree about what a task is")
 	})
 }

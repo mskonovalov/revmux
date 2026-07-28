@@ -38,7 +38,7 @@ func TestCorpus_JSON(t *testing.T) {
 	task := got["tasks"].([]any)[0].(map[string]any)
 
 	t.Run("every field a caller reads is named in snake case", func(t *testing.T) {
-		assert.Equal(t, []string{"agents", "id", "lenses", "rounds", "stages"}, keys(task))
+		assert.Equal(t, []string{"agents", "id", "lenses", "rounds", "skipped", "stages"}, keys(task))
 		assert.Equal(t, "pr-123", task["id"])
 
 		assert.Equal(t, []string{"corroborated", "degraded_rounds", "name", "raised", "retries", "survived", "tokens"},
@@ -54,7 +54,8 @@ func TestCorpus_JSON(t *testing.T) {
 	})
 
 	t.Run("totals carry no id, since they are every task at once", func(t *testing.T) {
-		assert.Equal(t, []string{"agents", "lenses", "rounds", "stages"}, keys(got["totals"].(map[string]any)))
+		assert.Equal(t, []string{"agents", "lenses", "rounds", "skipped", "stages"},
+			keys(got["totals"].(map[string]any)))
 	})
 }
 

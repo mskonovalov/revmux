@@ -671,12 +671,24 @@ func TestList(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Join(root, name), 0o750))
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(root, "stray.txt"), []byte("x"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(root, metaFile), []byte("---\n---\n"), 0o600))
 
 	got, err := List(root)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"pr-1", "pr-2"}, got,
 		"only directories are tasks, and the ids come back in a stable order")
+
+	// metaFile is a task's own metadata one level down, so the tasks root reserves no name at all: a
+	// directory called task.md there is a task a review really runs under, and omitting it from the
+	// enumeration would hide a task revmux new can still scaffold
+	t.Run("no name is reserved at the tasks root", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, metaFile), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "stray.txt"), []byte("x"), 0o600))
+
+		got, err := List(dir)
+		require.NoError(t, err)
+		assert.Equal(t, []string{metaFile}, got, "a directory is a task whatever it is called; a file is not")
+	})
 
 	t.Run("an absent tasks root is a clean install, not a failure to read one", func(t *testing.T) {
 		got, err := List(filepath.Join(t.TempDir(), "nope"))

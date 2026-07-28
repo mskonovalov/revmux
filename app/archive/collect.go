@@ -68,6 +68,10 @@ func (q StatsQuery) tasks() ([]string, error) {
 // collect folds one task's rounds into a single tally. Rounds counts the rounds these numbers were read
 // from, so a round skipped for being unreadable is not one of them: it is the denominator of everything
 // beside it.
+//
+// A skipped round is named in Skipped rather than dropped without a word. Three rounds where five ran is a
+// smaller corpus reading as a whole one, and the numbers a reflection agent then acts on are exactly the
+// ones that shrank.
 func (q StatsQuery) collect(id string) (taskStats, error) {
 	dir := filepath.Join(q.TasksDir, id)
 	rounds, err := task.Rounds(dir)
@@ -79,6 +83,7 @@ func (q StatsQuery) collect(id string) (taskStats, error) {
 	for _, name := range rounds {
 		r := newRoundReader(filepath.Join(dir, name))
 		if readErr := r.read(); readErr != nil {
+			out.Skipped = append(out.Skipped, readErr.Error())
 			continue
 		}
 		st := r.stats()
@@ -90,7 +95,8 @@ func (q StatsQuery) collect(id string) (taskStats, error) {
 // newTaskStats starts an empty tally. The slices are non-nil because the caller is a program reading this
 // back: a task with no rounds yet marshals as empty arrays rather than as nulls it has to special-case.
 func newTaskStats(id string) taskStats {
-	return taskStats{ID: id, Agents: []agentStats{}, Lenses: []lensStats{}, Stages: []stageFlow{}}
+	return taskStats{ID: id, Skipped: []string{},
+		Agents: []agentStats{}, Lenses: []lensStats{}, Stages: []stageFlow{}}
 }
 
 // add folds another tally into this one, matching agents, lenses and stages by name and appending a name
@@ -100,6 +106,7 @@ func newTaskStats(id string) taskStats {
 // parameters the argument order silently decides which ID and Rounds survive, and both readings compile.
 func (t *taskStats) add(o taskStats) {
 	t.Rounds += o.Rounds
+	t.Skipped = append(t.Skipped, o.Skipped...)
 	t.addAgents(o.Agents)
 	t.addLenses(o.Lenses)
 	t.addStages(o.Stages)
@@ -363,14 +370,24 @@ func (r *roundReader) addFlow(reps []namedReport) {
 	for i := 1; i < len(reps); i++ {
 		r.stages = append(r.stages, stageFlow{
 			Name: reps[i].stage,
-			In:   len(r.all(reps[i-1].rep)),
-			Out:  len(r.all(reps[i].rep)),
+			In:   r.count(reps[i-1].rep),
+			Out:  r.count(reps[i].rep),
 		})
 	}
 }
 
+// count is how many findings a report carries across its four arrays. The flow needs the number alone, and
+// materializing the findings to take len of them is four copies of every finding per stage transition.
+func (r *roundReader) count(rep finding.Report) int {
+	return len(rep.Findings) + len(rep.OpenQuestions) + len(rep.PreExisting) + len(rep.Immaterial)
+}
+
 // readEvents counts the retries the run recorded. An absent events.jsonl is a round that wrote none, not a
 // failure, and a last line an interrupted run never finished is skipped rather than fatal.
+//
+// Only a name the roster already registered is counted. The stages retry under the same event kind — the
+// synthesis stage emits one naming itself — and a name nothing ran under would otherwise become a source
+// no roster contains, reported beside the agents that really ran and read as one of them.
 //
 // Lines are read without a size cap: a findings event carries every finding's body, so a fixed scan buffer
 // would silently stop counting partway through a large round.
@@ -389,8 +406,10 @@ func (r *roundReader) readEvents() error {
 	for {
 		line, readErr := buf.ReadString('\n')
 		var ev event
-		if json.Unmarshal([]byte(line), &ev) == nil && ev.Kind == eventAgentRetried && ev.Agent != "" {
-			r.agent(ev.Agent).Retries++
+		if json.Unmarshal([]byte(line), &ev) == nil && ev.Kind == eventAgentRetried {
+			if st, ok := r.agents[ev.Agent]; ok {
+				st.Retries++
+			}
 		}
 		if errors.Is(readErr, io.EOF) {
 			return nil
@@ -433,8 +452,7 @@ func (r *roundReader) lastStage(reps []namedReport) finding.Report {
 
 // all is every finding a report carries, across its four arrays.
 func (r *roundReader) all(rep finding.Report) []finding.Finding {
-	out := make([]finding.Finding, 0,
-		len(rep.Findings)+len(rep.OpenQuestions)+len(rep.PreExisting)+len(rep.Immaterial))
+	out := make([]finding.Finding, 0, r.count(rep))
 	out = append(out, rep.Findings...)
 	out = append(out, rep.OpenQuestions...)
 	out = append(out, rep.PreExisting...)

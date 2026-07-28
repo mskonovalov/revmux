@@ -153,6 +153,10 @@ an empty `scope.md`, a round that has already run, an unwritable run artifact, a
 source degraded. It also covers a delivered `SIGINT`/`SIGTERM`. On `2`, read stderr — the message names
 which of these it was.
 
+The subcommands use `2` for their own tool errors and can never exit `1`, since none of them produces a
+report: a `revmux stats --task` naming no task under the tasks root, a tasks root or task directory that
+will not read, and an unwritable `./.revmux/` under `revmux init`.
+
 ## Choosing a profile
 
 | profile | roster | when |
@@ -334,15 +338,18 @@ It prints JSON on stdout and writes nothing outside `./.revmux/`:
 
 ```json
 {"dir": "…/.revmux", "config": "…/.revmux/config",
- "files": [{"path": "…/.revmux/lenses/bugs.md", "layer": "embedded", "created": true},
-           {"path": "…/.revmux/prompts/synthesis.md", "layer": "user", "created": false}]}
+ "files": [{"path": "…/.revmux/lenses/bugs.md", "layer": "user", "created": true},
+           {"path": "…/.revmux/prompts/synthesis.md", "layer": "project", "created": false}]}
 ```
 
 - `layer` is where the content came from: `project`, `user` or `embedded`
 - `created` is false for a file already there — it is reported and left byte-identical, so a second
-  run changes nothing
-- the config ships commented out so an upgrade can still move a default the user never set; the
-  prompt files ship live, because they are the text agents execute
+  run changes nothing. A file already local resolved from the project layer by definition, which is why
+  a second run reports `project` for everything it wrote the first time
+- `created` describes `files[]`. The config is reported as a path alone because it is materialized
+  differently: it ships commented out, and one holding no uncommented key is rewritten with the current
+  template so an upgrade can still move a default the user never set. One carrying an actual setting is
+  left alone. Prompt files ship live, because they are the text agents execute
 
 Take the paths from that output. Twelve prompt files and the config is the shipped tree's size, but a
 user with his own lenses has more, and composing a path from this document rather than reading one
@@ -363,7 +370,7 @@ pipeline, spawns nothing and writes nothing, so it is always safe to call. An em
 valid empty document rather than an error; a `--task` naming no task under the root exits `2`.
 
 ```json
-{"tasks": [{"id": "pr-123", "rounds": 5,
+{"tasks": [{"id": "pr-123", "rounds": 5, "skipped": [],
             "agents": [{"name": "bugs+impl", "raised": 8, "survived": 8, "corroborated": 5,
                         "degraded_rounds": 0, "retries": 0, "tokens": 10441185}],
             "lenses": [{"name": "bugs", "raised": 14, "ambiguous": 3,
@@ -371,7 +378,7 @@ valid empty document rather than an error; a `--task` naming no task under the r
             "stages": [{"name": "synthesis", "in": 62, "out": 46},
                        {"name": "verify", "in": 46, "out": 46},
                        {"name": "report", "in": 46, "out": 46}]}],
- "totals": {"rounds": 5, "agents": [], "lenses": [], "stages": []}}
+ "totals": {"rounds": 5, "skipped": [], "agents": [], "lenses": [], "stages": []}}
 ```
 
 `totals` is every task folded together and carries no `id`. The sample is abbreviated: a real run
@@ -387,16 +394,22 @@ stamps `sources` from the process that emitted the finding, so no model supplied
 merged findings from different agents. `ambiguous` is the subset attributable only by the raising
 agent's whole lens set, which is what the find stage falls back to when the model named no valid lens.
 **A per-lens number is only as good as its `ambiguous` share, so quote the two together.** `verdicts`
-counts survivors, so a finding the verifier rejected is in neither — rejection shows up as the gap
-between `raised` and the verdict total, and `immaterial` in the map is the separate "real, not worth
-fixing" signal.
+counts survivors, so a rejected finding is counted in `raised` and under no verdict. It widens the gap
+between the two — but so does synthesis merging two findings that carry the same lens, and nothing here
+tells them apart, so read the gap as attrition rather than as a count of rejections. `immaterial` in the
+map is the separate "real, not worth fixing" signal.
 
 **Per stage** — `in` and `out` for `synthesis`, `verify` and `report`, each the union of that report's
 four finding arrays. `report` carries the `--min-confidence` attrition. There is no `find` entry:
-nothing goes into it.
+nothing goes into it. A run that skipped a stage has no entry for it, and one run with both
+`--no-synthesis` and `--no-verify` reports `survived` equal to `raised` for every agent — nothing
+filtered anything.
 
 `rounds` is the rounds the numbers were read from. A round prepared but never run is not one, and
 neither is one an interrupted run left half-written — those are skipped rather than counted at zero.
+`skipped` names each round left out because its artifacts would not decode, with the reason: a corpus
+that shrank is not a corpus that is simply smaller, and `rounds` is the denominator of everything
+beside it.
 
 `degraded_rounds` and `retries` come out zero on a healthy corpus, and zero means supervision never had
 to intervene. It is an absence, not a finding, and nothing should be inferred from it.

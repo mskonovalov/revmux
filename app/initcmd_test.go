@@ -156,7 +156,7 @@ func TestRun_init(t *testing.T) {
 		}
 	})
 
-	t.Run("an unreadable prompt tree exits 2", func(t *testing.T) {
+	t.Run("a malformed prompt tree exits 2", func(t *testing.T) {
 		dir := isolate(t)
 		cfg := t.TempDir()
 		require.NoError(t, os.MkdirAll(filepath.Join(cfg, "lenses"), 0o750))
@@ -169,6 +169,26 @@ func TestRun_init(t *testing.T) {
 		assert.Empty(t, r.stdout.String(), "half a payload would parse as a complete one")
 		assert.Contains(t, r.stderr.String(), "load prompts")
 		assert.NoDirExists(t, filepath.Join(dir, projectDirName), "the tree is resolved before anything is written")
+	})
+
+	t.Run("an unreadable prompt file exits 2", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root reads a file with no permissions")
+		}
+		dir := isolate(t)
+		cfg := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(cfg, "lenses"), 0o750))
+		sealed := filepath.Join(cfg, "lenses", "bugs.md")
+		require.NoError(t, os.WriteFile(sealed, []byte("---\ndescription: mine\n---\nbody\n"), 0o000))
+
+		o, err := parseArgs([]string{"--config-dir", cfg, "init"})
+		require.NoError(t, err)
+		r := newRunOpts(t, o)
+		assert.Equal(t, 2, run(r.opts()))
+		assert.Empty(t, r.stdout.String())
+		assert.Contains(t, r.stderr.String(), "load prompts",
+			"an override that cannot be read is not one to silently fall back past")
+		assert.NoDirExists(t, filepath.Join(dir, projectDirName))
 	})
 
 	t.Run("an unwritable prompt directory exits 2", func(t *testing.T) {
@@ -184,7 +204,43 @@ func TestRun_init(t *testing.T) {
 		r := newRunOpts(t, o)
 		assert.Equal(t, 2, run(r.opts()))
 		assert.Empty(t, r.stdout.String())
-		assert.Contains(t, r.stderr.String(), "write")
+		assert.Contains(t, r.stderr.String(), filepath.Join(dir, projectDirName, "lenses", "adversarial.md"),
+			"the failure names the file that could not be written, not merely that a write failed")
+	})
+
+	// a destination that cannot be looked at is not a destination that is absent, and treating the two the
+	// same reports a write failure for a read that was refused
+	t.Run("a destination that cannot be read is named as such", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root reads a directory with no permissions")
+		}
+		dir := isolate(t)
+		lenses := filepath.Join(dir, projectDirName, "lenses")
+		require.NoError(t, os.MkdirAll(lenses, 0o750))
+		require.NoError(t, os.Chmod(lenses, 0o600))       // readable but not traversable
+		t.Cleanup(func() { _ = os.Chmod(lenses, 0o750) }) //nolint:gosec // restores the temp dir for cleanup
+
+		o, err := parseArgs([]string{"init"})
+		require.NoError(t, err)
+		r := newRunOpts(t, o)
+		assert.Equal(t, 2, run(r.opts()))
+		assert.Contains(t, r.stderr.String(), "read "+filepath.Join(lenses, "adversarial.md"))
+	})
+
+	// a link where a prompt file goes is a link, not a missing file: written through, it would put the
+	// shipped text wherever it points, and ./.revmux/ is the one place init writes
+	t.Run("a dangling symlink is refused rather than written through", func(t *testing.T) {
+		dir := isolate(t)
+		outside := filepath.Join(t.TempDir(), "elsewhere.md")
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, projectDirName, "lenses"), 0o750))
+		require.NoError(t, os.Symlink(outside, filepath.Join(dir, projectDirName, "lenses", "bugs.md")))
+
+		o, err := parseArgs([]string{"init"})
+		require.NoError(t, err)
+		r := newRunOpts(t, o)
+		assert.Equal(t, 2, run(r.opts()))
+		assert.NoFileExists(t, outside, "the target sits outside the project directory and init writes nowhere else")
+		assert.Empty(t, r.stdout.String())
 	})
 
 	t.Run("an unwritable stdout exits 2", func(t *testing.T) {

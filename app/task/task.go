@@ -427,11 +427,11 @@ func List(root string) ([]string, error) {
 		return out, nil
 	}
 	if err != nil {
-		return out, fmt.Errorf("read tasks root %s: %w", root, err)
+		return out, fmt.Errorf("read %s: %w", root, err)
 	}
 	tasksRoot, err := os.OpenRoot(root)
 	if err != nil {
-		return out, fmt.Errorf("open tasks root %s: %w", root, err)
+		return out, fmt.Errorf("open %s: %w", root, err)
 	}
 	defer tasksRoot.Close()
 

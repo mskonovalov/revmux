@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/umputun/revmux/app/archive"
@@ -32,10 +31,5 @@ func (o runOpts) writeStats() error {
 	if err != nil {
 		return fmt.Errorf("collect stats: %w", err)
 	}
-	enc := json.NewEncoder(o.stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(corpus); err != nil {
-		return fmt.Errorf("write stats: %w", err)
-	}
-	return nil
+	return o.writeJSON(corpus, "stats")
 }

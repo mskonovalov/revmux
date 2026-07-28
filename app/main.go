@@ -127,10 +127,17 @@ func (o runOpts) writeCatalog() error {
 	if err != nil {
 		return fmt.Errorf("load prompts: %w", err)
 	}
+	return o.writeJSON(o.opts.catalog(set), "catalog")
+}
+
+// writeJSON puts one subcommand's payload on stdout, indented, since a human reads these occasionally.
+// The indentation is set in one place so two payloads cannot come back shaped differently, and the name
+// the failure carries is the only thing the callers differ in.
+func (o runOpts) writeJSON(payload any, what string) error {
 	enc := json.NewEncoder(o.stdout)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(o.opts.catalog(set)); err != nil {
-		return fmt.Errorf("write catalog: %w", err)
+	if err := enc.Encode(payload); err != nil {
+		return fmt.Errorf("write %s: %w", what, err)
 	}
 	return nil
 }

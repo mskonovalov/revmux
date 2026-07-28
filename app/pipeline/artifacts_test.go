@@ -205,7 +205,10 @@ func TestPipeline_Run_artifacts(t *testing.T) {
 		assert.NotEmpty(t, kinds[EventStage], "stage transitions are decisions too")
 	})
 
-	t.Run("every archive path is joined from an app/task constant", func(t *testing.T) {
+	// both sides of the comparison are the constants' own runtime values, so this cannot see a literal
+	// that happens to spell one of them correctly — what it catches is an archived name under none of the
+	// seven roots, and a root nothing wrote to. The literal values are pinned in app/archive/archive_test.go
+	t.Run("every archive path lands under an app/task constant", func(t *testing.T) {
 		h, _ := artifactHarness(t)
 
 		p := New(h.cfg)
@@ -224,7 +227,7 @@ func TestPipeline_Run_artifacts(t *testing.T) {
 			}
 			loose = append(loose, name)
 		}
-		assert.Empty(t, loose, "an archive path spelled here rather than in app/task drifts the next time the layout moves")
+		assert.Empty(t, loose, "an archived name under no app/task root is one this package named itself")
 
 		for _, name := range files {
 			assert.NotNil(t, h.get(name), "%s is an app/task constant nothing wrote to", name)
