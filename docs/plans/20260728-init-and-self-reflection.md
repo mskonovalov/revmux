@@ -493,11 +493,21 @@ Exports (justification per item: who outside the package calls this?):
 - Modify: `app/config.go`
 - Modify: `app/main.go`
 
-- [ ] create `app/statscmd.go` with `statsCmd` following the same `Execute`-records-only split
-- [ ] register the `stats` subcommand and the `showStats` selection field — **declare no new `--task` flag**; build `StatsQuery` from the existing `o.opts.TasksDir` and `o.opts.Task`, as `writeTaskPaths` already does for `task.Round`
-- [ ] implement `(o runOpts) writeStats()` calling `archive.CollectStats` and encoding to `o.stdout`; add the case to `run()`
-- [ ] write tests: JSON lands on stdout with nothing on stderr; `--task` narrows; an empty tasks root produces a valid empty document rather than an error
-- [ ] run tests - must pass before next task
+- [x] create `app/statscmd.go` with `statsCmd` following the same `Execute`-records-only split
+- [x] register the `stats` subcommand and the `showStats` selection field — **declare no new `--task` flag**; build `StatsQuery` from the existing `o.opts.TasksDir` and `o.opts.Task`, as `writeTaskPaths` already does for `task.Round`
+- [x] implement `(o runOpts) writeStats()` calling `archive.CollectStats` and encoding to `o.stdout`; add the case to `run()`
+- [x] write tests: JSON lands on stdout with nothing on stderr; `--task` narrows; an empty tasks root produces a valid empty document rather than an error
+- [x] run tests - must pass before next task
+
+**Decisions taken while implementing (nothing in the plan settled them):**
+
+- **The one-`--task`-field rule gets its own test, asserting `revmux --task pr-1 stats` and
+  `revmux stats --task pr-1` both fill `options.Task`.** A second declaration is the failure the plan warns
+  about, and nothing else in the suite would notice it: both spellings parse either way, and only the field
+  they land in differs.
+- **A corpus is asserted through a JSON shape declared in the test, not through the `archive` types.**
+  Everything under `Corpus` is unexported, so `package main` reads the payload the way the caller model
+  does, which is also what makes the field names part of what the test pins.
 
 ### Task 9: Add `/revmux self` to both skill trees
 

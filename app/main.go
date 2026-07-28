@@ -86,6 +86,11 @@ func run(o runOpts) int {
 			return o.fail(err)
 		}
 		return 0
+	case o.opts.showStats:
+		if err := o.writeStats(); err != nil {
+			return o.fail(err)
+		}
+		return 0
 	}
 
 	cfg, arc, err := o.pipelineConfig()
