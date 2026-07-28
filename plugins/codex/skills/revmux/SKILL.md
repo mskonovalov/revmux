@@ -200,6 +200,22 @@ writing over it.
 | `focused` | one `bugs` agent plus codex peer | small or time-boxed |
 | `final` | `bugs+impl` plus codex peer, nothing below major | pre-merge |
 
+**A profile word is not a profile name.** Map whatever the user said onto the profiles `revmux config`
+reports, matching the name first and the `description` second. revmux rejects an unknown `--profile` at
+load and never guesses, so resolving is this skill's job — passing his word through unresolved just
+fails the run.
+
+| the user says | profile |
+|---|---|
+| full, everything, deep, thorough, the works | `comprehensive` |
+| short, quick, fast, light, small, time-boxed | `focused` |
+| last, pre-merge, before merge, strict | `final` |
+
+Examples, not the list. Match on intent — breadth wants `comprehensive`, speed wants `focused`, a merge
+gate wants `final` — and read the resolved catalog rather than this table, since a user with his own
+profiles has names it does not carry. Name the profile picked and the word it came from. Ask only when
+two are genuinely close, as "quick, before I merge" is between `focused` and `final`.
+
 `--lenses a,b` produces **one** agent carrying both lenses and drops the codex peer, losing every
 cross-source confidence boost. Prefer a profile unless narrowing is specifically wanted.
 
