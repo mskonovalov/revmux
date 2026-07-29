@@ -58,11 +58,12 @@ func (m Model) header() string {
 	// still learns whether anything was found, while a stage name without a count says only that
 	// something is happening.
 	for _, level := range []headerParts{
-		{agents: true, stage: true, count: countFull},
-		{agents: true, stage: true, count: countTotal},
-		{agents: false, stage: true, count: countTotal},
-		{agents: false, stage: false, count: countTotal},
-		{agents: false, stage: false, count: countNone},
+		{identity: true, agents: true, stage: true, count: countFull},
+		{identity: true, agents: true, stage: true, count: countTotal},
+		{identity: false, agents: true, stage: true, count: countTotal},
+		{identity: false, agents: false, stage: true, count: countTotal},
+		{identity: false, agents: false, stage: false, count: countTotal},
+		{identity: false, agents: false, stage: false, count: countNone},
 	} {
 		if line := m.headerLine(level); lipgloss.Width(line) <= m.view.width() {
 			return line
@@ -81,13 +82,19 @@ const (
 
 // headerParts is one level of header detail.
 type headerParts struct {
-	agents, stage bool
-	count         int
+	identity, agents, stage bool
+	count                   int
 }
 
 // headerLine builds the header at one level of detail.
 func (m Model) headerLine(p headerParts) string {
 	head := m.style.title.Render("revmux")
+	if m.view.mode == modeInputs {
+		head += m.style.muted.Render(" · inputs")
+		if p.identity && m.cfg.Task != "" && m.cfg.Run != "" {
+			head += m.style.muted.Render(" · " + m.cfg.Task + "/" + m.cfg.Run)
+		}
+	}
 	if p.agents {
 		head += m.style.muted.Render(" · " + strconv.Itoa(len(m.agents)) + " agents")
 	}

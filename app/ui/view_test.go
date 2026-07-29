@@ -51,6 +51,18 @@ func TestModel_tabBar(t *testing.T) {
 	m.view.tab = 2
 	assert.Equal(t, "  1 all  │  2 bugs+impl  │▸ 3 codex", m.tabBar(),
 		"exactly one tab is marked, and it is the focused one")
+
+	t.Run("input mode is advertised and gets its own tabs", func(t *testing.T) {
+		inputs := New(ModelConfig{Roster: roster(), Inputs: []InputDocument{
+			{Label: "scope"}, {Label: "goal"}, {Label: "design/spec.md"},
+		}})
+		assert.Contains(t, inputs.tabBar(), "i inputs")
+
+		inputs = feed(t, inputs, press("i"))
+		assert.Equal(t, "▸ 1 scope  │  2 goal  │  3 design/spec.md  │  i back", inputs.tabBar())
+		inputs = feed(t, inputs, press("3"))
+		assert.Contains(t, inputs.tabBar(), "▸ 3 design/spec.md")
+	})
 }
 
 func TestModel_detailPane(t *testing.T) {
@@ -190,7 +202,8 @@ func TestTabToken(t *testing.T) {
 		// a bound key is matched before the token lookup is reached, so a tab assigned one would be
 		// unreachable — silently, and only on a run with enough panes to get that far
 		for _, b := range []key.Binding{keys.quit, keys.nextTab, keys.prevTab, keys.up, keys.down,
-			keys.pageUp, keys.pageDown, keys.top, keys.bottom, keys.findings, keys.expand, keys.startFilter} {
+			keys.pageUp, keys.pageDown, keys.top, keys.bottom, keys.findings, keys.inputs,
+			keys.expand, keys.startFilter} {
 			for _, k := range b.Keys() {
 				assert.Equal(t, -1, m0.tabIndex(k), "key %q is bound already and must not also name a tab", k)
 			}

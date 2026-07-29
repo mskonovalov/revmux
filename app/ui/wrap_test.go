@@ -72,11 +72,40 @@ func TestWrap_ansiAndRunes(t *testing.T) {
 		joined := strings.Join(strings.Fields(strings.Join(out, " ")), " ")
 		assert.Contains(t, joined, "rather more besides", "and nothing is lost off the end")
 	})
+}
 
-	t.Run("a rune wider than the column still makes progress", func(t *testing.T) {
-		// takeCols directly: Wrap's floor short-circuits before a column this narrow is reached, and
-		// what must not happen here is a cut that can never fit looping forever
-		assert.Equal(t, "🙂", takeCols(strings.Repeat("🙂", 4), 1), "it overflows by a cell rather than hanging")
+func TestWrap_largeUnbrokenLine(t *testing.T) {
+	text := strings.Repeat("x", 1<<20)
+	out := Wrap("", text, 100)
+
+	require.Len(t, out, (len(text)+99)/100)
+	assert.Equal(t, text, strings.Join(out, ""))
+	for _, line := range out {
+		assert.LessOrEqual(t, lipgloss.Width(line), 100)
+	}
+}
+
+func TestWrap_preservesContentAtBoundaries(t *testing.T) {
+	t.Run("leading indentation stays on the first row", func(t *testing.T) {
+		text := "    " + strings.Repeat("x", 30)
+		out := Wrap("", text, 20)
+
+		require.Greater(t, len(out), 1)
+		body := make([]string, 0, len(out))
+		for _, line := range out {
+			assert.True(t, strings.HasPrefix(line, "    "))
+			assert.LessOrEqual(t, lipgloss.Width(line), 20)
+			body = append(body, strings.TrimPrefix(line, "    "))
+		}
+		assert.Equal(t, strings.TrimPrefix(text, "    "), strings.Join(body, ""))
+	})
+
+	t.Run("a hyphen after a full row moves to the next row", func(t *testing.T) {
+		text := strings.Repeat("x", 20) + "-"
+		out := Wrap("", text, 20)
+
+		assert.Equal(t, []string{strings.Repeat("x", 20), "-"}, out)
+		assert.Equal(t, text, strings.Join(out, ""))
 	})
 }
 

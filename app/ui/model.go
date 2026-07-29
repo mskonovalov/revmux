@@ -59,6 +59,9 @@ const (
 type ModelConfig struct {
 	Roster []prompt.AgentSpec
 	Events <-chan pipeline.Event
+	Task   string
+	Run    string
+	Inputs []InputDocument
 
 	// AutoExit closes the browser on its own that long after the report arrives, counting down in the
 	// header, and any key cancels it. Zero waits for the reader instead, which is the default: a run
@@ -69,6 +72,16 @@ type ModelConfig struct {
 	// It has to be the tty rather than stdout: see newStyles. Nil is allowed and falls back to
 	// lipgloss's default renderer, which is what a test wants.
 	Output io.Writer
+}
+
+// InputDocument is one caller-provided input captured before the review starts. Package main owns
+// filesystem access and hands immutable values over; app/ui only renders them.
+type InputDocument struct {
+	Label    string
+	Path     string
+	Content  string
+	Notice   string
+	Markdown bool
 }
 
 // Model is the bubbletea model: a status table over one focused detail pane.
@@ -92,13 +105,29 @@ type Model struct {
 	exitIn   time.Duration // what is left of the auto-exit countdown, zero when nothing is counting
 }
 
+type viewMode int
+
+const (
+	modeReview viewMode = iota
+	modeInputs
+)
+
 // viewState is where the reader is looking: the focused tab, the scroll offset within it and the
-// terminal size.
+// terminal size. Each mode keeps its own navigation so inspecting inputs never loses the reader's
+// place in an agent log or the findings.
 type viewState struct {
+	navState
+	cols           int
+	rows           int
+	mode           viewMode
+	review         navState
+	inputs         navState
+	reviewFindings bool
+}
+
+type navState struct {
 	tab    int
 	scroll int
-	cols   int
-	rows   int
 }
 
 // agentState is one agent's status row plus its full scrollback.
@@ -127,7 +156,7 @@ func (m Model) tick() tea.Cmd {
 // New builds the model over the resolved roster, one row per agent in roster order.
 func New(cfg ModelConfig) Model {
 	m := Model{cfg: cfg, style: newStyles(cfg.Output), combined: &combinedState{},
-		view: viewState{cols: defaultCols, rows: defaultRows}}
+		view: viewState{cols: defaultCols, rows: defaultRows, inputs: navState{scroll: -1}}}
 	m.agents = make([]*agentState, 0, len(cfg.Roster))
 	for _, spec := range cfg.Roster {
 		m.agents = append(m.agents, &agentState{spec: spec, state: stateWaiting})
@@ -187,6 +216,10 @@ func (m *Model) complete(rep finding.Report) {
 	m.found.add(rep.Findings)
 	m.done = true
 	m.exitIn = m.cfg.AutoExit
+	if m.view.mode == modeInputs {
+		m.view.reviewFindings = true
+		return
+	}
 	m.focus(m.findingsTab())
 	// focus opens a pane at its newest line, which is right for a log and wrong for a report: a reader
 	// starts at the worst finding, not at the tail of the last one's body

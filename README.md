@@ -165,8 +165,9 @@ different scope, usually a different goal. Kept at task level they would be over
 the next round, taking the record of what the previous round reviewed with them.
 
 Variables expand to the **paths** of these files, never to their contents — the agent reads them itself.
-revmux stats them and never opens one, so no prompt can be bloated by a large scope. An absent optional file
-expands to `none provided`, which is not an error: the run proceeds with generic severity calibration.
+Prompt composition stats them and never opens one, so no prompt can be bloated by a large scope. The TUI
+opens a bounded startup snapshot for display; headless mode does not. An absent optional file expands to
+`none provided`, which is not an error: the run proceeds with generic severity calibration.
 
 There are no `--goal`, `--goal-file`, `--profile-file` or `--context-file` flags. One mechanism, no
 precedence rules, and nothing for revmux to author.
@@ -599,17 +600,30 @@ Tab `1 all` is the combined chronological view and is focused by default; the ta
 full-detail scrollback. On completion the model switches to the findings browser, and the
 agent tabs stay reachable so a reader can check why a finding was raised.
 
+Press `i` to replace those panes with the inputs captured when the TUI started. The status table remains
+visible, and the input tabs show `scope.md`, `goal.md`, `profile.md`, then each file under `context/`.
+Markdown files use the TUI's Markdown rendering; other safe UTF-8 files are shown as text. Press `i` or
+`esc` to return to the same review pane and scroll position. If the review completes while an input is
+open, the document stays on screen and the return goes to the findings browser.
+
+The snapshot is read after the tty opens and before any review process starts. It does not refresh during
+the run. Display is capped at 1 MiB per file, 8 MiB for the snapshot and 128 context files. Missing,
+unreadable, binary and truncated inputs keep their tabs and show an explanation; none of these display
+conditions changes whether the review runs. Headless runs do not read an input snapshot.
+
 | keys | action |
 |---|---|
 | `tab` / `shift+tab`, `←` `→`, `h` `l` | switch pane |
 | `1`-`9`, then a letter | focus that pane directly; the token is shown on the tab, and letters already bound to something else are skipped |
 | `f` | jump to the findings browser |
+| `i` | show the startup input snapshot, or return to the review panes |
 | `↑` `↓`, `k` `j` | scroll, or move the cursor in the browser |
 | `pgup` `pgdn`, `ctrl+b` `ctrl+f` | page |
 | `home` `end`, `g` `G` | top, bottom |
 | `enter` | fold a finding down to its summary, or open it back up |
 | `/` | filter findings; `enter` accepts, `esc` clears |
-| `q`, `esc`, `ctrl+c` | quit |
+| `esc` | return from the input viewer; otherwise quit |
+| `q`, `ctrl+c` | quit |
 
 Quitting stops watching the run, it does not stop the run: the report is still written to stdout when the
 pipeline finishes.

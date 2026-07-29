@@ -9,7 +9,7 @@ import (
 // digit selects the tab and listing ten bindings here would say the same thing ten times.
 var keys = struct {
 	quit, nextTab, prevTab, up, down, pageUp, pageDown, top, bottom key.Binding
-	findings, expand, startFilter                                   key.Binding
+	findings, inputs, expand, startFilter                           key.Binding
 }{
 	quit:        key.NewBinding(key.WithKeys("q", "ctrl+c", "esc")),
 	nextTab:     key.NewBinding(key.WithKeys("tab", "right", "l")),
@@ -21,6 +21,7 @@ var keys = struct {
 	top:         key.NewBinding(key.WithKeys("home", "g")),
 	bottom:      key.NewBinding(key.WithKeys("end", "G")),
 	findings:    key.NewBinding(key.WithKeys("f")),
+	inputs:      key.NewBinding(key.WithKeys("i")),
 	expand:      key.NewBinding(key.WithKeys("enter")),
 	startFilter: key.NewBinding(key.WithKeys("/")),
 }
@@ -33,6 +34,10 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// query must never be a trap
 		return m, tea.Quit
 	}
+	if m.view.mode == modeInputs && msg.Type == tea.KeyEsc {
+		m.leaveInputs()
+		return m, nil
+	}
 	if m.browsing() && m.browseKey(msg) {
 		return m, nil
 	}
@@ -40,7 +45,12 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.quit):
 		return m, tea.Quit
+	case key.Matches(msg, keys.inputs):
+		m.toggleInputs()
 	case key.Matches(msg, keys.findings):
+		if m.view.mode == modeInputs && m.findings != nil {
+			m.leaveInputs()
+		}
 		m.focus(m.findingsTab())
 	case key.Matches(msg, keys.nextTab):
 		m.focus(m.view.tab + 1)
@@ -75,11 +85,17 @@ func (m *Model) focus(tab int) {
 		return
 	}
 	m.view.tab, m.view.scroll = tab, 0
+	if m.view.mode == modeInputs || m.browsing() {
+		m.view.scroll = m.maxScroll()
+	}
 }
 
 // lastTab is the rightmost pane: the last agent, or the findings browser once the report has opened
 // one past it.
 func (m Model) lastTab() int {
+	if m.view.mode == modeInputs {
+		return len(m.cfg.Inputs) - 1
+	}
 	if m.findings != nil {
 		return len(m.agents) + 1
 	}
@@ -88,7 +104,42 @@ func (m Model) lastTab() int {
 
 // browsing says the reader is in the findings browser, which is where the cursor, expansion and
 // filter keys mean something and where up and down move a cursor rather than scroll.
-func (m Model) browsing() bool { return m.findings != nil && m.view.tab == m.findingsTab() }
+func (m Model) browsing() bool {
+	return m.view.mode == modeReview && m.findings != nil && m.view.tab == m.findingsTab()
+}
+
+func (m *Model) toggleInputs() {
+	if len(m.cfg.Inputs) == 0 {
+		return
+	}
+	if m.view.mode == modeInputs {
+		m.leaveInputs()
+		return
+	}
+	m.view.review = m.view.navState
+	m.view.reviewFindings = false
+	m.view.mode = modeInputs
+	m.view.navState = m.view.inputs
+	if m.view.scroll < 0 {
+		m.view.scroll = m.maxScroll()
+	}
+	m.view.scroll = min(m.view.scroll, m.maxScroll())
+}
+
+func (m *Model) leaveInputs() {
+	if m.view.mode != modeInputs {
+		return
+	}
+	m.view.inputs = m.view.navState
+	m.view.mode = modeReview
+	m.view.navState = m.view.review
+	if m.view.reviewFindings {
+		m.view.tab = m.findingsTab()
+		m.view.scroll = m.reviewMaxScroll(m.view.tab)
+		m.view.reviewFindings = false
+	}
+	m.view.scroll = min(m.view.scroll, m.maxScroll())
+}
 
 // browseKey handles the keys that mean something only in the browser and reports whether it took the
 // keystroke. What it does not take falls through to the pane keys, so quitting and tab switching

@@ -16,6 +16,8 @@ The pipeline runs headless and emits typed events; the TUI is one subscriber and
 
 The cost of a new package is lower than keeping `app/ui` entangled with OS boundaries.
 When the TUI appears to need OS work, extract it and consume it through a consumer-side interface.
+The input viewer follows that boundary: `package main` captures the files after opening the tty and before
+the pipeline starts, then passes immutable documents through `ModelConfig`.
 
 **The final report is not written from here, and not carried out from here either.**
 `Pipeline.Run` returns it to `package main`, which owns it.
@@ -65,7 +67,7 @@ cover both.
 - Tab `1 all` is the combined chronological view and is **focused by default**.
   Tabs are labeled from one, because that is what a reader types, and the label carries the exact key:
   `1`-`9`, then letters. **The letter set omits every key already bound** — `f`, `g`, `h`, `j`, `k`,
-  `l`, `q` — because those match before the token lookup is reached, so a tab assigned one would be
+  `i`, `l`, `q` — because those match before the token lookup is reached, so a tab assigned one would be
   unreachable, and only on a run with enough panes to get that far. One character always: a two-digit
   token costs a column on every tab and reads as two numbers beside a name that may end in one.
   It is deliberately compact: tool calls, state transitions and findings emitted, one line each, agent-prefixed and colored.
@@ -97,6 +99,17 @@ cover both.
   It must stay that compact — four concurrent agents scrolling their full reasoning would run faster
   than anyone can read, and it would stop being the situational-awareness view it exists to be.
 - The tabs after it are per-agent full-detail scrollback. Those are the forensic views.
+- `i` switches the detail area to the startup input snapshot while the status table keeps updating.
+  Input tabs are scope, goal, profile and each context file in lexical relative-path order.
+  Missing optional inputs keep a tab that says they were not provided.
+  Markdown files render as Markdown and other safe UTF-8 files render verbatim.
+  Fenced code blocks hide their delimiter rows and indent their body as code.
+  `i` or `esc` restores the review tab and scroll position; `q` and `ctrl+c` still quit.
+  Review and input navigation are independent.
+  Completion does not interrupt an open input; it makes findings the review tab restored on return.
+  The snapshot never refreshes and is limited to 1 MiB per file, 8 MiB total and 128 context files.
+  Binary, unsafe, unreadable and truncated files remain visible as non-fatal notices.
+  Directory symlinks are listed but never traversed.
 - **The tab bar measures itself and degrades before it is clipped.** There is no horizontal scroll on
   that line, so clipping alone cuts the rightmost tabs mid-word and a reader cannot tell how many
   panes exist or what is past the edge.
@@ -128,8 +141,9 @@ cover both.
   **Its color is the worst severity in it, never a fixed accent** — red on any critical, yellow on any
   major, green only when nothing above minor was found. Green is what a reader takes as a verdict on the
   run, and a fixed one paints a review that turned up a critical exactly like a clean one.
-- On completion the model switches to the findings browser; agent tabs stay reachable
-  so a reader can check *why* a finding was raised.
+- On completion the model switches to the findings browser unless the reader is inspecting an input.
+  In that case the input stays visible and returning to review mode opens findings.
+  Agent tabs stay reachable so a reader can check *why* a finding was raised.
 - **The browser renders the report and nothing more.** It lays out what the rendered report carries
   — a severity heading, then each finding as its title, where it is, its body, its fix and its
   attribution — wrapped to the pane rather than clipped at its edge, since a body is prose several

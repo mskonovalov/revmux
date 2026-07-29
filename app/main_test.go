@@ -28,6 +28,7 @@ import (
 	pmocks "github.com/umputun/revmux/app/pipeline/mocks"
 	"github.com/umputun/revmux/app/prompt"
 	"github.com/umputun/revmux/app/task"
+	"github.com/umputun/revmux/app/ui"
 )
 
 func TestPrintVersion(t *testing.T) {
@@ -330,10 +331,10 @@ func TestRun_review(t *testing.T) {
 				`{"file":"b.go","line":2,"severity":"major","confidence":90,"title":"above the bar"}]}`)}
 
 		ro := r.opts()
-		cfg, arc, err := ro.pipelineConfig()
+		review, err := ro.pipelineConfig()
 		require.NoError(t, err)
 
-		rep, err := ro.review(context.Background(), cfg, arc)
+		rep, err := ro.review(context.Background(), review)
 		require.NoError(t, err)
 		require.Len(t, rep.Findings, 1, "review returns the same report it gave the renderer")
 		assert.Equal(t, "above the bar", rep.Findings[0].Title)
@@ -362,10 +363,10 @@ func TestRun_review(t *testing.T) {
 			}
 		}
 
-		cfg, arc, err := ro.pipelineConfig()
+		review, err := ro.pipelineConfig()
 		require.NoError(t, err)
 
-		_, err = ro.review(ctx, cfg, arc)
+		_, err = ro.review(ctx, review)
 		require.Error(t, err, "a canceled run has no review to report")
 		require.Error(t, agentErr, "the agent's own context falls with the run, which is what kills its process group")
 		assert.Equal(t, int64(1), launched.Load(), "a canceled run is not retried")
@@ -651,7 +652,7 @@ func TestRunOpts_render(t *testing.T) {
 			close(events)
 		}()
 
-		r := ro.render(roster, events)
+		r := ro.render(renderConfig{roster: roster, events: events})
 		<-sent
 		for _, fn := range afterEvents {
 			fn()
@@ -667,7 +668,12 @@ func TestRunOpts_render(t *testing.T) {
 
 	t.Run("with no tty the plain renderer takes the events", func(t *testing.T) {
 		r := newRunOpts(t, options{})
-		finished(t, r.opts(), finding.Report{}, nil, nil)
+		ro := r.opts()
+		ro.snapshot = func(reviewContext) []ui.InputDocument {
+			t.Fatal("the headless renderer must not read review inputs")
+			return nil
+		}
+		finished(t, ro, finding.Report{}, nil, nil)
 		assert.Contains(t, r.stderr.String(), "── find ──", "the stage line, not the word inside \"1 findings\"")
 		assert.Empty(t, r.stdout.String(), "stdout belongs to the report alone")
 	})
@@ -711,9 +717,15 @@ func TestRunOpts_render(t *testing.T) {
 		ro := r.opts()
 		open, frames, _ := ttyPair(t)
 		ro.openTTY = open
+		snapshotted := false
+		ro.snapshot = func(reviewContext) []ui.InputDocument {
+			snapshotted = true
+			return []ui.InputDocument{{Label: "scope", Path: "input/scope.md", Content: "# scope", Markdown: true}}
+		}
 
 		finished(t, ro, finding.Report{}, errors.New("every source degraded"), nil)
 
+		assert.True(t, snapshotted, "the startup snapshot is built once the tty opens")
 		assert.Contains(t, frames(), "find", "the ui renders to the tty")
 		assert.Empty(t, r.stdout.String(), "and never to stdout")
 		assert.Empty(t, r.stderr.String(), "nor to the plain renderer's stream")
@@ -752,6 +764,16 @@ func TestRun_reportWrittenOnce(t *testing.T) {
 		ro := r.opts()
 		open, _, typeKeys := ttyPair(t)
 		ro.openTTY = open
+		var snapshotted atomic.Bool
+		ro.snapshot = func(reviewContext) []ui.InputDocument {
+			snapshotted.Store(true)
+			return []ui.InputDocument{{Label: "scope", Path: "input/scope.md", Content: "# scope", Markdown: true}}
+		}
+		newRunner := ro.newRunner
+		ro.newRunner = func(spec pipeline.RunnerSpec) pipeline.Runner {
+			assert.True(t, snapshotted.Load(), "the tty snapshot must finish before the first review process starts")
+			return newRunner(spec)
+		}
 		typeKeys("q") // safe to queue here: the pipeline's channel is buffered and drops, never blocks
 
 		assert.Equal(t, 1, run(ro))

@@ -229,8 +229,9 @@ plus `{{FINDINGS}}` and `{{SOURCES}}` for the synthesis and verify stages.
 **Context variables expand to absolute paths, never to file contents.**
 `{{SCOPE}}`, `{{GOAL}}` and `{{PROFILE}}` become paths to files in the round's `input/`,
 `{{CONTEXT}}` becomes the path to its `context/` directory, and the profile body instructs agents to read them.
-revmux therefore only ever stats those files — it never opens one, so there is no size guard,
-no encoding handling and no way for a large scope to bloat a prompt.
+Prompt composition therefore only stats those files and never opens one, so there is no way for a large
+scope to bloat a prompt. The TUI separately opens a bounded startup snapshot with size and encoding
+guards; headless mode does not.
 
 ### Prior rounds are injected, not a variable
 

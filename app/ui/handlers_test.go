@@ -1,11 +1,14 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/umputun/revmux/app/pipeline"
 )
 
 // press builds the key message for one keystroke, runes and named keys alike.
@@ -117,4 +120,83 @@ func TestModel_key_quit(t *testing.T) {
 			assert.IsType(t, tea.QuitMsg{}, cmd(), "quitting stops watching the run, package main still writes the report")
 		})
 	}
+}
+
+func TestModel_key_inputs(t *testing.T) {
+	docs := []InputDocument{
+		{Label: "scope", Path: "input/scope.md", Content: strings.Repeat("scope line\n", 20), Markdown: true},
+		{Label: "goal", Path: "input/goal.md", Notice: "not provided", Markdown: true},
+	}
+	m := filled(t, 20)
+	m.cfg.Inputs, m.cfg.Task, m.cfg.Run = docs, "pr-123", "01-initial"
+	m = feed(t, m, press("2"), press("g"))
+	require.Equal(t, 1, m.view.tab)
+	require.Positive(t, m.view.scroll)
+
+	m = feed(t, m, press("i"))
+	assert.Equal(t, modeInputs, m.view.mode)
+	assert.Equal(t, 0, m.view.tab)
+	assert.Equal(t, m.maxScroll(), m.view.scroll, "an input opens at the top of its document")
+	assert.Contains(t, m.View(), "inputs · pr-123/01-initial")
+
+	m = feed(t, m, press("down"))
+	inputScroll := m.view.scroll
+	m = feed(t, m, press("i"))
+	assert.Equal(t, modeReview, m.view.mode)
+	assert.Equal(t, 1, m.view.tab, "the agent pane is restored")
+	assert.Equal(t, 15, m.view.scroll, "and so is its scroll position")
+
+	m = feed(t, m, press("i"))
+	assert.Equal(t, inputScroll, m.view.scroll, "the input position is restored too")
+	next, cmd := m.Update(press("esc"))
+	assert.Nil(t, cmd, "escape returns from inputs instead of quitting")
+	m = next.(Model)
+	assert.Equal(t, modeReview, m.view.mode)
+
+	m = feed(t, m, press("i"))
+	_, cmd = m.Update(press("q"))
+	require.NotNil(t, cmd)
+	assert.IsType(t, tea.QuitMsg{}, cmd())
+}
+
+func TestModel_key_inputs_completionDoesNotInterrupt(t *testing.T) {
+	m := New(ModelConfig{Roster: roster(), Inputs: []InputDocument{
+		{Label: "scope", Path: "input/scope.md", Content: "read me", Markdown: true},
+	}})
+	m = feed(t, m, press("i"), CompletedMsg{Report: report()})
+
+	assert.Equal(t, modeInputs, m.view.mode)
+	assert.Equal(t, 0, m.view.tab, "the document stays focused")
+	assert.True(t, m.view.reviewFindings, "findings wait behind the return to review mode")
+
+	m = feed(t, m, event(pipeline.EventAgentStarted, "verify-late", "verify"))
+	assert.NotEqual(t, m.findingsTab(), m.view.review.tab, "the numeric findings tab moved after completion")
+
+	m = feed(t, m, press("i"))
+	assert.Equal(t, modeReview, m.view.mode)
+	assert.Equal(t, m.findingsTab(), m.view.tab)
+	assert.Equal(t, m.maxScroll(), m.view.scroll, "the completed report opens at its top")
+	assert.False(t, m.view.reviewFindings)
+}
+
+func TestModel_key_findingsFromInputsOpensAtTop(t *testing.T) {
+	m := New(ModelConfig{Roster: roster(), Inputs: []InputDocument{
+		{Label: "scope", Path: "input/scope.md", Content: "read me", Markdown: true},
+	}})
+	m = feed(t, m,
+		tea.WindowSizeMsg{Width: 80, Height: len(roster()) + chromeLines + 5},
+		press("i"),
+		CompletedMsg{Report: report()},
+		press("f"),
+	)
+
+	assert.Equal(t, modeReview, m.view.mode)
+	assert.Equal(t, m.findingsTab(), m.view.tab)
+	require.Positive(t, m.maxScroll(), "the report must be longer than the pane")
+	assert.Equal(t, m.maxScroll(), m.view.scroll, "the findings report opens at its top")
+}
+
+func TestModel_key_inputs_emptyConfig(t *testing.T) {
+	m := feed(t, New(ModelConfig{Roster: roster()}), press("i"))
+	assert.Equal(t, modeReview, m.view.mode, "there is no empty mode when the renderer supplied no snapshot")
 }

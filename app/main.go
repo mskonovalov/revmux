@@ -37,6 +37,16 @@ type runOpts struct {
 	stderr    io.Writer
 	openTTY   func() (*os.File, error)
 	newRunner func(pipeline.RunnerSpec) pipeline.Runner
+	snapshot  func(reviewContext) []ui.InputDocument
+}
+
+// configuredReview is everything one review resolved before it starts. Keeping the context beside the
+// pipeline configuration lets the renderer snapshot the caller's inputs without putting presentation
+// data into app/pipeline.
+type configuredReview struct {
+	pipeline pipeline.Config
+	archive  *archive.Archive
+	context  reviewContext
 }
 
 func main() {
@@ -93,11 +103,11 @@ func run(o runOpts) int {
 		return 0
 	}
 
-	cfg, arc, err := o.pipelineConfig()
+	review, err := o.pipelineConfig()
 	if err != nil {
 		return o.fail(err)
 	}
-	defer arc.Close() // every artifact is already on disk, only the directory handles are left
+	defer review.archive.Close() // every artifact is already on disk, only the directory handles are left
 
 	// the pipeline runs under a signal-canceled context so an interrupt tears the agent process groups
 	// down: children are started with Setsid, so the terminal never signals them and dying without
@@ -105,7 +115,7 @@ func run(o runOpts) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	rep, err := o.review(ctx, cfg, arc)
+	rep, err := o.review(ctx, review)
 	if err != nil {
 		return o.fail(err)
 	}
@@ -145,42 +155,42 @@ func (o runOpts) writeJSON(payload any, what string) error {
 // pipelineConfig resolves everything the pipeline needs, plus the archive package main writes its own
 // artifacts through. The roster is resolved exactly once, here: the archive manifest and both
 // renderers take that same slice rather than re-deriving it.
-func (o runOpts) pipelineConfig() (pipeline.Config, *archive.Archive, error) {
+func (o runOpts) pipelineConfig() (configuredReview, error) {
 	if o.opts.Task == "" {
-		return pipeline.Config{}, nil, errors.New("--task is required")
+		return configuredReview{}, errors.New("--task is required")
 	}
 
 	rc, err := o.opts.resolveContext()
 	if err != nil {
-		return pipeline.Config{}, nil, err
+		return configuredReview{}, err
 	}
 	set, err := o.opts.promptSet()
 	if err != nil {
-		return pipeline.Config{}, nil, err
+		return configuredReview{}, err
 	}
 	profile, err := set.Profile(o.opts.Profile)
 	if err != nil {
-		return pipeline.Config{}, nil, fmt.Errorf("resolve profile: %w", err)
+		return configuredReview{}, fmt.Errorf("resolve profile: %w", err)
 	}
 	roster, err := profile.Roster(o.opts.Lenses, set.LensNames())
 	if err != nil {
-		return pipeline.Config{}, nil, fmt.Errorf("resolve roster: %w", err)
+		return configuredReview{}, fmt.Errorf("resolve roster: %w", err)
 	}
 
 	// resolved before this round is claimed, so the round being written is never in its own inventory
 	history, err := archive.History(rc.TaskDir)
 	if err != nil {
-		return pipeline.Config{}, nil, fmt.Errorf("read prior rounds: %w", err)
+		return configuredReview{}, fmt.Errorf("read prior rounds: %w", err)
 	}
 	// the tasks root and the task name rather than the joined path resolveContext already checked: a
 	// path string handed over here is one archive.New would have to reopen by name, which is the
 	// check-then-open window its os.Root chain exists to remove
 	arc, err := archive.New(task.Round{TasksDir: o.opts.TasksDir, Task: o.opts.Task, Run: o.opts.Run})
 	if err != nil {
-		return pipeline.Config{}, nil, fmt.Errorf("open run archive: %w", err)
+		return configuredReview{}, fmt.Errorf("open run archive: %w", err)
 	}
 
-	return pipeline.Config{
+	cfg := pipeline.Config{
 		NewRunner: o.runnerFactory(rc),
 		Archive:   arc,
 		Clock:     o.clock,
@@ -189,7 +199,8 @@ func (o runOpts) pipelineConfig() (pipeline.Config, *archive.Archive, error) {
 		NoSynthesis: o.opts.NoSynthesis, NoVerify: o.opts.NoVerify,
 		StaggerDelay: o.opts.StaggerDelay, MaxParallel: o.opts.MaxParallel,
 		VerifyGroups: o.opts.VerifyGroups,
-	}, arc, nil
+	}
+	return configuredReview{pipeline: cfg, archive: arc, context: rc}, nil
 }
 
 // review runs the pipeline with a renderer subscribed to its events, writes the run's own artifacts,
@@ -206,9 +217,13 @@ func (o runOpts) pipelineConfig() (pipeline.Config, *archive.Archive, error) {
 // --min-confidence is applied here, before the renderer sees the report, because the findings browser
 // is a rendering path like stdout is: filtering afterwards would list in the TUI exactly the findings
 // the printed report and the exit code both claim are absent.
-func (o runOpts) review(ctx context.Context, cfg pipeline.Config, arc *archive.Archive) (finding.Report, error) {
+func (o runOpts) review(ctx context.Context, review configuredReview) (finding.Report, error) {
+	cfg, arc := review.pipeline, review.archive
 	p := pipeline.New(cfg)
-	r := o.render(cfg.Roster, p.Events())
+	r := o.render(renderConfig{
+		roster: cfg.Roster, events: p.Events(), context: review.context,
+		task: cfg.Task, run: cfg.Run,
+	})
 
 	rep, err := p.Run(ctx)
 	rep = rep.Above(o.opts.MinConfidence)
@@ -238,25 +253,39 @@ type renderer struct {
 	done  chan struct{}
 }
 
+// renderConfig keeps every TUI-only input together. The plain renderer uses only roster and events;
+// the remaining fields are read only after a tty opens.
+type renderConfig struct {
+	roster  []prompt.AgentSpec
+	events  <-chan pipeline.Event
+	context reviewContext
+	task    string
+	run     string
+}
+
 // render subscribes the active renderer to the run's events — the TUI when the tty opens, the plain
 // stderr renderer otherwise. Exactly one of them reads the channel: a Go channel distributes rather
 // than broadcasts, so a second reader would take an arbitrary half of the events.
-func (o runOpts) render(roster []prompt.AgentSpec, events <-chan pipeline.Event) *renderer {
+func (o runOpts) render(cfg renderConfig) *renderer {
 	r := &renderer{done: make(chan struct{})}
 
 	tty := o.tty()
 	if tty == nil {
-		r.plain = &progress{w: o.stderr, roster: roster}
+		r.plain = &progress{w: o.stderr, roster: cfg.roster}
 		go func() {
 			defer close(r.done)
-			r.plain.run(events)
+			r.plain.run(cfg.events)
 		}()
 		return r
 	}
 
 	// the tty goes in as Output as well as to the program: the palette is profiled against the surface
 	// the frame lands on, and profiling stdout instead loses every color whenever the report is piped
-	m := ui.New(ui.ModelConfig{Roster: roster, Events: events, Output: tty, AutoExit: o.opts.AutoExit})
+	documents := o.inputDocuments(cfg.context)
+	m := ui.New(ui.ModelConfig{
+		Roster: cfg.roster, Events: cfg.events, Output: tty, AutoExit: o.opts.AutoExit,
+		Task: cfg.task, Run: cfg.run, Inputs: documents,
+	})
 	r.prog = tea.NewProgram(m, tea.WithInput(tty), tea.WithOutput(tty), tea.WithAltScreen())
 	go func() {
 		defer close(r.done)
@@ -266,6 +295,15 @@ func (o runOpts) render(roster []prompt.AgentSpec, events <-chan pipeline.Event)
 		}
 	}()
 	return r
+}
+
+func (o runOpts) inputDocuments(rc reviewContext) []ui.InputDocument {
+	if o.snapshot != nil {
+		return o.snapshot(rc)
+	}
+	return (&inputSnapshotter{limits: inputLimits{
+		fileBytes: inputFileLimit, totalBytes: inputTotalLimit, contexts: inputCountLimit,
+	}}).load(rc)
 }
 
 // finish hands the report to the findings browser and waits for the reader to close it. A failed run

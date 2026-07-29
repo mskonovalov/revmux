@@ -32,13 +32,20 @@ func (m Model) detailPane() []string {
 // paneLines is what the focused tab shows: the compact combined log on tab 0, the findings browser
 // on the tab the report opens, one agent's full scrollback on the rest.
 func (m Model) paneLines() []string {
-	switch m.view.tab {
+	if m.view.mode == modeInputs {
+		return m.inputLines()
+	}
+	return m.reviewPaneLines(m.view.tab)
+}
+
+func (m Model) reviewPaneLines(tab int) []string {
+	switch tab {
 	case 0:
 		return m.combinedLines()
 	case m.findingsTab():
 		return m.findingsPane()
 	}
-	return m.agentLines()
+	return m.agentLinesAt(tab)
 }
 
 // paneHeight is what the chrome leaves for the pane: one row per agent plus the fixed lines counted by
@@ -49,19 +56,17 @@ func (m Model) paneHeight() int { return max(1, m.view.height()-len(m.agents)-ch
 // maxScroll is how far back the focused pane can be scrolled, zero when it all fits.
 func (m Model) maxScroll() int { return max(0, len(m.paneLines())-m.paneHeight()) }
 
+func (m Model) reviewMaxScroll(tab int) int {
+	return max(0, len(m.reviewPaneLines(tab))-m.paneHeight())
+}
+
 // tabBar names every pane, the focused one accented and marked. The browser is keyed f rather than by
 // its number: it appears only once the report has arrived, so a fixed digit would name nothing for
 // most of the run.
 func (m Model) tabBar() string {
-	// numbered from one, because that is what the keys are: nobody reaches for 0 first, and the
-	// combined view being the leftmost tab makes it tab one
-	names := make([]string, 0, len(m.agents)+2)
-	names = append(names, m.tabToken(0)+" all")
-	for i, a := range m.agents {
-		names = append(names, m.tabToken(i+1)+" "+a.spec.Name)
-	}
-	if m.findings != nil {
-		names = append(names, "f findings")
+	names := m.tabNames()
+	if len(names) == 0 {
+		return ""
 	}
 
 	// clipping alone is not enough: it cuts the right-hand tabs off mid-word, so a reader cannot tell
@@ -87,6 +92,31 @@ func (m Model) tabBar() string {
 	}
 	// every name is a token, the padding is gone, and it still does not fit; clipping is the backstop
 	return m.clip(m.tabRow(names, len(names), true))
+}
+
+func (m Model) tabNames() []string {
+	if m.view.mode == modeInputs {
+		names := make([]string, 0, len(m.cfg.Inputs)+1)
+		for i, doc := range m.cfg.Inputs {
+			names = append(names, m.tabToken(i)+" "+doc.Label)
+		}
+		return append(names, "i back")
+	}
+
+	// numbered from one, because that is what the keys are: nobody reaches for 0 first, and the
+	// combined view being the leftmost tab makes it tab one
+	names := make([]string, 0, len(m.agents)+2)
+	names = append(names, m.tabToken(0)+" all")
+	for i, a := range m.agents {
+		names = append(names, m.tabToken(i+1)+" "+a.spec.Name)
+	}
+	if m.findings != nil {
+		names = append(names, "f findings")
+	}
+	if len(m.cfg.Inputs) > 0 {
+		names = append(names, "i inputs")
+	}
+	return names
 }
 
 // tabRow renders the bar with collapse tabs reduced to their leading token — a digit for the first
@@ -124,7 +154,7 @@ func (m Model) tabRow(names []string, collapse int, tight bool) string {
 // goes to the top and q quits. Those keys are matched before the token lookup is ever reached, so a
 // tab assigned one of them would simply be unreachable, and only on a run with enough panes to get
 // that far.
-const tabLetters = "abcdeimnoprstuvwxyz"
+const tabLetters = "abcdemnoprstuvwxyz"
 
 // tabToken is the single character that selects a pane: 1-9, then the letters above.
 //

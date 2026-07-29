@@ -2,8 +2,10 @@ package ui
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // minWrapCols is the narrowest text column worth wrapping into: below it a wrapped entry is more rows
@@ -36,48 +38,23 @@ func Wrap(head, text string, width int) []string {
 	}
 
 	indent := strings.Repeat(" ", lipgloss.Width(head))
-	out := []string{}
-	for rest := text; rest != ""; {
-		take := takeCols(rest, avail)
-		prefix := head
-		if len(out) > 0 {
-			prefix = indent
+	body := strings.TrimLeftFunc(text, unicode.IsSpace)
+	leading := text[:len(text)-len(body)]
+	bodyWidth := avail - lipgloss.Width(leading)
+	if bodyWidth < 1 {
+		body, leading, bodyWidth = text, "", avail
+	}
+
+	wrapped := strings.Split(ansi.Wrap(body, bodyWidth, ""), "\n")
+	out := make([]string, 0, len(wrapped))
+	for _, line := range wrapped {
+		for bounded := range strings.SplitSeq(ansi.Hardwrap(line, bodyWidth, true), "\n") {
+			prefix := head
+			if len(out) > 0 {
+				prefix = indent
+			}
+			out = append(out, prefix+leading+bounded)
 		}
-		out = append(out, prefix+take)
-		rest = strings.TrimLeft(strings.TrimPrefix(rest, take), " ")
 	}
 	return out
-}
-
-// takeCols is the longest leading run of text that fits in cols display columns, broken at a word when
-// one is reachable.
-//
-// **It walks runes, never bytes.** Trimming a byte at a time while measuring display cells exits the
-// loop with the cut sitting inside a multi-byte rune, which puts invalid UTF-8 into the pane and into
-// events.jsonl — and the text reaching here now carries ANSI as well, since markdown rendering runs
-// first, so a byte cut can also land inside an escape sequence and spill it as literal characters.
-func takeCols(text string, cols int) string {
-	if lipgloss.Width(text) <= cols {
-		return text
-	}
-
-	runes := []rune(text)
-	cut := ""
-	for i := 1; i <= len(runes); i++ {
-		next := string(runes[:i])
-		if lipgloss.Width(next) > cols {
-			break
-		}
-		cut = next
-	}
-	if cut == "" { // a single rune wider than the column, so take it and overflow by one cell
-		cut = string(runes[0])
-	}
-
-	// break on a word where one is reachable; a break in the middle of a path or a command is worse
-	// than a short row
-	if sp := strings.LastIndex(cut, " "); sp > 0 && lipgloss.Width(cut[:sp]) >= cols/2 {
-		return cut[:sp]
-	}
-	return cut
 }

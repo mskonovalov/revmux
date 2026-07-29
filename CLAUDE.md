@@ -210,8 +210,9 @@ parts are directory names from the findings and there is nobody to return an err
 
 **Context variables expand to paths, never to content.**
 `{{SCOPE}}` is the absolute path of `scope.md`, not the text inside it; the agent reads the file itself.
-revmux stats the caller's context files and never opens one, so no prompt can be bloated by a large scope
-and the never-embed rule needs no per-variable judgment call.
+Prompt composition stats the caller's context files and never opens one, so no prompt can be bloated by a
+large scope and the never-embed rule needs no per-variable judgment call. The TUI separately opens a
+bounded startup snapshot for display; headless mode does not.
 It does read its own prior `findings.json` files to build the history inventory — that is revmux reading
 what revmux wrote, and the inventory carries counts, never findings text.
 See `.claude/rules/prompts.md`.
