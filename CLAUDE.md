@@ -382,6 +382,9 @@ Stamping happens in `find`, not synthesis, or `--no-synthesis` runs carry invent
   directory layout — needs the same edit in **both** skill trees, since they hold duplicate copies of
   `references/` and `scripts/`. A `diff -r` of the two `references/` and `scripts/` directories must
   come back empty; only `SKILL.md` differs.
+  A **new** reference file additionally needs the `references/` line in `plugins/codex/README.md`, which
+  enumerates them by name and goes stale silently — the `SKILL.md` pointer to it is what an agent
+  follows, so nothing fails when that listing drops one.
 - **The skill is documentation of this binary, so a change to the binary updates it in the same commit.**
   It states revmux's flags, profiles, JSON field names, exit codes and archive layout as fact, and an
   agent executes what it says without checking. A skill describing a flag that no longer behaves that way

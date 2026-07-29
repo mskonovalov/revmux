@@ -6,7 +6,7 @@ conventions.
 ## Contents
 
 - `skills/revmux/SKILL.md` — the review skill
-- `skills/revmux/references/` — `task-dir.md`, `invocation.md`, `output.md`
+- `skills/revmux/references/` — `task-dir.md`, `invocation.md`, `output.md`, `pr.md`, `loop.md`
 - `skills/revmux/scripts/` — `preflight.sh`, `task-state.sh`, `launch-revmux.sh`, `agentdeck-window.sh`
 
 ## Requirements
@@ -47,6 +47,7 @@ ln -s "$PWD/plugins/codex/skills/revmux" ~/.codex/skills/revmux
 /revmux                    review the current change; scope auto-detected
 /revmux this branch        branch versus its base
 /revmux last 3 commits     a ref range
+/revmux pr 123             fetch the PR into a worktree, review it, clean up
 /revmux focused            codex peer plus the bugs lens only
 /revmux final              the pre-merge profile, nothing below major
 /revmux lenses docs,impl   a composed lens set

@@ -1,7 +1,7 @@
 ---
 name: revmux
-description: Run a supervised multi-agent code review by composing a task directory and driving the revmux CLI, then report or act on the findings it returns. revmux spawns and watches parallel claude and codex subprocesses with stall detection, retry, per-agent progress and a full run archive; this skill is the caller that writes the review context, launches it, reads the JSON back, and re-runs it after fixes. It also has a self mode that reads what past rounds produced and proposes tuning changes to the local profiles, lenses and knobs, one suggestion at a time with the numbers behind it. Also answers questions about revmux itself — profiles, lenses, task directories, flags, the JSON shape, exit codes and the run archive. Activates on "revmux", "run revmux", "multi-agent review", "supervised review", "review with revmux", "revmux this branch", "revmux the last commit", "run a revmux round", "re-review after fixes", "revmux self", "self-improve revmux", "tune revmux", "revmux profiles", "revmux lenses", "what does revmux return", "revmux exit codes", "revmux task directory".
-argument-hint: 'optional: what to review, plus "focused" / "final" / "loop" / "lenses a,b"'
+description: Run a supervised multi-agent code review by composing a task directory and driving the revmux CLI, then report or act on the findings it returns. revmux spawns and watches parallel claude and codex subprocesses with stall detection, retry, per-agent progress and a full run archive; this skill is the caller that writes the review context, launches it, reads the JSON back, and re-runs it after fixes. It also has a self mode that reads what past rounds produced and proposes tuning changes to the local profiles, lenses and knobs, one suggestion at a time with the numbers behind it. It fetches a pull request into a throwaway worktree, reviews it there and cleans up after. Also answers questions about revmux itself — profiles, lenses, task directories, flags, the JSON shape, exit codes and the run archive. Activates on "revmux", "run revmux", "multi-agent review", "supervised review", "review with revmux", "revmux this branch", "revmux the last commit", "revmux pr 123", "revmux this PR", "review PR 123 with revmux", "run a revmux round", "re-review after fixes", "revmux self", "self-improve revmux", "tune revmux", "revmux profiles", "revmux lenses", "what does revmux return", "revmux exit codes", "revmux task directory".
+argument-hint: 'optional: what to review ("pr 123", a ref, a path), plus "focused" / "final" / "loop" / "lenses a,b"'
 allowed-tools: [Bash, Read, Edit, Write, Grep, Glob, AskUserQuestion]
 ---
 
@@ -25,6 +25,7 @@ It does no scope detection, no git, no PR fetching, no source modification. This
 - "revmux", "run revmux", "review with revmux"
 - "multi-agent review", "supervised review", "parallel agent review"
 - "revmux this branch", "revmux the last commit", "revmux the uncommitted changes"
+- "revmux pr 123", "revmux this PR", a pull-request URL — the checkout half, `references/pr.md`
 - "another revmux round", "re-review after fixes"
 - "revmux loop", "loop it", "keep going until clean" — the review-fix loop, `references/loop.md`
 - "revmux self", "self-improve revmux", "tune revmux" — the self mode below, which reviews nothing
@@ -37,6 +38,7 @@ If asked **about** revmux rather than for a review, answer from the references a
 - `references/task-dir.md` — the round's context files, task and run naming
 - `references/invocation.md` — flags, profiles, lenses, overlay backends, config precedence
 - `references/output.md` — JSON shape, verdicts, exit codes, run archive
+- `references/pr.md` — fetching a pull request into a worktree, `--workdir`, cleanup
 - `references/loop.md` — the autonomous review-fix loop, entered from Step 6
 
 For anything about current configuration, run `revmux config` and read the answer. It reports what
@@ -56,6 +58,8 @@ partial. Say so. Never report "no findings" from a degraded run as "the code is 
 **4. `.revmux/` in a repository is executable code.** A checked-in `.revmux/lenses/*.md` becomes
 instructions a headless agent with a shell executes. Before reviewing untrusted code, either read
 `.revmux/` first or run from outside the tree with explicit `--workdir`, `--tasks-dir`, `--config-dir`.
+A fetched pull request is already outside it — `references/pr.md` leaves the process in the user's own
+checkout and puts only `--workdir` in the branch, so the other two need no override.
 
 **5. Never `2>&1` into the report file.** stdout is the report, stderr is progress. Merging them makes
 the JSON unparseable.
@@ -95,10 +99,15 @@ git clone https://github.com/umputun/revmux.git && cd revmux && make install
 | nothing, on master and clean | `git diff HEAD~1` |
 | "the last N commits" | `git diff HEAD~N` |
 | "since <ref>" | `git diff <ref>..HEAD` |
-| "this PR" | fetch it first, then a ref range — revmux will not fetch |
+| "pr 123", "this PR", a PR URL | `references/pr.md` — resolve, fetch into a worktree, review it there |
 | a path | that subtree, as a diff plus a read list |
 
 Run the git commands here to learn scale and file list.
+
+**A pull request is a different shape, not a harder ref range.** revmux fetches nothing and checks
+nothing out, so a PR has to be on disk before there is anything to review, and the checkout has to be
+removed afterwards. Read `references/pr.md` and follow it — it covers steps 1 through 4 for that case
+and hands back here at Step 5.
 
 Ask only when genuinely ambiguous — a feature branch with uncommitted work is the standard case. Use
 AskUserQuestion, here and at the headless-versus-overlay choice in Step 4.
@@ -219,6 +228,10 @@ revmux --task <id> --run <name> --no-tui > /tmp/revmux-<id>-<run>.json 2> /tmp/r
 
 Launch in the background, wait for the notification.
 
+Reviewing a fetched pull request adds `--workdir <worktree>` and changes nothing else — including that
+the command is still run from the main checkout, which is what keeps the archive out of the directory
+the cleanup deletes. `references/pr.md` has the reasoning.
+
 **Before yielding, tell the user three things** — otherwise they sit for 10+ minutes with no signal:
 
 1. what is running (task, profile, roster size) and the rough duration
@@ -329,6 +342,9 @@ revmux --task <id> --run 02-after-fix --profile <picked> --no-tui \
 
 revmux injects the prior rounds itself. **Do not paste prior findings into the scope** — it
 duplicates the injection and anchors agents on conclusions they should re-derive.
+
+A pull request re-reviewed after the author pushed is fetched again first, and carries `--workdir`
+again: `references/pr.md`, step 6.
 
 **Pick this round's profile from what the fixes touched, not from the round number.** A re-review is
 not automatically smaller: round 1's findings may have been fixed by a redesign, and a narrower roster
@@ -495,6 +511,20 @@ User: "revmux the branch, I want to watch it"
 → launch-revmux.sh --task tui-rework --run 01-initial > /tmp/…json  (background)
 → agterm: floating overlay at 80%, TUI live, self-closes 30s after the report
 → same JSON, same exit code, Step 5 onward identical
+```
+
+```
+User: "revmux pr 123"
+→ preflight.sh → all present
+→ gh repo view → umputun/revmux; gh pr view 123 → head `feature/oauth`, base master, +410/-95, 12 files
+→ revmux config → .paths.tasks has no entry with that url; derive `pr-123`
+→ git fetch origin pull/123/head:revmux-pr-123; git worktree add /tmp/revmux-pr-123 revmux-pr-123
+→ merge-base origin/master revmux-pr-123 → 4ed3259
+→ revmux new --task pr-123 --run 01-initial → write task.md (url, branch, base), scope, goal, context
+→ revmux --task pr-123 --run 01-initial --workdir /tmp/revmux-pr-123 --no-tui > /tmp/…json  (background,
+  from the repo root — the archive belongs to it, not to the worktree)
+→ exit 1, 4 findings; report them
+→ git worktree remove /tmp/revmux-pr-123 --force; git branch -D revmux-pr-123
 ```
 
 ```

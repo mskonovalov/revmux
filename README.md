@@ -779,7 +779,10 @@ exits `2`, because a typo answered with zeroes reads as a task with no history. 
 revmux is built to be driven by a caller model, and this repository ships that caller as a skill for
 two harnesses. The skill does the half revmux deliberately does not: it resolves what is being
 reviewed, runs the git commands, writes the round's `input/`, launches revmux, reads the JSON back, and
-opens a new round on the same task after fixes.
+opens a new round on the same task after fixes. Asked for a pull request, it fetches the head into a
+throwaway worktree, points `--workdir` at it while running from the main checkout — so the archive
+outlives the checkout and the branch's own `.revmux/` never loads — and removes both the worktree and
+the temp branch afterwards.
 
 | harness | location | install |
 |---|---|---|
