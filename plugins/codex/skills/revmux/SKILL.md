@@ -387,12 +387,17 @@ cannot catch a regression in an area its lenses do not cover.
 | the fixes were | profile |
 |---|---|
 | contained edits inside what round 1 flagged | `final` — `bugs+impl` is the fix-confirmation shape, and it reports nothing below major |
-| spilled into tests, docs or structure | `comprehensive` — that surface has not been reviewed yet |
+| spilled into tests or structure | `comprehensive` — that surface has not been reviewed yet |
+| documentation only | `final` — a doc fix is new prose, and `comprehensive` would review it |
 | time-boxed, correctness only | `focused` |
 
 The round-2 failure worth spending a roster on is a fix that does not address the finding, or addresses
 it in the wrong place. That is the `impl` lens, which `focused` does not carry — so a re-review narrows
 to `final` rather than to `focused`.
+
+Documentation is the one surface a re-review does **not** widen to cover. Every other spill is code the
+round before never looked at; a doc fix is a sentence this loop just wrote, and running the `docs` lens
+over it produces a finding about that sentence round after round while the code stands still.
 
 Put it as a numbered list, the matching row first and marked `(recommended)`, and wait for the pick.
 Never narrow the roster silently: a user who does not notice gets a smaller review than the one he

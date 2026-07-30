@@ -392,6 +392,14 @@ Stamping happens in `find`, not synthesis, or `--no-synthesis` runs carry invent
   "four subcommands" sentence plus the section in README, the project-structure list in this file, and the
   subcommand sections in **both** skill trees.
 - A new lens file needs an entry in at least one shipped profile, or nothing will ever run it.
+- **The severity bar is duplicated in every profile body** and nothing composes it from one place:
+  `comprehensive`, `codex-only`, `claude-only` and `focused` carry a byte-identical `## Severity bar`
+  section, and `final` carries a two-severity variant of the same text.
+  A change to what a severity means is five edits, and the four identical copies must stay identical —
+  two profiles disagreeing about what `major` is means the same defect gates one review shape and not
+  another, which reads as the model being inconsistent rather than the prompts being out of step.
+  `.claude/rules/prompts.md` calls the body "the shared preamble and severity bar"; shared across the
+  agents of one run, not across profiles.
 - A change to the task-directory layout starts at the constants in `app/task`, which `app/archive`,
   `app/pipeline` and `package main` join every path from — the run's own artifacts included, so a stage
   snapshot is named once and read back by that name.

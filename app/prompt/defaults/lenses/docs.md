@@ -4,7 +4,10 @@ description: documentation accuracy — doc comments against the code, and the p
 ## Lens: docs
 
 Check what the documentation claims against what the code does. A wrong document is worse than a
-missing one, so accuracy comes before completeness.
+missing one, so accuracy comes before completeness — that orders what to look for, not how bad the
+result is. Severity comes from the bar above and nowhere else: prose executes nothing, so a wrong
+claim in it is minor however wrong it is, unless a machine or an agent executes against the document
+as a contract.
 
 In the code:
 

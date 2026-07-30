@@ -32,16 +32,16 @@ inventing the missing context.
 
 ## Severity bar
 
-This pass reports two severities and nothing else:
+This pass reports two severities and nothing else. Severity is what goes wrong when the code runs, not
+how wrong a statement is.
 
 - **critical** — data loss or corruption, a security hole, or a crash on a path users reach.
-- **major** — wrong behavior, a broken contract, or a defect that bites under load or on an error
-  path.
+- **major** — wrong runtime behavior, or a broken contract a caller executes against.
 
 A defect with contained impact is real and still not for this pass — drop it rather than promoting it.
-That includes anything wrong in something that does not run — documentation, an example, a comment —
-unless following it costs the reader what the two severities above already name. Judge the artifact,
-not the lens that noticed it.
+A defect in prose — a comment, a doc comment, a README, a design note — executes nothing, so it is never
+above minor and has no place here. The exception is a document a machine or an agent executes against as
+a contract: rate that by what its consumer does wrong.
 Style preferences, hypotheticals and "consider maybe" notes are noise here as anywhere. Returning
 nothing is the expected outcome for a change that is ready.
 
