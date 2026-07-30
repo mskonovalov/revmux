@@ -21,6 +21,15 @@ lenses, the severity bar and the three stages are files, so two runs of a profil
 the code. That matters most between people: a contributor gets the review a maintainer would have run, and
 the maintainer can check which lens text produced it instead of taking it on faith.
 
+**Use the right model for each role.** A review is not one kind of reasoning repeated several times. A broad
+bug pass, an adversarial second opinion, synthesis and verification can favor different models, effort
+levels, latency and cost. Profiles can arrange agents and models in whatever shape the task needs: all
+Claude, all Codex, several models from one CLI, or independent peers from both. Each finder can select its
+own binary, model and effort, and synthesis and verification can override those choices separately. Lenses
+stay independent of runners, so moving a role to another model does not change what that role examines.
+The resolved runner for every process is recorded in the run archive, which keeps a mixed review
+reproducible and auditable instead of making it another ad hoc choice hidden in the calling session.
+
 **Review rules ship with the repository.** What a project actually cares about — its conventions, what counts
 as major, the mistakes it keeps repeating — usually lives in a maintainer's head and reaches contributors one
 review comment at a time. Checked into `.revmux/`, it is lens and profile text: versioned, diffable, reviewed
@@ -356,6 +365,13 @@ expands to. Reviewing a repo from outside it means passing `--config-dir` and `-
 
 A profile is roster front matter plus a body that is the shared preamble and severity bar. The top-level
 `model` is the review's runner; a roster entry or a stage naming its own overrides it.
+
+The top-level runner is inheritance, not a fixed review topology. A roster entry can keep it or replace it,
+and the `synthesis` and `verify` stages can make the same choice independently. This supports simple
+single-vendor profiles when only one CLI is available, mixed peers for independent perspectives, a wide
+lower-effort finder roster followed by a stronger synthesis model, or a high-effort verifier where false
+positives are expensive. Each roster entry remains a distinct source regardless of which binary runs it,
+while its lenses define the job independently of the runner.
 
 ```yaml
 ---
