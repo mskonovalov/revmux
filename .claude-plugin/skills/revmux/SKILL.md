@@ -298,14 +298,16 @@ lens names and is informational. One agent flagging under two lenses is still on
 Lead with completeness, then severity counts, then each finding with location, argument and fix. Call
 out findings with more than one entry in `sources`.
 
-**Tag every finding with the surface it sits on** — one lowercase word in brackets before the title:
-`[code]` executable logic, `[comments]` a comment or doc comment inside a source file, `[docs]` a
-project document, `[tests]` test code. Name another the same way when none of those fits (`[config]`,
-`[build]`). revmux returns no such field: derive it from `file` and what the body argues, so a `.go`
-path whose body is about a stale godoc is `[comments]`, not `[code]`.
+**Tag every finding with its surface and severity in one bracket before the title:** `[code, minor]`.
+The first value is the surface: `code` for executable logic, `comments` for a comment or doc comment
+inside a source file, `docs` for a project document, `tests` for test code, or another lowercase word
+when none fits (`config`, `build`). revmux returns no surface field, so derive it from `file` and what
+the body argues: a `.go` path whose body is about stale godoc is `comments`, not `code`. The second
+value is the finding's exact `severity` field. Never omit either value or split them into separate
+tags. Format the heading `[surface, severity] Title — file:line, conf N`.
 
-Carry the tags into the severity counts too. "3 major" says nothing about whether the change is close
-to correct; "2 major [code], 1 major [docs]" says where the risk is.
+Carry the same combined tags into the counts. "3 findings" says nothing about where the risk is;
+"2 [code, major], 1 [docs, minor]" does.
 
 Do not compress a finding to its title — the body carries the trigger and consequence.
 

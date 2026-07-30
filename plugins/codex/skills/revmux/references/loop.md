@@ -73,10 +73,11 @@ way — no review round runs after that question.
 Autonomous between rounds: no questions until it stops. The commits are the exception to the usual
 draft-and-confirm, because opting into the loop is the authorization and nothing is pushed.
 
-Report each round in plain language, carrying the surface tags Step 6 puts on a finding — "round 2:
-3 findings, fixing 2 majors, 1 [code] and 1 [docs]", "round 3: clean". The user should be able to follow
-it without knowing any of the vocabulary on this page.
+Report each round in plain language, carrying the combined surface/severity tags Step 6 puts on a
+finding — "round 2: 3 findings, fixing 1 [code, major] and 1 [docs, major]; leaving 1
+[comments, minor]", "round 3: clean". The user should be able to follow it without knowing any of the
+vocabulary on this page.
 
 Those tags are the convergence signal a gating count alone hides. Several rounds whose gating findings
-are all `[docs]` or `[comments]` means the prose is churning while the code stands still — say that
-outright rather than leaving him to infer it from the file names.
+are all `[docs, major]` or `[comments, major]` means the prose is churning while the code stands still —
+say that outright rather than leaving him to infer it from the file names.
