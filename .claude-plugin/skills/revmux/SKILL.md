@@ -298,6 +298,15 @@ lens names and is informational. One agent flagging under two lenses is still on
 Lead with completeness, then severity counts, then each finding with location, argument and fix. Call
 out findings with more than one entry in `sources`.
 
+**Tag every finding with the surface it sits on** — one lowercase word in brackets before the title:
+`[code]` executable logic, `[comments]` a comment or doc comment inside a source file, `[docs]` a
+project document, `[tests]` test code. Name another the same way when none of those fits (`[config]`,
+`[build]`). revmux returns no such field: derive it from `file` and what the body argues, so a `.go`
+path whose body is about a stale godoc is `[comments]`, not `[code]`.
+
+Carry the tags into the severity counts too. "3 major" says nothing about whether the change is close
+to correct; "2 major [code], 1 major [docs]" says where the risk is.
+
 Do not compress a finding to its title — the body carries the trigger and consequence.
 
 **Then close with what is actionable and what to do about it.** A list of findings is not a decision,
