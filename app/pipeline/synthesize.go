@@ -23,6 +23,8 @@ type synthesizer struct {
 	cfg  Config
 	emit func(Event)
 	save func(name string, data []byte)
+
+	stage *prompt.Stage // resolved by run, and read back by the caller to record the runner that ran
 }
 
 // synthesized is the wire shape of one merged finding: a Finding plus the ids of the inputs it came
@@ -38,10 +40,13 @@ type synthesized struct {
 // returns carries findings and the stage's own token count, never source status or timings — those
 // belong to the run and are held by the caller.
 func (s *synthesizer) run(ctx context.Context, sources []sourceResult) (finding.Report, error) {
-	stage, err := s.cfg.Set.Stage(stageSynthesis)
+	// resolved through the profile, not the set: a profile may override which binary merges the
+	// findings, and the caller reads the resolution back to record it
+	stage, err := s.cfg.Profile.Stage(s.cfg.Set, stageSynthesis)
 	if err != nil {
 		return finding.Report{}, fmt.Errorf("resolve synthesis stage: %w", err)
 	}
+	s.stage = stage
 
 	text, err := stage.Compose(prompt.ComposeOpts{Vars: s.vars(sources), History: s.cfg.History})
 	if err != nil {

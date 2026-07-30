@@ -373,6 +373,26 @@ func TestVerifier_run_verdicts(t *testing.T) {
 		assert.JSONEq(t, string(finding.VerifySchema()), string(req.Schema))
 	})
 
+	t.Run("a profile naming the stage overrides that front matter", func(t *testing.T) {
+		h := newHarnessWith(t, map[string]string{"prompts/profiles/testprof.md": codexStageProfile})
+		var spec RunnerSpec
+		var mu sync.Mutex
+		h.cfg.NewRunner = func(rs RunnerSpec) Runner {
+			mu.Lock()
+			spec = rs
+			mu.Unlock()
+			return &mocks.RunnerMock{RunFunc: func(context.Context, executor.Request, executor.EventSink) (executor.Result, error) {
+				return executor.Result{StructuredOutput: json.RawMessage(`{"verdicts":[]}`)}, nil
+			}}
+		}
+
+		v := h.verifier(func(Event) {})
+		_, err := v.run(context.Background(), judgedReport())
+		require.NoError(t, err)
+		assert.Equal(t, RunnerSpec{Executor: "codex", Model: "gpt-5.6-sol", Effort: "high"}, spec,
+			"the shipped verify.md declares claude and opus, and the profile replaces both")
+	})
+
 	t.Run("nothing to verify dispatches nothing", func(t *testing.T) {
 		h := newHarness(t)
 		calls := 0

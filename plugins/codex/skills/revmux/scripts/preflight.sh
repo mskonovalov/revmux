@@ -5,19 +5,70 @@
 # starts, launches agents, and degrades every source before failing with exit 2. Checking
 # first turns that into one line of output.
 #
-# which executors are needed depends on the resolved profile, not on a fixed list: a roster
-# entry or a stage declares `executor: codex`, and a user override can change that. The
+# which binaries are needed depends on the resolved profile, not on a fixed list: a profile, a
+# roster entry or a stage names one in its `model:`, and a user override can change that. The
 # authority is `revmux config`, which reports what resolved rather than what ships.
 #
-# usage: preflight.sh [profile]
-#   profile  profile to check; defaults to whatever revmux resolves as its default
+# it also depends on the invocation. --lenses replaces the roster with one agent running on the
+# profile's own base runner, so that run needs the base plus the stages and none of the roster's
+# own binaries — while an ordinary run needs the roster and the stages and not the base, which
+# may name a binary nothing else uses.
+#
+# usage: preflight.sh [profile] [--lenses]
+#   profile   profile to check; defaults to whatever revmux resolves as its default
+#   --lenses  check the invocation --lenses produces rather than the profile's own roster
 #
 # output: one `key: value` line per check, then `ok: true|false`
 # exit:   0 all good, 1 something missing
 
 set -u
 
-profile="${1:-}"
+usage() {
+    echo "usage: $(basename "$0") [profile] [--lenses]" >&2
+    echo "  profile   profile to check; defaults to whatever revmux resolves as its default" >&2
+    echo "  --lenses  check the invocation --lenses produces rather than the profile's own roster" >&2
+}
+
+# strict: an argument that is not understood is a caller mistake, and silently dropping it checks a
+# different invocation than the one asked for — `--lenses=bugs` or a misspelled flag would report a
+# clean host for a run that then fails to launch its only finder
+profile=""
+lenses=""
+for arg in "$@"; do
+    case "$arg" in
+        --lenses)
+            lenses=1
+            ;;
+        -*)
+            echo "unknown option: $arg" >&2
+            usage
+            echo "ok: false"
+            exit 1
+            ;;
+        *)
+            if [ -n "$profile" ]; then
+                echo "unexpected argument: $arg" >&2
+                usage
+                echo "ok: false"
+                exit 1
+            fi
+            profile="$arg"
+            ;;
+    esac
+done
+
+# executorQuery is the jq that names the binaries this invocation needs. The stages always count; the
+# roster counts only when it will actually run, and the profile's base runner only when --lenses
+# replaces that roster with one agent on it. Unioning both over-checks and turns a review revmux can
+# run into a preflight failure, which is worse than the gap it would close.
+executorQuery() {
+    if [ -n "$lenses" ]; then
+        echo '[.profiles[] | select(.name == $p) | (.runner.executor, .stages[].executor)] | unique | .[]'
+        return
+    fi
+    echo '[.profiles[] | select(.name == $p) | (.roster[].executor, .stages[].executor)] | unique | .[]'
+}
+
 ok=true
 
 fail() {
@@ -53,9 +104,10 @@ if command -v jq >/dev/null 2>&1; then
             exit 1
         fi
         echo "profile: $profile"
-        # a stage runs on every review regardless of the roster, so its executor counts too
+        # the stages always count, since a stage runs on every review regardless of the roster. What
+        # joins them is the roster, or — under --lenses, which replaces it — the profile's base runner
         executors=$(printf '%s' "$cfg" | jq -r --arg p "$profile" \
-            '[(.profiles[] | select(.name == $p) | .roster[].executor), (.stages[].executor)] | unique | .[]')
+            "$(executorQuery)")
     else
         # the resolved default profile, not every profile: checking rosters that will not run reports
         # a missing binary the review never needed
@@ -67,21 +119,22 @@ if command -v jq >/dev/null 2>&1; then
         fi
         echo "profile: $profile (resolved default)"
         executors=$(printf '%s' "$cfg" | jq -r --arg p "$profile" \
-            '[(.profiles[] | select(.name == $p) | .roster[].executor), (.stages[].executor)] | unique | .[]')
+            "$(executorQuery)")
     fi
 else
-    # without jq the roster cannot be read, so fall back to the full vocabulary. Over-checking
-    # is the safe direction: it can only report a binary the run would not have needed.
-    echo "jq: MISSING - checking every known executor instead of the profile's own"
-    executors="claude
-codex"
+    # jq is how the resolved profile is read, and there is no honest answer without it: checking both
+    # binaries instead refuses a single-binary profile on a host that can run it, which is a false
+    # failure on a mandatory gate. Saying so names the one thing that fixes it.
+    fail "jq: MISSING - cannot read which binaries this profile needs"
+    echo "ok: false"
+    exit 1
 fi
 
 for exe in $executors; do
     if command -v "$exe" >/dev/null 2>&1; then
         echo "$exe: $(command -v "$exe")"
     else
-        fail "$exe: MISSING - required by this profile's roster or a stage"
+        fail "$exe: MISSING - required by this invocation"
     fi
 done
 

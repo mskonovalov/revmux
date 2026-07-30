@@ -24,11 +24,10 @@ func loadProfile(t *testing.T, frontMatter string) (*Set, *Profile) {
 
 func TestParseProfile_DefaultsAndOverrides(t *testing.T) {
 	_, p := loadProfile(t, `description: a custom roster
-model: opus
-effort: high
+model: claude/opus:high
 agents:
   - {name: inherits, lenses: [bugs]}
-  - {name: overrides, lenses: [bugs, adversarial], executor: codex, model: gpt-5.6-sol, effort: xhigh}
+  - {name: overrides, lenses: [bugs, adversarial], model: codex/gpt-5.6-sol:xhigh}
 `)
 
 	assert.Equal(t, "a custom roster", p.Description)
@@ -44,12 +43,206 @@ agents:
 		Model: "gpt-5.6-sol", Effort: "xhigh", Color: "5"}, specs[1])
 }
 
+func TestProfile_ExecutorDefault(t *testing.T) {
+	const codexProfile = `model: codex/gpt-5.6-sol:high
+agents:
+  - {name: inherits, lenses: [bugs]}
+  - {name: explicit, lenses: [impl], model: claude/opus}
+stages:
+  verify: claude/opus
+`
+
+	t.Run("a roster entry omitting a model takes the profile's", func(t *testing.T) {
+		_, p := loadProfile(t, codexProfile)
+		specs, err := p.Roster(nil, map[string]struct{}{"bugs": {}, "impl": {}})
+		require.NoError(t, err)
+		assert.Equal(t, "codex", specs[0].Executor)
+		assert.Equal(t, "claude", specs[1].Executor, "a per-entry model still wins")
+	})
+
+	// the override inherits the profile's model, so hardcoding claude built a claude agent asked for a
+	// codex model — and on a host with no claude the only finder could not launch
+	t.Run("the lenses override inherits it rather than forcing claude", func(t *testing.T) {
+		_, p := loadProfile(t, codexProfile)
+		specs, err := p.Roster([]string{"bugs"}, map[string]struct{}{"bugs": {}, "impl": {}})
+		require.NoError(t, err)
+		require.Len(t, specs, 1)
+		assert.Equal(t, "lenses", specs[0].Name)
+		assert.Equal(t, "codex", specs[0].Executor)
+		assert.Equal(t, "gpt-5.6-sol", specs[0].Model, "the executor and the model must come from one place")
+	})
+
+	t.Run("a stage takes the profile's runner, named or not", func(t *testing.T) {
+		set, p := loadProfile(t, codexProfile)
+		st, err := p.Stage(set, "synthesis")
+		require.NoError(t, err)
+		assert.Equal(t, "codex", st.Executor)
+		assert.Equal(t, "gpt-5.6-sol", st.Model)
+
+		st, err = p.Stage(set, "verify")
+		require.NoError(t, err)
+		assert.Equal(t, "claude", st.Executor, "a per-stage model still wins")
+	})
+
+	// a profile's model is the review's model, so a stage follows it with no stages: block to write —
+	// this is what lets codex-only be one line rather than one line plus a two-entry block
+	t.Run("a stage follows the profile with no stages block at all", func(t *testing.T) {
+		set, p := loadProfile(t, "model: codex/gpt-5.6-sol\nagents:\n  - {name: a, lenses: [bugs]}\n")
+		for _, name := range []string{"synthesis", "verify"} {
+			st, err := p.Stage(set, name)
+			require.NoError(t, err, name)
+			assert.Equal(t, "codex", st.Executor, name)
+			assert.Equal(t, "gpt-5.6-sol", st.Model, name)
+		}
+	})
+
+	t.Run("omitted, the default is claude", func(t *testing.T) {
+		_, p := loadProfile(t, "agents:\n  - {name: a, lenses: [bugs]}\n")
+		specs, err := p.Roster(nil, map[string]struct{}{"bugs": {}})
+		require.NoError(t, err)
+		assert.Equal(t, "claude", specs[0].Executor)
+	})
+}
+
+func TestProfile_Stage(t *testing.T) {
+	t.Run("no override and no profile model resolves the default binary", func(t *testing.T) {
+		set, p := loadProfile(t, "agents:\n  - {name: a, lenses: [bugs]}\n")
+		st, err := p.Stage(set, "synthesis")
+		require.NoError(t, err)
+		assert.Equal(t, "claude", st.Executor)
+		assert.Empty(t, st.Model, "a shipped stage file names no model; it runs whatever the profile does")
+	})
+
+	t.Run("an override replaces the triple rather than merging into it", func(t *testing.T) {
+		set, p := loadProfile(t, `agents:
+  - {name: a, lenses: [bugs]}
+stages:
+  synthesis: codex/gpt-5.6-sol:xhigh
+`)
+		st, err := p.Stage(set, "synthesis")
+		require.NoError(t, err)
+		assert.Equal(t, "codex", st.Executor)
+		assert.Equal(t, "gpt-5.6-sol", st.Model)
+		assert.Equal(t, "xhigh", st.Effort)
+		assert.Equal(t, "merges every source's findings, dedupes them, boosts corroboration and drops weak singletons",
+			st.Description, "the body and its metadata are the stage file's, only the runner is the profile's")
+	})
+
+	t.Run("an omitted model and effort fall back to the profile's own defaults", func(t *testing.T) {
+		set, p := loadProfile(t, `model: codex/gpt-5.6-sol:high
+agents:
+  - {name: a, lenses: [bugs]}
+stages:
+  synthesis: codex
+`)
+		st, err := p.Stage(set, "synthesis")
+		require.NoError(t, err)
+		assert.Equal(t, "codex", st.Executor)
+		assert.Equal(t, "gpt-5.6-sol", st.Model)
+		assert.Equal(t, "high", st.Effort)
+	})
+
+	// the stage file's model must not survive an override naming a different binary: codex launched on
+	// opus is the pairing the one-string grammar exists to make unwritable. The shipped verify.md names
+	// no runner, so this needs a tree that carries one, or it asserts nothing about the case in its name.
+	t.Run("a stage file's model does not survive an override naming another binary", func(t *testing.T) {
+		project := writeTree(t, t.TempDir(), map[string]string{
+			"prompts/verify.md": "---\ndescription: d\nmodel: claude/opus:high\n---\nbody",
+			"prompts/profiles/custom.md": "---\nagents:\n  - {name: a, lenses: [bugs]}\n" +
+				"stages:\n  verify: codex\n---\nbody",
+		})
+		set, err := Load(LoadOpts{ProjectDir: project})
+		require.NoError(t, err)
+		p, err := set.Profile("custom")
+		require.NoError(t, err)
+
+		st, err := p.Stage(set, "verify")
+		require.NoError(t, err)
+		assert.Equal(t, "codex", st.Executor)
+		assert.Empty(t, st.Model, "opus belongs to claude and must not reach codex")
+		assert.Equal(t, "high", st.Effort, "effort belongs to neither model, so it carries")
+	})
+
+	// each layer is applied in turn and none is collapsed first: an override that switches back to the
+	// profile's binary must still find the profile's model, which folding stage and profile together
+	// before applying it destroys
+	t.Run("an override switching back to the profile's binary keeps the profile's model", func(t *testing.T) {
+		project := writeTree(t, t.TempDir(), map[string]string{
+			"prompts/synthesis.md": "---\ndescription: d\nmodel: codex/gpt-5.6-sol:low\n---\nbody",
+			"prompts/profiles/custom.md": "---\nmodel: claude/opus:high\nagents:\n  - {name: a, lenses: [bugs]}\n" +
+				"stages:\n  synthesis: claude\n---\nbody",
+		})
+		set, err := Load(LoadOpts{ProjectDir: project})
+		require.NoError(t, err)
+		p, err := set.Profile("custom")
+		require.NoError(t, err)
+
+		st, err := p.Stage(set, "synthesis")
+		require.NoError(t, err)
+		assert.Equal(t, "claude", st.Executor)
+		assert.Equal(t, "opus", st.Model, "the profile's model is compatible with the override's binary")
+		assert.Equal(t, "low", st.Effort, "effort still comes from the stage file, which named one first")
+	})
+
+	// the order is override, then the stage file's own model, then the profile's — resolving the
+	// override straight against the profile skips the middle one
+	t.Run("a partial override falls back to the stage file before the profile", func(t *testing.T) {
+		project := writeTree(t, t.TempDir(), map[string]string{
+			"prompts/synthesis.md": "---\ndescription: d\nmodel: claude/sonnet:low\n---\nbody",
+			"prompts/profiles/custom.md": "---\nmodel: claude/opus:high\nagents:\n  - {name: a, lenses: [bugs]}\n" +
+				"stages:\n  synthesis: claude\n---\nbody",
+		})
+		set, err := Load(LoadOpts{ProjectDir: project})
+		require.NoError(t, err)
+		p, err := set.Profile("custom")
+		require.NoError(t, err)
+
+		st, err := p.Stage(set, "synthesis")
+		require.NoError(t, err)
+		assert.Equal(t, "claude", st.Executor)
+		assert.Equal(t, "sonnet", st.Model, "the stage file's own model, not the profile's opus")
+		assert.Equal(t, "low", st.Effort)
+	})
+
+	t.Run("overriding one stage leaves the other alone", func(t *testing.T) {
+		set, p := loadProfile(t, `agents:
+  - {name: a, lenses: [bugs]}
+stages:
+  synthesis: codex
+`)
+		st, err := p.Stage(set, "verify")
+		require.NoError(t, err)
+		assert.Equal(t, "claude", st.Executor)
+	})
+
+	// the tree glob turns any prompts/*.md into a stage, so validating an override against what loaded
+	// would accept this one and then never dispatch it — a silently ignored key
+	t.Run("a loaded stage the pipeline does not dispatch is refused as an override", func(t *testing.T) {
+		project := writeTree(t, t.TempDir(), map[string]string{
+			"prompts/finalize.md": "---\ndescription: a project's own extra stage\n---\nbody",
+			"prompts/profiles/custom.md": "---\nagents:\n  - {name: a, lenses: [bugs]}\n" +
+				"stages:\n  {finalize: codex}\n---\nbody",
+		})
+		_, err := Load(LoadOpts{ProjectDir: project})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `unknown stage "finalize"`)
+		assert.Contains(t, err.Error(), "synthesis verify", "the error names the closed set")
+	})
+
+	t.Run("an unknown stage name is an error from the set, not a silent miss", func(t *testing.T) {
+		set, p := loadProfile(t, "agents:\n  - {name: a, lenses: [bugs]}\n")
+		_, err := p.Stage(set, "nosuch")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `unknown stage "nosuch"`)
+	})
+}
+
 func TestProfile_ValidationErrors(t *testing.T) {
 	tests := []struct {
 		name, frontMatter, want string
 	}{
-		{"unknown executor", "agents:\n  - {name: a, lenses: [bugs], executor: gemini}\n", `unknown executor "gemini"`},
-		{"unknown effort", "agents:\n  - {name: a, lenses: [bugs], effort: turbo}\n", `unknown effort "turbo"`},
+		{"unknown executor", "agents:\n  - {name: a, lenses: [bugs], model: gemini/pro}\n", `unknown executor "gemini"`},
+		{"unknown effort", "agents:\n  - {name: a, lenses: [bugs], model: claude/opus:turbo}\n", `unknown effort "turbo"`},
 		{"missing lens", "agents:\n  - {name: a, lenses: [nosuch]}\n", `unknown lens "nosuch"`},
 		{"no lenses", "agents:\n  - {name: a, lenses: []}\n", "no lenses"},
 		{"no name", "agents:\n  - {lenses: [bugs]}\n", "roster entry has no name"},
@@ -64,6 +257,20 @@ func TestProfile_ValidationErrors(t *testing.T) {
 		{"numeric color", "agents:\n  - {name: a, lenses: [bugs], color: \"12\"}\n", `invalid color "12"`},
 		{"short hex color", "agents:\n  - {name: a, lenses: [bugs], color: \"#fff\"}\n", `invalid color "#fff"`},
 		{"empty roster", "description: x\n", "roster is empty"},
+		{"unknown stage", "agents:\n  - {name: a, lenses: [bugs]}\nstages:\n  {finalize: codex}\n",
+			`unknown stage "finalize"`},
+		{"stage name the pipeline never dispatches", "agents:\n  - {name: a, lenses: [bugs]}\nstages:\n  {find: codex}\n",
+			`unknown stage "find"`},
+		{"unknown stage executor", "agents:\n  - {name: a, lenses: [bugs]}\nstages:\n  {verify: gemini/pro}\n",
+			`unknown executor "gemini"`},
+		{"unknown stage effort", "agents:\n  - {name: a, lenses: [bugs]}\nstages:\n  {verify: claude/opus:turbo}\n",
+			`unknown effort "turbo"`},
+		{"stage override that is not a runner string", "agents:\n  - {name: a, lenses: [bugs]}\nstages:\n  {verify: {lenses: [bugs]}}\n",
+			"parse front matter"},
+		{"empty stage override", "agents:\n  - {name: a, lenses: [bugs]}\nstages:\n  {verify: \"\"}\n",
+			"stage verify: empty runner"},
+		{"whitespace stage override", "agents:\n  - {name: a, lenses: [bugs]}\nstages:\n  {verify: \"  \"}\n",
+			"stage verify: empty runner"},
 	}
 
 	for _, tt := range tests {
@@ -171,11 +378,10 @@ func TestAgentSpec_Paint(t *testing.T) {
 
 func TestProfile_Roster_LensOverride(t *testing.T) {
 	known := map[string]struct{}{"bugs": {}, "adversarial": {}}
-	_, p := loadProfile(t, `model: opus
-effort: high
+	_, p := loadProfile(t, `model: claude/opus:high
 agents:
   - {name: bugs, lenses: [bugs], color: red}
-  - {name: codex, executor: codex, lenses: [adversarial]}
+  - {name: codex, lenses: [adversarial], model: codex/gpt-5.6-sol}
 `)
 
 	specs, err := p.Roster([]string{"bugs", "adversarial"}, known)
@@ -210,7 +416,7 @@ func TestProfile_Roster_DoesNotAliasTheProfile(t *testing.T) {
 func TestStage_FrontMatter(t *testing.T) {
 	t.Run("parsed", func(t *testing.T) {
 		project := writeTree(t, t.TempDir(), map[string]string{
-			"prompts/synthesis.md": "---\ndescription: d\nexecutor: codex\nmodel: gpt-5.6-sol\neffort: xhigh\n---\nbody",
+			"prompts/synthesis.md": "---\ndescription: d\nmodel: codex/gpt-5.6-sol:xhigh\n---\nbody",
 		})
 		set, err := Load(LoadOpts{ProjectDir: project})
 		require.NoError(t, err)
@@ -226,8 +432,8 @@ func TestStage_FrontMatter(t *testing.T) {
 	tests := []struct {
 		name, frontMatter, want string
 	}{
-		{"unknown executor", "executor: gemini\n", `stage synthesis: unknown executor "gemini"`},
-		{"unknown effort", "effort: turbo\n", `stage synthesis: unknown effort "turbo"`},
+		{"unknown executor", "model: gemini/pro\n", `stage synthesis: unknown executor "gemini"`},
+		{"unknown effort", "model: claude/opus:turbo\n", `stage synthesis: unknown effort "turbo"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

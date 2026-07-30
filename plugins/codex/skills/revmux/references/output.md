@@ -32,7 +32,9 @@ Prefer JSON when a model consumes it. Use `--markdown` only for output going str
   "stats": {
     "started_at": "2026-07-26T16:02:11Z", "finished_at": "2026-07-26T16:07:44Z",
     "duration_ms": 333000, "tokens": 184920,
-    "stages": [{"name": "find", "duration_ms": 201000}, {"name": "synthesis", "duration_ms": 62000}]
+    "stages": [{"name": "find", "duration_ms": 201000},
+               {"name": "synthesis", "duration_ms": 62000,
+                "executor": "claude", "model": "opus", "effort": "high"}]
   }
 }
 ```

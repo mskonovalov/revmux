@@ -88,12 +88,89 @@ func TestOptions_catalogStages(t *testing.T) {
 
 	require.Len(t, stages, 2)
 	for _, name := range []string{"synthesis", "verify"} {
-		st, err := set.Stage(name)
-		require.NoError(t, err)
+		st, stErr := set.Stage(name)
+		require.NoError(t, stErr)
 		assert.Equal(t, stageInfo{Name: name, Description: st.Description,
 			Executor: st.Executor, Model: st.Model, Effort: st.Effort}, stages[name])
 		assert.NotEmpty(t, stages[name].Description, "a stage with no description hides which model judges the findings")
 	}
+
+	// the shipped stage files author no runner, and "" is outside the executor vocabulary: emitting it
+	// puts a value no caller can act on where the catalog promises a resolved one
+	raw, err := json.Marshal((options{}).catalog(set).Stages)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), `"executor"`,
+		"an unauthored stage runner is omitted rather than reported empty")
+}
+
+// a caller picks a profile, so the runner it reports must be the one that profile resolves — the
+// top-level entry describes only what a profile naming no override falls back to
+func TestOptions_catalogProfileStages(t *testing.T) {
+	set, err := prompt.Load(prompt.LoadOpts{})
+	require.NoError(t, err)
+
+	profiles := map[string][]stageRunner{}
+	for _, p := range (options{}).catalog(set).Profiles {
+		profiles[p.Name] = p.Stages
+	}
+
+	for name, stages := range profiles {
+		require.Len(t, stages, 2, "%s reports every stage, not only the ones it overrides", name)
+	}
+
+	assert.Equal(t, []stageRunner{
+		{Name: "synthesis", Executor: "codex", Model: "gpt-5.6-sol", Effort: "high"},
+		{Name: "verify", Executor: "codex", Model: "gpt-5.6-sol", Effort: "high"},
+	}, profiles["codex-only"])
+
+	for _, st := range profiles["comprehensive"] {
+		assert.Equal(t, "claude", st.Executor, "%s: a profile naming no override keeps the stage file's runner", st.Name)
+	}
+}
+
+// the base runner is the only way anything outside app/prompt can tell which binary a --lenses run
+// needs, so a profile whose roster and stages all override away from it is the case that matters
+func TestOptions_catalogProfileRunner(t *testing.T) {
+	cfg := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(cfg, "prompts", "profiles"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(cfg, "prompts", "profiles", "custom.md"),
+		[]byte("---\ndescription: codex base, claude everywhere else\nmodel: codex/gpt-5.6-sol:high\n"+
+			"agents:\n  - {name: a, lenses: [bugs], model: claude/opus:high}\n"+
+			"stages:\n  synthesis: claude/opus:high\n  verify: claude/opus:high\n---\nbody\n"), 0o600))
+
+	o := options{layers: configLayers{user: cfg}}
+	set, err := prompt.Load(o.promptOpts())
+	require.NoError(t, err)
+
+	var got profileInfo
+	for _, p := range o.catalog(set).Profiles {
+		if p.Name == "custom" {
+			got = p
+		}
+	}
+	require.Equal(t, "custom", got.Name)
+	assert.Equal(t, stageRunner{Executor: "codex", Model: "gpt-5.6-sol", Effort: "high"}, got.Runner,
+		"the profile's own model, not what its roster or stages override to")
+	for _, st := range got.Stages {
+		assert.Equal(t, "claude", st.Executor, st.Name)
+	}
+	for _, a := range got.Roster {
+		assert.Equal(t, "claude", a.Executor, a.Name)
+	}
+
+	// preflight reads this out of the marshaled payload, so the field has to survive encoding under
+	// the name the script looks for
+	raw, err := json.Marshal(got)
+	require.NoError(t, err)
+	var wire struct {
+		Runner struct {
+			Executor string `json:"executor"`
+			Name     string `json:"name"`
+		} `json:"runner"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &wire))
+	assert.Equal(t, "codex", wire.Runner.Executor)
+	assert.Empty(t, wire.Runner.Name, "the base runner names no stage")
 }
 
 func TestOptions_paths(t *testing.T) {

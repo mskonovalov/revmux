@@ -232,11 +232,6 @@ func (s *Set) validate() error {
 			return err
 		}
 	}
-	for _, name := range slices.Sorted(maps.Keys(s.stages)) {
-		if err := s.stages[name].validate(); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 

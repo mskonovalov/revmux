@@ -43,7 +43,7 @@ type verifier struct {
 	save    func(name string, data []byte)
 	stagger *stagger
 
-	stage  *prompt.Stage // resolved once in run, before any group goroutine reads it
+	stage  *prompt.Stage // resolved by compose, before any group goroutine reads it
 	tokens atomic.Int64
 }
 
@@ -113,7 +113,9 @@ func (v *verifier) run(ctx context.Context, rep finding.Report) (finding.Report,
 // compose is a config error every group would hit identically, so it fails the run rather than
 // degrading each group in turn — an unresolved variable is a bug, not a warning.
 func (v *verifier) compose(groups []verifyGroup) error {
-	stage, err := v.cfg.Set.Stage(stageVerify)
+	// resolved through the profile, not the set: a profile may override which binary verifies, and the
+	// caller reads the resolution back to record it
+	stage, err := v.cfg.Profile.Stage(v.cfg.Set, stageVerify)
 	if err != nil {
 		return fmt.Errorf("resolve verify stage: %w", err)
 	}

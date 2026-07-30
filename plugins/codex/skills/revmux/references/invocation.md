@@ -165,7 +165,7 @@ will not read, and an unwritable `./.revmux/` under `revmux init`.
 | `focused` | one `bugs` agent plus the codex peer | small or time-boxed change, correctness is the concern |
 | `final` | `bugs+impl` plus the codex peer, nothing below major reported | last look before merging |
 | `claude-only` | `bugs+impl`, `arch+quality`, `docs+tests`, `adversarial` — all on claude | codex is unavailable or unwanted |
-| `codex-only` | the same four splits, every one on codex | claude is unavailable or unwanted |
+| `codex-only` | the same four splits on codex, synthesis and verify included — no claude anywhere | claude is unavailable or unwanted |
 
 `--profile <name>`. The default is `comprehensive` and is itself a config knob.
 
@@ -186,8 +186,9 @@ easy to get wrong:
 
 - it produces **one** agent carrying every named lens, not one agent per lens. A caller naming two
   lenses is asking for a viewpoint, not for two corroborating votes.
-- the synthesized entry runs on **claude**, so a profile's codex peer does not survive the override.
-  Losing the second source also loses every cross-source confidence boost.
+- the synthesized entry inherits the selected profile's own runner, **binary included**, so
+  `--profile codex-only --lenses bugs` runs on codex. A profile's per-entry models do not survive the
+  override, and losing the second source loses every cross-source confidence boost.
 
 Prefer a profile unless there is a specific reason to narrow. `--lenses docs` on a documentation-only
 change is a good use; `--lenses bugs` to "go faster" is what `--profile focused` is for, and that
@@ -292,8 +293,15 @@ description. Use it to answer, without guessing:
 
 - which profiles exist and what roster each one runs — `.profiles[]`
 - what a lens covers — `.lenses[].description`
-- which model and executor the stages use — `.stages[]`
-- what `effort` and `executor` accept — `.vocabulary`
+- which model and binary a given profile's stages use — `.profiles[].stages`, which is what actually
+  runs under that profile. Top-level `.stages[]` is the prompt file's own metadata: a description, and a
+  runner only if that file authored one, which the shipped pair do not
+- which binary a `--lenses` override would run on — `.profiles[].runner`, the profile's own base runner.
+  A profile may name a binary there that no authored agent or stage uses, so a preflight check that
+  reads only the roster and the stages can clear a host the run then fails on
+- which binaries and efforts a `model:` string may name — `.vocabulary`. A prompt file writes the
+  runner as one value, `<binary>[/<model>][:<effort>]`, and the catalog reports the resolved parts
+  separately
 - which tasks already exist, what each covers and which rounds ran — `.paths.tasks`, whose entries carry
   `id`, `description`, `url`, `branch`, `base` and `rounds`; match on `url` or `branch` before minting
   a new id
@@ -421,7 +429,8 @@ to intervene. It is an absence, not a finding, and nothing should be inferred fr
 revmux drives the model CLIs as subprocesses, so both must already be installed and authenticated:
 
 - `claude` — every lens agent and both model stages run on it by default
-- `codex` — needed when a roster entry or a stage declares `executor: codex`, which every shipped
+- `codex` — needed when a profile, a roster entry or a stage names it in its `model:`. `claude-only`
+  needs claude alone and `codex-only` needs codex alone; the other three shipped profiles need both
   profile does
 
 `ANTHROPIC_API_KEY` is stripped from the child environment by default so `claude` uses interactive

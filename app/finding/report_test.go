@@ -42,7 +42,7 @@ func sampleReport() Report {
 			StartedAt:  time.Date(2026, 7, 26, 16, 2, 11, 0, time.UTC),
 			FinishedAt: time.Date(2026, 7, 26, 16, 7, 44, 0, time.UTC),
 			DurationMS: 333000, Tokens: 79210,
-			Stages: []StageTiming{{Name: "find", DurationMS: 200000}, {Name: "synthesis", DurationMS: 133000}},
+			Stages: []StageRun{{Name: "find", DurationMS: 200000}, {Name: "synthesis", DurationMS: 133000}},
 		},
 	}
 }
@@ -411,7 +411,7 @@ func TestStats_JSONRoundTrip(t *testing.T) {
 		StartedAt:  time.Date(2026, 7, 26, 16, 2, 11, 0, time.UTC),
 		FinishedAt: time.Date(2026, 7, 26, 16, 7, 44, 0, time.UTC),
 		DurationMS: 333000, Tokens: 79210,
-		Stages: []StageTiming{{Name: "find", DurationMS: 200000}, {Name: "synthesis", DurationMS: 133000}},
+		Stages: []StageRun{{Name: "find", DurationMS: 200000}, {Name: "synthesis", DurationMS: 133000}},
 	}
 
 	data, err := json.Marshal(in)

@@ -32,18 +32,47 @@ A profile is roster front matter plus a body that is the shared preamble and sev
 
 ```yaml
 ---
-model: opus
-effort: high
+model: claude/opus:high
 agents:
   - {name: bugs+impl,    lenses: [bugs, impl],            color: cyan}
   - {name: arch+quality, lenses: [architecture, quality], color: magenta}
   - {name: docs+tests,   lenses: [docs, tests],           color: green}
-  - {name: codex, executor: codex, lenses: [adversarial],
-     model: gpt-5.6-sol, effort: high, color: yellow}
+  - {name: codex, lenses: [adversarial], model: codex/gpt-5.6-sol:high, color: yellow}
 ---
 ```
 
-Top-level `model` and `effort` are defaults; per-entry values override them.
+The top-level `model` is the review's runner; a roster entry or a stage naming its own overrides it.
+
+### One `model` string is the whole runner selection
+
+`<binary>[/<model>][:<effort>]`, parsed by `app/prompt/runner.go` and nowhere else.
+There is no `executor:` key and no `effort:` key in any prompt file.
+
+```
+claude                   the binary's own default model and effort
+claude/opus:high         fully specified
+codex/gpt-5.6-sol        effort falls back to the profile's, then the binary's
+codex:high               the binary's default model at high effort
+```
+
+**The binary leads and is mandatory, which is what makes the value validate itself.**
+Deriving it from the model name instead would need a catalog of vendor model names inside revmux, and the
+day either vendor ships a name outside the pattern a valid profile stops loading until revmux cuts a
+release — a hard external dependency traded for saving eight characters.
+It also lets `model:` mean "that binary, whatever it defaults to", which two fields expressed as an
+`executor:` with no `model:` beside it.
+
+**The three are one field because they are not independent.**
+A model is a model *of a binary* — `opus` means nothing to codex — so separate keys let a file state a
+pairing that cannot run, and every layer that inherited one without the other recreated it.
+That is not hypothetical: the `--lenses` override took the profile's `model` while forcing `executor` to
+claude, and under `codex-only` built a claude agent asked for `gpt-5.6-sol`.
+`Runner.or` therefore refuses to inherit a model across binaries, and carries only the effort, which
+belongs to neither model.
+
+Parsing splits on the **first** `/`, so a model whose own name carries one survives, and on the **last**
+`:`, whose suffix must be a real effort rather than being folded into the model name — `:hgih` is a load
+error, not a typo that silently becomes part of a model nobody checks.
 
 ### Agent color
 
@@ -76,18 +105,83 @@ identically. A color chosen inside `app/ui` would exist in one renderer only.
 `revmux config` reports the authored form where one was given, so a caller reads back `cyan` rather than
 `"6"`. Keep the authored value alongside the normalized one if a single field cannot serve both.
 
-`synthesis.md` and `verify.md` carry `executor`, `model` and `effort` in their own front matter —
-they are different jobs from a finder and want their own settings, including which binary runs them.
-`Stage` therefore has all three fields, and all three are validated at load exactly like a roster entry's.
-Omitting `executor` from `Stage` while the front matter accepts it leaves the key silently ignored,
-which is worse than rejecting it.
+`synthesis.md` and `verify.md` name **no runner at all**: they are text, and which binary reads it is the
+profile's to say. A `model:` in a stage file is still honored if someone writes one, but the shipped pair
+carry only a `description:`, so a profile's own `model` reaches them with nothing to override.
+
+### A profile's runner covers the whole review
+
+The stage files are one per tree, so what they declare cannot be a per-profile answer.
+When they declared one, a `codex-only` profile was honest about the find stage and silently false about the
+other two: the round ran four codex finders and then synthesized on claude, and the only way to change that
+was to override `prompts/synthesis.md` for **every** profile at once, which stops `--profile` switching the
+review.
+
+So the stage files name no runner and the profile's `model:` reaches everything — the roster, the agent
+`--lenses` synthesizes, and both stages. `codex-only` is one line as a result, which is the point: the
+version of this that kept `executor:` on the stages made the shipped profile state one fact three times,
+and the repetition was load-bearing for a reason nothing in the file explained.
+
+The optional `stages:` block is for a **deliberately mixed** run, and each stage is named on its own, so
+two stages can take different models:
+
+```yaml
+stages:
+  synthesis: claude/opus:high
+  verify:    claude/sonnet:low
+```
+
+The body always stays the shared file: there is one synthesis job, lens and stage text is
+executor-agnostic by the rule above, and the codex output contract is injected by the executor rather than
+authored into a variant file.
+A profile pointing at a *different* stage prompt would duplicate sixty lines of body to change one word,
+which is the "shared text belongs in the profile body" rule inverted.
+
+Resolution order per stage, highest first: the profile's `stages:` entry, then the stage file's own
+`model:` if it has one, then the profile's top-level `model:`.
+A `stages:` entry naming only a binary still falls back through `Runner.or` for the rest, and the three
+layers are applied in turn rather than collapsed first: fold the stage file into the profile before
+applying the override and an override switching back to the profile's binary finds its model already
+replaced by an incompatible one, and runs with none at all.
+Resolution is `Profile.Stage(set, name)`, and `app/pipeline` reads it rather than `Set.Stage` — the latter
+answers what the file says, which is a different question from what this run will do.
+Validation happens at load like everything else, and it is against a **closed set** — `overridableStages`,
+the stages the pipeline dispatches — never against what happened to load.
+The tree glob turns any `prompts/*.md` into a stage, so a project file beside `synthesis.md` and `verify.md`
+would otherwise be nameable as an override that then silently never runs, which is the ignored-key failure
+this package rejects everywhere else.
+`prompt.Stages()` is that set, and `revmux config` reads its `catalogStages` from it rather than declaring a
+second copy, so the catalog cannot advertise a stage the loader would refuse.
+
+`Profile.Runner()` is exported for the same class of reason: the profile's own `model:` is what the
+`--lenses` replacement runs on, and nothing outside the package could otherwise tell which binary that
+needs — the reported roster and stages may all name another one. `revmux config` carries it as
+`profiles[].runner`, and `preflight.sh` reads it **only** for a `--lenses` invocation. Checking it on an
+ordinary run turns a review revmux can run into a preflight failure, which is worse than the gap it
+closes.
+Its **value** needs no separate check: `parseRunner` validated the binary and the effort when the string
+was read, which is why `Stage.validate` and the vocabulary checks inside `AgentSpec.validate` are gone
+rather than kept as defence — a second check that cannot fire is unreachable code claiming to guard.
+What `parseProfile` does add is a rejection of an authored-but-**empty** override: the key is present, so
+an empty value states nothing while still counting as an override, and a silent no-op is the failure this
+package refuses everywhere else.
+
+**A profile does not colour a stage.** Both renderers resolve a name the roster does not carry through the
+package-level `prompt.DerivedSpec`, a pure function of the name, and that purity is what keeps them from
+disagreeing about a colour neither chose. Verify is not one process either — it fans out per directory into
+rows the profile never names — so one authored colour has no well-defined set of rows to paint.
 
 `--lenses bugs,impl` overrides a profile's roster while keeping its body.
 It produces **one agent carrying every named lens**, not one agent per lens —
 the alternative would change the source count, and a caller asking for two lenses is asking for a viewpoint,
 not for two corroborating votes.
-The synthesized entry inherits the profile's top-level `model` and `effort` and runs on `claude`;
-a roster's codex entry does not survive the override, since the caller named the lens set explicitly.
+The synthesized entry inherits the profile's top-level `model` **whole, binary included**, so
+`--profile codex-only --lenses bugs` finds on codex; a roster's own per-entry model does not survive the
+override, since the caller named the lens set explicitly.
+Taking the model while forcing the binary to claude is what built a claude agent asked for `gpt-5.6-sol`,
+and on a codex-only host left the run with no finder that could launch.
+The profile's `stages:` block survives it too, because the flag replaces the roster and a stage is not in
+the roster.
 It is named `lenses`, and that name is not cosmetic: it reaches `Finding.sources` and becomes
 `agents/lenses.jsonl` and `prompts/agents/lenses.md`, so it can never be empty.
 It validates through `AgentSpec.validate` like any authored entry, which is what gives the override the
@@ -96,16 +190,17 @@ name and lens checks for free.
 Profiles and stage prompts share a parsed shape but not an interface:
 a stage prompt has no roster, so it must not expose a roster method,
 and composing a stage prompt must not require fabricating a fake roster entry.
-Runner selection is the one thing they genuinely share, so it travels as its own small value
-(`executor` + `model` + `effort`) that both can produce — see `.claude/rules/pipeline.md`.
+Runner selection is the one thing they genuinely share, so it travels as its own small value —
+a `Runner` inside `app/prompt`, a `RunnerSpec` across the boundary — that both can produce.
+See `.claude/rules/pipeline.md`.
 
 ### Executor and lens are orthogonal
 
-`executor` accepts only `claude` (default when omitted) and `codex`.
+A `model:` names `claude` or `codex` and nothing else.
 Anything else is a **load-time** error with a clear message, never a runtime surprise.
 
 There is no codex-specific prompt file and no per-entry prompt-path override.
-Codex is an entry with `executor: codex` composing `lenses/adversarial.md`.
+Codex is an entry whose `model:` names it, composing `lenses/adversarial.md`.
 Consequences worth preserving: the adversarial lens can run on claude by changing one word,
 and the `bugs` lens can run on codex.
 
@@ -119,8 +214,10 @@ The text stays in the executor — that is what the rule above is about — but 
 the one instruction that asks for JSON at all is not the bytes the model saw, and describes a run that did
 not happen.
 
-Keep the vocabulary singular: the front-matter key is `executor`, so do not call the same concept
-a "runner" in one layer and an "executor" in another.
+Keep the vocabulary singular. The authored surface is one `model:` string; inside `app/prompt` the parsed
+form is a `Runner`, and the value the pipeline hands an executor factory is a `RunnerSpec`.
+`executor` names the binary and the package that supervises it, never the front-matter key — there is no
+`executor:` key to confuse it with any more.
 
 ### Composition
 
@@ -285,17 +382,19 @@ the `revmux config` payload, where an untagged field would emit `URL` rather tha
 ### Validation at load
 
 - every lens named by a roster entry exists
-- `executor` is `claude` or `codex`
-- `effort` is one of `low`, `medium`, `high`, `xhigh`, `max`
+- every stage named by a profile's `stages:` block is one the pipeline dispatches — `synthesis` or
+  `verify`, not merely a `prompts/*.md` that loaded
+- every `model:` parses: the binary is `claude` or `codex`, and an effort suffix is one of `low`,
+  `medium`, `high`, `xhigh`, `max`. `parseRunner` is the only way a runner is built, so it is the only
+  place either vocabulary is checked — a second check elsewhere is unreachable code pretending to guard
 - `color`, when present, is an ANSI-16 name (`red`, `bright-blue`, …) or `#RRGGBB`
 - no duplicate agent names in one roster
 - front matter parses, and a profile with no `agents` is an error rather than an empty run
 - front matter carries only the keys its own kind of file defines, so each kind declares its own shape
-  rather than sharing one: `executor` belongs to a roster entry and a stage, `agents` to a profile,
-  and a lens takes `description` alone.
-  One shared shape accepts every key in every file, and a profile-level `executor:` reads exactly like
-  the `model:` and `effort:` defaults beside it — it would parse, then be ignored while every agent ran
-  on claude
+  rather than sharing one: `model` belongs to a profile, a roster entry and a stage, `agents` and
+  `stages` to a profile, and a lens takes `description` alone.
+  One shared shape accepts every key in every file, so a key that belongs to another kind would parse
+  and then be ignored — the silent no-op this package rejects everywhere
 
 Invalid values are rejected, never silently defaulted.
 A typo'd model quietly changing which model reviews your code is worse than a startup error.

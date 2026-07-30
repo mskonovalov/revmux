@@ -91,6 +91,65 @@ func TestDefaults_EveryProfileResolvesItsRoster(t *testing.T) {
 	}
 }
 
+func TestDefaults_EveryProfileResolvesEveryStage(t *testing.T) {
+	set, err := Load(LoadOpts{})
+	require.NoError(t, err)
+
+	for _, name := range set.ProfileNames() {
+		p, err := set.Profile(name)
+		require.NoError(t, err)
+		for _, stage := range []string{"synthesis", "verify"} {
+			st, err := p.Stage(set, stage)
+			require.NoError(t, err, "%s/%s", name, stage)
+			assert.NotEmpty(t, st.Executor, "%s/%s", name, stage)
+			assert.NotEmpty(t, st.Model, "%s/%s: a stage with no model runs on whatever the binary defaults to",
+				name, stage)
+			assert.NotEmpty(t, st.Body, "%s/%s: the body is the stage file's whether or not the profile overrides",
+				name, stage)
+		}
+	}
+}
+
+// codex-only is the profile that would silently be two thirds claude if a profile could not name its
+// stages, so it pins the whole run on one binary rather than only the find stage
+func TestDefaults_CodexOnlyRunsEveryStageOnCodex(t *testing.T) {
+	set, err := Load(LoadOpts{})
+	require.NoError(t, err)
+	p, err := set.Profile("codex-only")
+	require.NoError(t, err)
+
+	specs, err := p.Roster(nil, set.LensNames())
+	require.NoError(t, err)
+	for _, spec := range specs {
+		assert.Equal(t, "codex", spec.Executor, spec.Name)
+	}
+
+	for _, stage := range []string{"synthesis", "verify"} {
+		st, stErr := p.Stage(set, stage)
+		require.NoError(t, stErr)
+		assert.Equal(t, "codex", st.Executor, stage)
+		assert.Equal(t, "gpt-5.6-sol", st.Model, "%s inherits the profile's own model", stage)
+		assert.Equal(t, "high", st.Effort, "%s inherits the profile's own effort", stage)
+	}
+
+	// --lenses replaces the roster with one agent inheriting the profile's model, so an executor
+	// hardcoded to claude here would ask claude for a codex model and would need the binary this
+	// profile exists to do without
+	override, err := p.Roster([]string{"bugs"}, set.LensNames())
+	require.NoError(t, err)
+	require.Len(t, override, 1)
+	assert.Equal(t, "codex", override[0].Executor)
+	assert.Equal(t, "gpt-5.6-sol", override[0].Model)
+
+	claude, err := set.Profile("claude-only")
+	require.NoError(t, err)
+	for _, stage := range []string{"synthesis", "verify"} {
+		st, stErr := claude.Stage(set, stage)
+		require.NoError(t, stErr)
+		assert.Equal(t, "claude", st.Executor, "%s: the mirror profile names no override and keeps the file's own", stage)
+	}
+}
+
 func TestDefaults_ComprehensiveRoster(t *testing.T) {
 	set, err := Load(LoadOpts{})
 	require.NoError(t, err)

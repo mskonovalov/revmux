@@ -52,6 +52,23 @@ func TestSynthesizer_run(t *testing.T) {
 		assert.Equal(t, RunnerSpec{Executor: "claude", Model: "opus", Effort: "high"}, spec)
 	})
 
+	t.Run("a profile naming the stage overrides that front matter", func(t *testing.T) {
+		h := newHarnessWith(t, map[string]string{"prompts/profiles/testprof.md": codexStageProfile})
+		var spec RunnerSpec
+		h.cfg.NewRunner = func(rs RunnerSpec) Runner {
+			spec = rs
+			return &mocks.RunnerMock{RunFunc: func(context.Context, executor.Request, executor.EventSink) (executor.Result, error) {
+				return executor.Result{StructuredOutput: synthJSON()}, nil
+			}}
+		}
+
+		s := &synthesizer{cfg: h.cfg, save: h.save, emit: func(Event) {}}
+		_, err := s.run(context.Background(), synthSources())
+		require.NoError(t, err)
+		assert.Equal(t, RunnerSpec{Executor: "codex", Model: "gpt-5.6-sol", Effort: "high"}, spec,
+			"the shipped synthesis.md declares claude and opus, and the profile replaces both")
+	})
+
 	t.Run("emits the merged findings so a renderer sees them", func(t *testing.T) {
 		h := newHarness(t)
 		h.cfg.NewRunner = stageRunner(&executor.Request{}, executor.Result{StructuredOutput: synthJSON(

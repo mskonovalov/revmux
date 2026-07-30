@@ -69,11 +69,10 @@ the JSON unparseable.
 ### Step 0: Preflight
 
 ```bash
-${CLAUDE_SKILL_DIR}/scripts/preflight.sh [profile]
+${CLAUDE_SKILL_DIR}/scripts/preflight.sh [profile] [--lenses]
 ```
 
-Checks revmux plus every executor the profile's roster and stages need. Exits `1` naming what is
-missing.
+Checks revmux plus every binary the invocation needs. Exits `1` naming what is missing.
 
 **Pass the profile that will actually run.** Which executors are needed comes from that profile's
 roster, and with no argument preflight checks the resolved *default* instead — so a run under a
@@ -82,6 +81,12 @@ a CLI that was missing the whole time. If the user named a profile in any form, 
 name first — that is Step 3's rule, and nothing in it depends on the scope, so it can be applied here.
 A word passed through unresolved fails preflight as an unknown name. If he named none, run it bare and
 run it again once Step 3 has chosen one.
+
+**Pass `--lenses` when the run will use it.** That flag replaces the roster with one agent on the
+profile's own base runner, so the binaries needed are that base plus the stages, and none of the
+roster's own. Checked as an ordinary run, a `--lenses` invocation can pass preflight and then have its
+only finder fail to launch; checked the other way round, an ordinary run can be refused over a binary
+it never touches.
 
 If revmux is absent:
 
@@ -191,7 +196,7 @@ writing over it.
 | `focused` | one `bugs` agent plus codex peer | small or time-boxed |
 | `final` | `bugs+impl` plus codex peer, nothing below major | pre-merge |
 | `claude-only` | the same four lens splits, all on claude | no codex available |
-| `codex-only` | the same four lens splits, all on codex | no claude available |
+| `codex-only` | the same four lens splits on codex, and synthesis and verify with them | no claude available |
 
 **A profile word is not a profile name.** Map whatever the user said onto the profiles `revmux config`
 reports, matching the name first and the `description` second. revmux rejects an unknown `--profile` at

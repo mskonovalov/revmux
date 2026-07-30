@@ -350,7 +350,7 @@ func verdictIn(t *testing.T, b *syncBuffer) finding.Verdict {
 const codexPeerProfile = `---
 description: one codex peer
 agents:
-  - {name: codex, executor: codex, lenses: [bugs]}
+  - {name: codex, lenses: [bugs], model: codex/gpt-5.6-sol}
 ---
 review the change`
 
@@ -358,7 +358,7 @@ review the change`
 // per-agent artifacts live in their own directories.
 const collidingProfile = `---
 description: agents named after fixed artifacts
-model: opus
+model: claude/opus
 agents:
   - {name: verify, lenses: [bugs]}
   - {name: events, lenses: [impl]}

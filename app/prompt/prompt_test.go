@@ -33,7 +33,7 @@ func TestLoad_EmbeddedDefaults(t *testing.T) {
 	for _, name := range []string{"synthesis", "verify"} {
 		st, err := set.Stage(name)
 		require.NoError(t, err, name)
-		assert.Equal(t, "claude", st.Executor, "omitted executor defaults to claude")
+		assert.Empty(t, st.Executor, "a stage file names no runner; the profile that runs it does")
 		assert.NotEmpty(t, st.Body, name)
 	}
 
@@ -263,13 +263,13 @@ func TestLoad_Errors(t *testing.T) {
 			"roster is empty",
 		},
 		{
-			// it reads like the model: and effort: defaults beside it, so accepting and ignoring it would
-			// run every agent on claude while the file says codex
-			"profile-level executor",
+			// the binary leads the model string, so an unknown one is caught without revmux owning a
+			// catalog of model names
+			"profile-level model naming an unknown binary",
 			map[string]string{
-				"prompts/profiles/focused.md": "---\nexecutor: codex\nagents:\n  - {name: a, lenses: [bugs]}\n---\nbody",
+				"prompts/profiles/focused.md": "---\nmodel: gemini/pro\nagents:\n  - {name: a, lenses: [bugs]}\n---\nbody",
 			},
-			"parse front matter",
+			`unknown executor "gemini"`,
 		},
 		{
 			"lens naming a runner it does not select",

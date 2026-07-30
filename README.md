@@ -58,11 +58,14 @@ make install      # and symlinks it to /usr/local/bin/revmux
 Override the location with `BINDIR` when `/usr/local/bin` is not writable — `make install BINDIR=~/bin`.
 `make uninstall` removes the link.
 
-revmux drives the model CLIs as subprocesses, so both must already be installed and authenticated:
+revmux drives the model CLIs as subprocesses, so whichever ones your profile names must already be
+installed and authenticated. Which those are is a property of the profile, not a fixed pair:
 
-- `claude` — every lens agent and both model stages run on it by default
-- `codex` — only needed when a roster entry or a stage declares `executor: codex`, which the shipped
-  profiles all do
+- `comprehensive`, `focused`, `final` — both, a claude roster plus a codex peer
+- `claude-only` — claude alone
+- `codex-only` — codex alone
+
+`preflight.sh` in the shipped skill answers it for any profile and any invocation.
 
 `ANTHROPIC_API_KEY` is stripped from the child environment by default so `claude` uses interactive
 subscription auth; pass `--preserve-anthropic-api-key` if you authenticate by key. `CLAUDECODE` is always
@@ -350,33 +353,63 @@ expands to. Reviewing a repo from outside it means passing `--config-dir` and `-
 
 ### Profiles
 
-A profile is roster front matter plus a body that is the shared preamble and severity bar. Top-level `model`
-and `effort` are defaults; per-entry values override them.
+A profile is roster front matter plus a body that is the shared preamble and severity bar. The top-level
+`model` is the review's runner; a roster entry or a stage naming its own overrides it.
 
 ```yaml
 ---
 description: all six lenses across three claude agents plus an adversarial codex peer
-model: opus
-effort: high
+model: claude/opus:high
 agents:
   - {name: bugs+impl,    lenses: [bugs, impl],            color: cyan}
   - {name: arch+quality, lenses: [architecture, quality], color: magenta}
   - {name: docs+tests,   lenses: [docs, tests],           color: green}
-  - {name: codex, executor: codex, lenses: [adversarial],
-     model: gpt-5.6-sol, effort: high, color: yellow}
+  - {name: codex, lenses: [adversarial], model: codex/gpt-5.6-sol:high, color: yellow}
 ---
 ```
 
 | key | where | accepted values |
 |---|---|---|
 | `description` | profile, stage, lens | a one-liner, reported by `revmux config` |
-| `model` | profile, roster entry, stage | whatever the selected binary accepts |
-| `effort` | profile, roster entry, stage | `low`, `medium`, `high`, `xhigh`, `max` |
-| `executor` | roster entry, stage | `claude` (default), `codex` |
+| `model` | profile, roster entry, stage, stage override | `<binary>[/<model>][:<effort>]` — see below |
 | `lenses` | roster entry | names of lens files, at least one |
 | `color` | roster entry | an ANSI-16 name (`red`, `bright-blue`, …) or `#RRGGBB` |
+| `stages` | profile | `synthesis` and `verify`, each taking a `model` string |
 
-Everything is validated at load. An unknown lens, executor, effort or color is a startup error, never a
+**One `model` string selects the binary, the model and the effort together.** The binary leads and is
+mandatory — `claude` or `codex` — so a value validates itself and revmux never has to guess which CLI runs
+`gpt-5.6-sol` from a catalog of model names that would go stale. The model and the effort are optional:
+
+```
+claude                   claude, its own default model and effort
+claude/opus:high         fully specified
+codex/gpt-5.6-sol        effort falls back to the profile's, then the binary's
+codex:high               codex's default model at high effort
+```
+
+A trailing slash is refused: `claude/` is a second spelling of `claude` and an accepted second spelling
+is one nobody agrees on. Write the binary alone for its default model.
+
+The three travel together because they are not independent — `opus` means nothing to codex — so a file
+cannot state a pairing that will not run, and an entry naming a different binary than the profile brings
+its own model rather than inheriting one belonging to the other. A stage resolves through three layers
+in turn — its `stages:` override, the stage file's own `model:`, then the profile's — so an override
+naming the profile's binary still picks up the profile's model even when the stage file named another
+binary's. Effort does carry across, since it belongs
+to neither model. It parses on the first `/` so a model whose own name has one survives, and on the last
+`:`, whose suffix must be a real effort rather than being folded into the model name: `:hgih` is a load
+error, not a typo nobody sees.
+
+The profile's `model` covers the whole review — the roster, the single agent `--lenses` synthesizes, and
+both stages. `synthesis.md` and `verify.md` name no runner of their own, so `codex-only` is one line and no
+more. The optional `stages` block is for a deliberately mixed run — codex finders and a claude synthesis:
+
+```yaml
+stages:
+  synthesis: claude/opus:high
+```
+
+Everything is validated at load. An unknown binary, effort, lens or color is a startup error, never a
 silent default — a typo'd model quietly changing which model reviews your code is worse than a failed launch.
 
 `color` sets the agent's prefix color in both the TUI and the plain renderer, filled from a palette by roster
@@ -390,12 +423,12 @@ Shipped profiles:
 | `focused` | one `bugs` agent plus the codex peer, for a small or time-boxed change |
 | `final` | `bugs+impl` plus the codex peer, nothing below major reported |
 | `claude-only` | the same four lens splits on claude, no codex peer — for a machine with no codex |
-| `codex-only` | the same four lens splits, every one on codex — no claude reviewer |
+| `codex-only` | the same four lens splits on codex, and synthesis and verify with them — no claude anywhere |
 
 ### Lenses
 
 Executor and lens are orthogonal. Every roster entry composes lenses; `executor` only selects which binary
-runs it. There is no codex-specific prompt file — codex is an entry with `executor: codex` composing
+runs it. There is no codex-specific prompt file — codex is an entry whose `model:` names it, composing
 `lenses/adversarial.md`, so the adversarial lens runs on claude by changing one word, and `bugs` runs on
 codex the same way. Lens text stays executor-agnostic: the output-contract difference (claude has
 `--json-schema`, codex does not) is injected by the executor.
@@ -412,8 +445,10 @@ codex the same way. Lens text stays executor-agnostic: the output-contract diffe
 
 `--lenses bugs,impl` replaces a profile's roster while keeping its body. It produces **one** agent carrying
 every named lens, not one agent per lens: a caller asking for two lenses is asking for a viewpoint, not for
-two corroborating votes. The synthesized entry inherits the profile's top-level `model` and `effort` and runs
-on claude, so a roster's codex entry does not survive the override.
+two corroborating votes. The synthesized entry inherits the profile's top-level `model` whole, binary
+included, so `--profile codex-only --lenses bugs` runs on codex: taking the model while forcing the binary
+to claude asked claude for a model it does not have. A roster's own per-entry model does not survive the
+override, since the caller named the lens set explicitly.
 
 ### Composition
 
@@ -493,7 +528,9 @@ exactly that invocation.
   "stats": {
     "started_at": "2026-07-26T16:02:11Z", "finished_at": "2026-07-26T16:07:44Z",
     "duration_ms": 333000, "tokens": 184920,
-    "stages": [{"name": "find", "duration_ms": 201000}, {"name": "synthesis", "duration_ms": 62000}]
+    "stages": [{"name": "find", "duration_ms": 201000},
+               {"name": "synthesis", "duration_ms": 62000,
+                "executor": "claude", "model": "opus", "effort": "high"}]
   }
 }
 ```
@@ -624,11 +661,16 @@ $ revmux --stagger-delay=45s config
     {
       "name": "comprehensive",
       "description": "all six lenses across three claude agents plus an adversarial codex peer",
+      "runner": {"executor": "claude", "model": "opus", "effort": "high"},
       "roster": [
         {"name": "bugs+impl", "lenses": ["bugs", "impl"], "executor": "claude",
          "model": "opus", "effort": "high", "color": "6", "color_name": "cyan"},
         {"name": "codex", "lenses": ["adversarial"], "executor": "codex",
          "model": "gpt-5.6-sol", "effort": "high", "color": "3", "color_name": "yellow"}
+      ],
+      "stages": [
+        {"name": "synthesis", "executor": "claude", "model": "opus", "effort": "high"},
+        {"name": "verify", "executor": "claude", "model": "opus", "effort": "high"}
       ]
     }
   ],
@@ -637,10 +679,8 @@ $ revmux --stagger-delay=45s config
     {"name": "bugs", "description": "correctness defects — logic and boundaries, nil and bounds, concurrency, resource lifetime, error handling"}
   ],
   "stages": [
-    {"name": "synthesis", "description": "merges every source's findings, dedupes them, boosts corroboration and drops weak singletons",
-     "executor": "claude", "model": "opus", "effort": "high"},
-    {"name": "verify", "description": "checks each finding against the code and returns one verdict per finding",
-     "executor": "claude", "model": "opus", "effort": "high"}
+    {"name": "synthesis", "description": "merges every source's findings, dedupes them, boosts corroboration and drops weak singletons"},
+    {"name": "verify", "description": "checks each finding against the code and returns one verdict per finding"}
   ],
   "vocabulary": {
     "executors": ["claude", "codex"],
@@ -661,6 +701,12 @@ $ revmux --stagger-delay=45s config
 ```
 
 The output is abbreviated above — a real run lists every profile, every lens and every knob.
+
+The top-level `stages` array is the stage prompt itself — its description, plus a runner only if that file
+authored one, which the shipped pair do not. **What actually runs is `profiles[].stages`**, and each profile
+also reports its own base runner as `profiles[].runner`: the one the roster falls back to and the one the
+single agent `--lenses` synthesizes runs on. That last field is why a preflight check can tell which binaries
+an invocation needs — a profile may name one in `runner` that no authored agent or stage mentions.
 
 `paths.tasks` is the task store: every task that already exists, whatever its `task.md` says about it, and
 the rounds recorded under it. That is what a caller matches an in-flight review against — with an id alone it
@@ -793,7 +839,7 @@ Both carry the same reference material — how to compose `scope.md`, `goal.md`,
 `context/`, the full flag and lens tables, the JSON shape and the run archive layout — and the same
 scripts:
 
-- `preflight.sh` — check revmux plus the executors the chosen profile's roster and stages need
+- `preflight.sh` — check revmux plus the binaries a given profile and invocation need, `--lenses` included
 - `task-state.sh` — resolve the tasks root from `revmux config` and report what a task holds: its
   `task.md` anchors, its rounds, and each round's `input/` state
 - `launch-revmux.sh` — run revmux **with its TUI** in a terminal overlay (agterm, tmux, Zellij, herdr,

@@ -10,8 +10,10 @@ import (
 	"github.com/umputun/revmux/app/task"
 )
 
-// catalogStages are the stage prompts the catalog reports, in pipeline order.
-var catalogStages = []string{"synthesis", "verify"}
+// catalogStages are the stage prompts the catalog reports, in pipeline order. It is the same slice
+// app/prompt validates a profile's stage override against, so the catalog cannot advertise a stage a
+// profile would then be refused for naming.
+var catalogStages = prompt.Stages()
 
 // configCmd is the `revmux config` subcommand. It only records the selection: go-flags calls Execute
 // from inside parseArgs, before the injected writers and the loaded prompt tree exist, so the catalog
@@ -39,21 +41,43 @@ type knob struct {
 	Source string `json:"source"`
 }
 
-// profileInfo is a profile and the roster it would dispatch, colors included.
+// profileInfo is a profile, the roster it would dispatch with colors included, and the runner each
+// stage resolves to under it.
+//
+// Stages carries every stage rather than the ones this profile overrides, because a caller comparing
+// profiles would otherwise have to apply the fallback rule himself to learn what actually runs — and
+// this catalog exists so he does not have to reconstruct the resolution.
 type profileInfo struct {
 	Name        string             `json:"name"`
 	Description string             `json:"description"`
+	Runner      stageRunner        `json:"runner"`
 	Roster      []prompt.AgentSpec `json:"roster"`
+	Stages      []stageRunner      `json:"stages"`
 }
 
-// stageInfo is one stage prompt. It names its own binary, model and effort, so a caller reasoning
-// about which model judges the findings needs them reported.
+// stageInfo is one stage prompt as the catalog reports it: its description, plus a runner only when the
+// file itself authored one. The shipped pair author none — which binary reads a stage is the profile's
+// to say — so emitting `"executor": ""` here would put a value outside the vocabulary in front of a
+// caller and read as a fallback that does not exist. What runs is `profileInfo.Stages`.
 type stageInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Executor    string `json:"executor"`
+	Executor    string `json:"executor,omitempty"`
 	Model       string `json:"model,omitempty"`
 	Effort      string `json:"effort,omitempty"`
+}
+
+// stageRunner is a resolved runner as the catalog reports it — one per stage under a profile, plus the
+// profile's own base. It is a type of its own rather than a stageInfo with the description omitted:
+// sharing one would have to make that field omitempty, and a stage whose file carries no description
+// would then stop emitting the key rather than emitting it empty.
+//
+// Name is omitted on the profile's base runner, which names no stage.
+type stageRunner struct {
+	Name     string `json:"name,omitempty"`
+	Executor string `json:"executor"`
+	Model    string `json:"model,omitempty"`
+	Effort   string `json:"effort,omitempty"`
 }
 
 // vocabulary is the accepted front-matter values, read from the same constants validate checks
@@ -123,7 +147,10 @@ func (o options) catalog(set *prompt.Set) catalog {
 		if err != nil {
 			continue
 		}
-		c.Profiles = append(c.Profiles, profileInfo{Name: name, Description: p.Description, Roster: roster})
+		base := p.Runner()
+		c.Profiles = append(c.Profiles, profileInfo{Name: name, Description: p.Description,
+			Runner: stageRunner{Executor: base.Executor, Model: base.Model, Effort: base.Effort},
+			Roster: roster, Stages: o.profileStages(set, p)})
 	}
 
 	for _, name := range catalogStages {
@@ -135,6 +162,21 @@ func (o options) catalog(set *prompt.Set) catalog {
 			Executor: st.Executor, Model: st.Model, Effort: st.Effort})
 	}
 	return c
+}
+
+// profileStages resolves every stage under one profile, so the reported runner is the one that would
+// actually run rather than the stage file's own. The description is left off here: it describes a body
+// no profile changes, and the top-level stages entry already carries it.
+func (o options) profileStages(set *prompt.Set, p *prompt.Profile) []stageRunner {
+	out := make([]stageRunner, 0, len(catalogStages))
+	for _, name := range catalogStages {
+		st, err := p.Stage(set, name)
+		if err != nil {
+			continue
+		}
+		out = append(out, stageRunner{Name: name, Executor: st.Executor, Model: st.Model, Effort: st.Effort})
+	}
+	return out
 }
 
 // knobs reports every INI-backed setting with the layer parseArgs recorded during the load. The

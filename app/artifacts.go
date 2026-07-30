@@ -18,18 +18,18 @@ import (
 // took. None of it is recoverable from the report — two rounds of one task can use different lens
 // text, and nothing can recompute a stage duration after the fact.
 type manifest struct {
-	Task       string                `json:"task"`
-	Run        string                `json:"run"`
-	Profile    string                `json:"profile"`
-	ScopePath  string                `json:"scope_path"`
-	StartedAt  time.Time             `json:"started_at"`
-	FinishedAt time.Time             `json:"finished_at"`
-	DurationMS int64                 `json:"duration_ms"`
-	Tokens     int                   `json:"tokens"`
-	Agents     []finding.SourceStat  `json:"agents"`
-	Degraded   []string              `json:"degraded"`
-	Prompts    []prompt.FileOrigin   `json:"prompts"`
-	Stages     []finding.StageTiming `json:"stages"`
+	Task       string               `json:"task"`
+	Run        string               `json:"run"`
+	Profile    string               `json:"profile"`
+	ScopePath  string               `json:"scope_path"`
+	StartedAt  time.Time            `json:"started_at"`
+	FinishedAt time.Time            `json:"finished_at"`
+	DurationMS int64                `json:"duration_ms"`
+	Tokens     int                  `json:"tokens"`
+	Agents     []finding.SourceStat `json:"agents"`
+	Degraded   []string             `json:"degraded"`
+	Prompts    []prompt.FileOrigin  `json:"prompts"`
+	Stages     []finding.StageRun   `json:"stages"`
 }
 
 // archiveRun writes the run's own artifacts into the archive. It runs before the report reaches either

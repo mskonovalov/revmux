@@ -51,17 +51,26 @@ type SourceStat struct {
 
 // Stats is the run's timing and token accounting.
 type Stats struct {
-	StartedAt  time.Time     `json:"started_at"`
-	FinishedAt time.Time     `json:"finished_at"`
-	DurationMS int64         `json:"duration_ms"`
-	Tokens     int           `json:"tokens"`
-	Stages     []StageTiming `json:"stages"`
+	StartedAt  time.Time  `json:"started_at"`
+	FinishedAt time.Time  `json:"finished_at"`
+	DurationMS int64      `json:"duration_ms"`
+	Tokens     int        `json:"tokens"`
+	Stages     []StageRun `json:"stages"`
 }
 
-// StageTiming is how long one pipeline stage took.
-type StageTiming struct {
+// StageRun is one pipeline stage: how long it took and which runner it was resolved to. The runner
+// fields are a profile's to override, so a finished round cannot say which binary synthesized it
+// unless the stage that ran records it here.
+//
+// They carry the requested triple, never the model that answered: verify fans out into one process
+// per directory, so a single actual model on this entry would be ill-defined the moment two groups
+// fell back differently. The find stage leaves all three empty — its runners are the per-agent rows.
+type StageRun struct {
 	Name       string `json:"name"`
 	DurationMS int64  `json:"duration_ms"`
+	Executor   string `json:"executor,omitempty"`
+	Model      string `json:"model,omitempty"`
+	Effort     string `json:"effort,omitempty"`
 }
 
 // Degraded reports whether any source failed to deliver. A degraded run that reads like a
@@ -225,7 +234,7 @@ func (r Report) withEmptyLists() Report {
 		out.Sources.Agents = []SourceStat{}
 	}
 	if out.Stats.Stages == nil {
-		out.Stats.Stages = []StageTiming{}
+		out.Stats.Stages = []StageRun{}
 	}
 	return out
 }

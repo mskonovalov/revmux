@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"maps"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -29,6 +30,12 @@ var (
 	efforts   = []string{"low", "medium", "high", "xhigh", "max"}
 )
 
+// overridableStages is the closed set a profile's `stages:` block may name: the stages the pipeline
+// actually dispatches. Validating against whatever loaded instead would accept an override the run
+// then silently ignores — the prompt tree's glob turns any `prompts/*.md` into a stage, so a project
+// file beside synthesis.md and verify.md would pass and never run.
+var overridableStages = []string{"synthesis", "verify"}
+
 // ansiColors maps the accepted color names to their ANSI index. A raw index is deliberately not
 // accepted as front matter: `color: 12` says nothing to whoever edits the file, and the name always
 // exists. An index is what resolution produces, drawn from the reader's own terminal theme.
@@ -46,60 +53,64 @@ var colorPalette = []string{"cyan", "magenta", "green", "yellow", "blue", "red",
 var hexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
 // Each kind of prompt file declares its own front-matter shape rather than sharing one, because
-// unknown keys are rejected and one shared shape accepts every key in every file. A profile-level
-// executor: reads exactly like the model: and effort: defaults beside it, would parse, and would then
-// be ignored while every agent ran on claude — the silent-default this package rejects everywhere else.
+// unknown keys are rejected and one shared shape accepts every key in every file.
+//
+// Every one of them selects its runner through a single `model:` string — see runner.go. There is no
+// `executor:` and no `effort:` key anywhere: a model belongs to a binary and a binary has an effort
+// vocabulary, so three keys let a file state a combination that cannot run and made the common profile
+// repeat one fact three times.
 
-// profileYAML is a profile's front matter: roster-wide model and effort defaults, plus the roster.
-// Which binary runs an entry is per-entry only, since a roster mixing claude and codex is the point.
+// profileYAML is a profile's front matter: the roster-wide runner default, the roster, and the
+// per-stage runner overrides. A roster mixing claude and codex is the point, so a per-entry `model:`
+// still wins; the default is what an entry omitting one falls back to.
 type profileYAML struct {
-	Description string      `yaml:"description"`
-	Model       string      `yaml:"model"`
-	Effort      string      `yaml:"effort"`
-	Agents      []agentYAML `yaml:"agents"`
+	Description string            `yaml:"description"`
+	Model       string            `yaml:"model"`
+	Agents      []agentYAML       `yaml:"agents"`
+	Stages      map[string]string `yaml:"stages"`
 }
 
-// stageYAML is a stage prompt's front matter. A stage picks its own binary, model and effort exactly
-// as a roster entry does, and has no roster of its own.
+// stageYAML is a stage prompt's front matter. Which runner reads a stage is normally the profile's to
+// say, so the shipped pair declare no `model:` and a profile reaches them with nothing to override. One
+// authored here is still honored, and sits between a profile's `stages:` override and its own `model:`.
 type stageYAML struct {
 	Description string `yaml:"description"`
-	Executor    string `yaml:"executor"`
 	Model       string `yaml:"model"`
-	Effort      string `yaml:"effort"`
 }
 
 // lensYAML is a lens file's front matter. A lens is executor-agnostic text and carries no runner
-// selection: the roster entry composing it is where model, effort and executor live.
+// selection: the roster entry composing it is where the model lives.
 type lensYAML struct {
 	Description string `yaml:"description"`
 }
 
 type agentYAML struct {
-	Name     string   `yaml:"name"`
-	Lenses   []string `yaml:"lenses"`
-	Executor string   `yaml:"executor"`
-	Model    string   `yaml:"model"`
-	Effort   string   `yaml:"effort"`
-	Color    string   `yaml:"color"`
+	Name   string   `yaml:"name"`
+	Lenses []string `yaml:"lenses"`
+	Model  string   `yaml:"model"`
+	Color  string   `yaml:"color"`
 }
 
-// Profile is a roster plus the shared body every agent in it composes.
+// Profile is a roster plus the shared body every agent in it composes, and the runner it resolves each
+// stage to.
 type Profile struct {
 	doc
 	Name   string
-	model  string
-	effort string
+	runner Runner
 	agents []AgentSpec
+	stages map[string]Runner // per-stage runner overrides, never a body
 }
 
-// Stage is a stage prompt — synthesis or verify. It has no roster and must not expose one, but it
-// selects its own binary, model and effort exactly as a roster entry does.
+// Stage is a stage prompt — synthesis or verify. It has no roster and must not expose one. Executor,
+// Model and Effort are the *resolved* selection Profile.Stage fills in, so a caller reads what will run
+// rather than what the file happened to say; runner is what the file itself declared, usually nothing.
 type Stage struct {
 	doc
 	Name     string
 	Executor string
 	Model    string
 	Effort   string
+	runner   Runner
 }
 
 // AgentSpec is one roster entry. Color is the resolved form a renderer hands straight to lipgloss —
@@ -135,22 +146,36 @@ func DerivedSpec(name string) AgentSpec {
 	return spec
 }
 
-// Efforts returns the accepted effort vocabulary, the same slice validate checks against.
+// Efforts returns the accepted effort vocabulary, the same slice parseRunner checks a `model:` against.
 func Efforts() []string { return slices.Clone(efforts) }
 
-// Executors returns the accepted executor vocabulary, the same slice validate checks against.
+// Executors returns the accepted binary vocabulary, the same slice parseRunner checks a `model:` against.
 func Executors() []string { return slices.Clone(executors) }
+
+// Runner reports the profile's own `model:`, which is what the roster falls back to and what the single
+// agent `--lenses` synthesizes runs on. It is exported because nothing outside this package can
+// otherwise tell which binary that override needs: the reported roster and stages may all name another
+// one, and a preflight check reading only those clears a host that the run then fails on.
+func (p *Profile) Runner() Runner { return p.runner }
+
+// Stages returns the stages a profile may override, in pipeline order — the same slice validate checks
+// against, so `revmux config` cannot report a set the loader would refuse.
+func Stages() []string { return slices.Clone(overridableStages) }
 
 // Roster returns the resolved roster, every entry carrying a color. A non-empty lensOverride
 // replaces the roster with a single agent carrying every named lens — one viewpoint, not two
-// corroborating votes — inheriting the profile's model and effort and running on claude, so a
-// roster's codex entry does not survive it.
+// corroborating votes — inheriting the profile's executor, model and effort, so a roster's own
+// per-entry executor does not survive it.
+//
+// The executor is inherited rather than forced to claude because the profile's model is inherited too:
+// hardcoding one while taking the other built a claude agent asked for the profile's codex model, and
+// on a host with no claude the only finder could not launch at all.
 func (p *Profile) Roster(lensOverride []string, known map[string]struct{}) ([]AgentSpec, error) {
 	specs := slices.Clone(p.agents)
 	if len(lensOverride) > 0 {
 		override := AgentSpec{
 			Name: overrideAgent, Lenses: slices.Clone(lensOverride),
-			Executor: executorClaude, Model: p.model, Effort: p.effort,
+			Executor: p.runner.Executor, Model: p.runner.Model, Effort: p.runner.Effort,
 		}
 		if err := override.validate(known); err != nil {
 			return nil, fmt.Errorf("lens override: %w", err)
@@ -172,7 +197,41 @@ func (p *Profile) Roster(lensOverride []string, known map[string]struct{}) ([]Ag
 	return specs, nil
 }
 
+// Stage resolves the stage prompt this profile runs: the shared body from the set, under the runner
+// three layers produce. Highest first: the profile's `stages:` entry for this stage, the stage file's
+// own `model:`, then the profile's `model:`. The shipped stage files name none, so a profile with no
+// `stages:` block runs both stages on its own runner — which is what makes `codex-only` one line.
+//
+// Each layer is applied in turn and none is collapsed first: `Runner.or` refuses to carry a model
+// across binaries, so folding two layers together before applying the third loses whichever of them
+// the third turns out to be compatible with.
+func (p *Profile) Stage(set *Set, name string) (*Stage, error) {
+	st, err := set.Stage(name)
+	if err != nil {
+		return nil, err
+	}
+	// three layers, applied in order and never collapsed first: the override, then the stage file's own
+	// model, then the profile's. Folding stage and profile together before applying the override loses a
+	// layer whenever the binaries alternate — an override switching back to the profile's binary found
+	// the fallback already replaced by the stage file's incompatible one, and ran with no model at all.
+	res := st.runner.or(p.runner)
+	if over, ok := p.stages[name]; ok {
+		res = over.or(st.runner).or(p.runner)
+	}
+
+	out := *st
+	out.Executor, out.Model, out.Effort = res.Executor, res.Model, res.Effort
+	return &out, nil
+}
+
 func (p *Profile) validate(known map[string]struct{}) error {
+	// the executor and effort of every runner were checked by parseRunner, which is the only way one is
+	// built — what is left is which stage names a profile may claim
+	for _, name := range slices.Sorted(maps.Keys(p.stages)) {
+		if !slices.Contains(overridableStages, name) {
+			return fmt.Errorf("profile %s: unknown stage %q, want one of %v", p.Name, name, overridableStages)
+		}
+	}
 	if len(p.agents) == 0 {
 		return fmt.Errorf("profile %s: roster is empty", p.Name)
 	}
@@ -189,16 +248,6 @@ func (p *Profile) validate(known map[string]struct{}) error {
 	return nil
 }
 
-func (st *Stage) validate() error {
-	if !slices.Contains(executors, st.Executor) {
-		return fmt.Errorf("stage %s: unknown executor %q, want one of %v", st.Name, st.Executor, executors)
-	}
-	if st.Effort != "" && !slices.Contains(efforts, st.Effort) {
-		return fmt.Errorf("stage %s: unknown effort %q, want one of %v", st.Name, st.Effort, efforts)
-	}
-	return nil
-}
-
 func (a AgentSpec) validate(known map[string]struct{}) error {
 	if err := a.checkName(); err != nil {
 		return err
@@ -210,12 +259,6 @@ func (a AgentSpec) validate(known map[string]struct{}) error {
 		if _, ok := known[l]; !ok {
 			return fmt.Errorf("agent %s: unknown lens %q", a.Name, l)
 		}
-	}
-	if !slices.Contains(executors, a.Executor) {
-		return fmt.Errorf("agent %s: unknown executor %q, want one of %v", a.Name, a.Executor, executors)
-	}
-	if a.Effort != "" && !slices.Contains(efforts, a.Effort) {
-		return fmt.Errorf("agent %s: unknown effort %q, want one of %v", a.Name, a.Effort, efforts)
 	}
 	if _, err := a.resolveColor(); err != nil {
 		return fmt.Errorf("agent %s: %w", a.Name, err)
@@ -297,23 +340,40 @@ func parseProfile(name string, meta, body []byte) (*Profile, error) {
 		return nil, err
 	}
 
-	p := &Profile{doc: doc{Description: fm.Description, Body: text}, Name: name, model: fm.Model, effort: fm.Effort}
+	base, err := parseRunner(fm.Model)
+	if err != nil {
+		return nil, fmt.Errorf("profile %s: %w", name, err)
+	}
+	if base.Executor == "" {
+		base.Executor = executorClaude
+	}
+
+	p := &Profile{doc: doc{Description: fm.Description, Body: text}, Name: name, runner: base}
 	p.agents = make([]AgentSpec, 0, len(fm.Agents))
 	for _, a := range fm.Agents {
-		spec := AgentSpec{
-			Name: a.Name, Lenses: a.Lenses, Executor: a.Executor,
-			Model: a.Model, Effort: a.Effort, ColorName: a.Color,
+		run, agentErr := parseRunner(a.Model)
+		if agentErr != nil {
+			return nil, fmt.Errorf("profile %s: agent %s: %w", name, a.Name, agentErr)
 		}
-		if spec.Executor == "" {
-			spec.Executor = executorClaude
+		run = run.or(base)
+		p.agents = append(p.agents, AgentSpec{Name: a.Name, Lenses: a.Lenses, ColorName: a.Color,
+			Executor: run.Executor, Model: run.Model, Effort: run.Effort})
+	}
+
+	p.stages = make(map[string]Runner, len(fm.Stages))
+	for stage, over := range fm.Stages {
+		run, stageErr := parseRunner(over)
+		if stageErr != nil {
+			return nil, fmt.Errorf("profile %s: stage %s: %w", name, stage, stageErr)
 		}
-		if spec.Model == "" {
-			spec.Model = fm.Model
+		// the key is present, so an empty value is authored emptiness rather than an absent key: it
+		// states nothing while still counting as an override, which would skip the stage file's own
+		// runner without saying so
+		if run.Executor == "" {
+			return nil, fmt.Errorf("profile %s: stage %s: empty runner, want %s",
+				name, stage, "<binary>[/<model>][:<effort>]")
 		}
-		if spec.Effort == "" {
-			spec.Effort = fm.Effort
-		}
-		p.agents = append(p.agents, spec)
+		p.stages[stage] = run
 	}
 	return p, nil
 }
@@ -325,11 +385,12 @@ func parseStage(name string, meta, body []byte) (*Stage, error) {
 		return nil, err
 	}
 
-	st := &Stage{doc: doc{Description: fm.Description, Body: text}, Name: name,
-		Executor: fm.Executor, Model: fm.Model, Effort: fm.Effort}
-	if st.Executor == "" {
-		st.Executor = executorClaude
+	run, err := parseRunner(fm.Model)
+	if err != nil {
+		return nil, fmt.Errorf("stage %s: %w", name, err)
 	}
+	st := &Stage{doc: doc{Description: fm.Description, Body: text}, Name: name, runner: run,
+		Executor: run.Executor, Model: run.Model, Effort: run.Effort}
 	return st, nil
 }
 

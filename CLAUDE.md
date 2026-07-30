@@ -236,12 +236,33 @@ This is what makes the orchestrator testable with a mocked `CommandRunner` and n
 See `.claude/rules/tui.md`.
 
 **Executor and lens are orthogonal.**
-Every roster entry composes lenses; `executor` only selects which binary runs it (`claude` default, or `codex`).
-There is no codex-specific prompt file — codex is an entry with `executor: codex` composing `lenses/adversarial.md`.
+Every roster entry composes lenses; its `model:` only selects which binary runs it, and which model of that
+binary at what effort.
+There is no codex-specific prompt file — codex is an entry whose `model:` names it, composing
+`lenses/adversarial.md`.
 Lens text stays executor-agnostic; the output-contract difference (claude has `--json-schema`, codex does not)
 is injected by the executor, never authored into a lens file.
 A roster entry also carries an optional `color` — an ANSI-16 name or `#RRGGBB` — resolved in `app/prompt`
 and handed to both renderers, so the TUI and `--no-tui` never color the same agent differently.
+
+**One `model:` string is the whole runner selection, and a profile's covers the whole review.**
+`<binary>[/<model>][:<effort>]` — `claude`, `claude/opus:high`, `codex/gpt-5.6-sol`. There is no `executor:`
+key and no `effort:` key in any prompt file.
+The three are one field because they are not independent: a model belongs to a binary, so separate keys let
+a file state a pairing that cannot run, and every layer that inherited one without the other recreated it —
+which is exactly how the `--lenses` override came to build a claude agent asked for `gpt-5.6-sol`.
+`parseRunner` in `app/prompt/runner.go` is the only place a `Runner` is built and therefore the only place
+the binary and effort vocabularies are checked; `Runner.or` is the only place one is inherited, it refuses
+to carry a model across binaries, and the three fallback layers are applied in turn rather than folded
+together — collapsing any two of them loses whichever the third turns out to be compatible with.
+
+The stage files name **no** runner: they are text, and the profile's `model:` reaches the roster, the
+`--lenses` agent and both stages alike, so `codex-only` is one line. A profile's optional `stages:` block is
+for a deliberately mixed run and names each stage separately, so synthesis and verify can take different
+models.
+`app/pipeline` resolves through `Profile.Stage`, never `Set.Stage` — the latter answers what the file says,
+which is not what this run will do — and `finding.StageRun` records the resolution, or a finished round
+cannot say which binary produced its findings.
 See `.claude/rules/prompts.md`.
 
 **Codex is a peer source, not a second pass.**
@@ -343,6 +364,16 @@ Stamping happens in `find`, not synthesis, or `--no-synthesis` runs carry invent
   It is reported by `revmux config` automatically: `knobs` is built by reflection over the `options` struct.
 - A new roster key needs: the `agentYAML` field it parses into, the `AgentSpec` field it resolves to,
   front-matter validation, and the profile examples in README and `.claude/rules/prompts.md`.
+- A new **profile-level** key needs the same four, in `profileYAML` and on `Profile`, plus the README
+  front-matter key table, which enumerates where each key is accepted and goes stale silently.
+  One that changes what a stage resolves to needs `revmux config` as a fifth site: `profileInfo.Stages`
+  reports the resolution rather than the override, so a key it does not carry is invisible to the caller
+  choosing the profile.
+- A change to the `model:` grammar is `app/prompt/runner.go` plus every authored file that uses it: five
+  shipped profiles, both stage files, the README front-matter section, `.claude/rules/prompts.md`, and the
+  fixtures in `app/prompt` and `app/pipeline` tests. The parsed form reaches `AgentSpec`, `Stage` and
+  `RunnerSpec` as three separate fields, so nothing downstream of the parser changes — which is what keeps
+  `revmux config`, `manifest.json` and `finding.SourceStat` out of that list.
 - A new pipeline `EventKind` needs a case in `app/progress.go` **and** in the TUI — in `agentState.track`
   for an agent-scoped kind, or in `Model.apply` for one that is not, since `apply` dispatches everything
   else to `track` and both switches end in a `default` that renders nothing.

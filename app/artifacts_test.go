@@ -100,6 +100,11 @@ func TestRun_archive(t *testing.T) {
 
 		require.NotEmpty(t, got.Stages)
 		assert.Equal(t, "find", got.Stages[0].Name)
+		assert.Empty(t, got.Stages[0].Executor, "find has one runner per roster entry, not one of its own")
+		for _, st := range got.Stages[1:] {
+			assert.NotEmpty(t, st.Executor,
+				"%s: a profile can override the runner, so the round records which binary produced the stage", st.Name)
+		}
 		assert.Positive(t, got.Tokens)
 		assert.False(t, got.StartedAt.IsZero())
 

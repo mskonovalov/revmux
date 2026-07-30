@@ -180,8 +180,9 @@ func (p *Pipeline) runFind(ctx context.Context) (finding.Report, []sourceResult,
 	p.stagger.leaderStarted()
 
 	rep := f.report(sources)
+	// find records no runner: it has one per roster entry, and those are the manifest's agent rows
 	rep.Stats.Stages = append(rep.Stats.Stages,
-		finding.StageTiming{Name: stageFind, DurationMS: p.cfg.Clock.Now().Sub(at).Milliseconds()})
+		finding.StageRun{Name: stageFind, DurationMS: p.cfg.Clock.Now().Sub(at).Milliseconds()})
 	p.saveStage(task.FoundFile, rep)
 	return rep, sources, nil
 }
@@ -204,8 +205,7 @@ func (p *Pipeline) runSynthesis(ctx context.Context, rep finding.Report, sources
 
 	rep.Findings, rep.OpenQuestions, rep.PreExisting = out.Findings, out.OpenQuestions, out.PreExisting
 	rep.Stats.Tokens += out.Stats.Tokens
-	rep.Stats.Stages = append(rep.Stats.Stages,
-		finding.StageTiming{Name: stageSynthesis, DurationMS: p.cfg.Clock.Now().Sub(at).Milliseconds()})
+	rep.Stats.Stages = append(rep.Stats.Stages, p.stageRun(stageSynthesis, s.stage, p.cfg.Clock.Now().Sub(at)))
 	p.saveStage(task.SynthesizedFile, rep)
 	return rep, nil
 }
@@ -225,10 +225,24 @@ func (p *Pipeline) runVerify(ctx context.Context, rep finding.Report) (finding.R
 	if err != nil {
 		return finding.Report{}, err
 	}
-	out.Stats.Stages = append(out.Stats.Stages,
-		finding.StageTiming{Name: stageVerify, DurationMS: p.cfg.Clock.Now().Sub(at).Milliseconds()})
+	out.Stats.Stages = append(out.Stats.Stages, p.stageRun(stageVerify, v.stage, p.cfg.Clock.Now().Sub(at)))
 	p.saveStage(task.VerifiedFile, out)
 	return out, nil
+}
+
+// stageRun records what a stage took and which runner it resolved to. The runner is recorded because a
+// profile can override it, so nothing in a finished round would otherwise say which binary produced
+// that stage — and an archived prompt names the path it was composed from, not the model that read it.
+//
+// A nil stage is a stage that dispatched nothing and resolved no runner: verify returns early when
+// synthesis left no findings to check. The entry stays, since the stage did run and took time, and the
+// omitted runner is honest about there being no process to attribute it to.
+func (p *Pipeline) stageRun(name string, st *prompt.Stage, took time.Duration) finding.StageRun {
+	out := finding.StageRun{Name: name, DurationMS: took.Milliseconds()}
+	if st != nil {
+		out.Executor, out.Model, out.Effort = st.Executor, st.Model, st.Effort
+	}
+	return out
 }
 
 // emit records the event in the archive first and synchronously, then offers it to the channel. That

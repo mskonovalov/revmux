@@ -233,7 +233,7 @@ Codex is a peer executor, not a special case in the pipeline — but the executo
   The executor appends its own "return only JSON matching this shape" contract to the composed prompt,
   rendering `Request.Schema` inline. That field is set for **both** executors and carries the running
   stage's schema, so a codex entry running synthesis or verify asks for that stage's shape.
-  Hardcoding a finder-shaped contract here breaks the moment a stage prompt declares `executor: codex`.
+  Hardcoding a finder-shaped contract here breaks the moment a profile resolves a stage onto codex.
   The wrapper text lives in the executor, never in a lens file, which must stay executor-agnostic.
 - The idle watchdog ticks on raw stdout writes rather than parsed events, **on stderr lines, and on
   rollout records**. All three, and the third is not optional.

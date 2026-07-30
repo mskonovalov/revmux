@@ -85,7 +85,38 @@ func TestPipeline_Run_stats(t *testing.T) {
 	require.Len(t, rep.Stats.Stages, 1, "one timing per stage that ran")
 	assert.Equal(t, stageFind, rep.Stats.Stages[0].Name)
 	assert.Positive(t, rep.Stats.Stages[0].DurationMS)
+	assert.Empty(t, rep.Stats.Stages[0].Executor, "find has one runner per roster entry, not one of its own")
 	assert.Equal(t, 10, rep.Stats.Tokens)
+}
+
+// a profile can override which binary runs a stage, so a finished round that does not record the
+// resolution cannot say which binary produced it — the archived prompt carries the path, not the model
+func TestPipeline_Run_recordsTheStageRunner(t *testing.T) {
+	h := newHarnessWith(t, map[string]string{"prompts/profiles/testprof.md": codexStageProfile})
+	h.cfg.NoSynthesis, h.cfg.NoVerify = false, false
+	h.cfg.NewRunner = h.runner(map[string]executor.Result{
+		"bugs":         {StructuredOutput: findingsJSON(`{"file":"a.go","line":1,"severity":"major","confidence":90,"title":"x"}`)},
+		"impl":         {StructuredOutput: findingsJSON(``)},
+		stageSynthesis: {StructuredOutput: json.RawMessage(`{"findings":[{"merged_ids":["bugs-1"],"file":"a.go","line":1,"severity":"major","confidence":90,"title":"x","body":"b"}]}`)},
+		stageVerify:    {StructuredOutput: json.RawMessage(`{"verdicts":[{"id":"bugs-1","verdict":"confirmed"}]}`)},
+	})
+
+	p := New(h.cfg)
+	drain(p)
+	rep, err := p.Run(context.Background())
+	require.NoError(t, err)
+
+	byName := map[string]finding.StageRun{}
+	for _, st := range rep.Stats.Stages {
+		byName[st.Name] = st
+	}
+	require.Contains(t, byName, stageSynthesis)
+	require.Contains(t, byName, stageVerify)
+	assert.Equal(t, "codex", byName[stageSynthesis].Executor)
+	assert.Equal(t, "gpt-5.6-sol", byName[stageSynthesis].Model)
+	assert.Equal(t, "high", byName[stageSynthesis].Effort)
+	assert.Equal(t, "codex", byName[stageVerify].Executor)
+	assert.Equal(t, "gpt-5.6-sol", byName[stageVerify].Model)
 }
 
 func TestNew_stagger(t *testing.T) {
@@ -451,8 +482,18 @@ func testTree(t *testing.T, extra map[string]string) (*prompt.Set, *prompt.Profi
 
 const testProfile = `---
 description: two lens agents
-model: opus
-effort: high
+model: claude/opus:high
+agents:
+  - {name: bugs, lenses: [bugs], color: cyan}
+  - {name: impl, lenses: [impl], color: green}
+---
+review the change`
+
+// codexStageProfile overrides testprof in place, so a harness built with it dispatches the same roster
+// while both stages resolve to the runner the profile names rather than the stage file's own.
+const codexStageProfile = `---
+description: two lens agents, both stages on codex
+model: codex/gpt-5.6-sol:high
 agents:
   - {name: bugs, lenses: [bugs], color: cyan}
   - {name: impl, lenses: [impl], color: green}
@@ -461,7 +502,7 @@ review the change`
 
 const oneAgentProfile = `---
 description: a single agent
-model: opus
+model: claude/opus
 agents:
   - {name: solo, lenses: [bugs, impl]}
 ---

@@ -14,7 +14,7 @@ conventions.
 - `revmux` — `go install github.com/umputun/revmux/app@latest` (installs as `app`, rename it), or
   clone and `make install`
 - `claude` — every lens agent and both model stages run on it by default
-- `codex` — needed by any roster entry or stage declaring `executor: codex`, which every shipped
+- `codex` — needed by any profile, roster entry or stage naming it in a `model:`, which every shipped
   profile does
 - `jq` — optional. `preflight.sh` and `task-state.sh` use it when present and fall back without it
 - a supported terminal, for overlay mode only: agterm, tmux, Zellij, herdr, kitty, wezterm, cmux,
