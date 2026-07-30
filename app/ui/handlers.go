@@ -116,8 +116,8 @@ func (m *Model) toggleInputs() {
 		m.leaveInputs()
 		return
 	}
+	m.view.reviewFindings = m.browsing()
 	m.view.review = m.view.navState
-	m.view.reviewFindings = false
 	m.view.mode = modeInputs
 	m.view.navState = m.view.inputs
 	if m.view.scroll < 0 {

@@ -195,6 +195,36 @@ func TestDefaults_FinalReportsOnlyTheTopTwoSeverities(t *testing.T) {
 		"a profile that still defines minor as a severity will be handed minor findings")
 }
 
+func TestDefaults_SeverityContract(t *testing.T) {
+	set, err := Load(LoadOpts{})
+	require.NoError(t, err)
+
+	var expected string
+	for _, name := range []string{"comprehensive", "codex-only", "claude-only", "focused"} {
+		p, profileErr := set.Profile(name)
+		require.NoError(t, profileErr)
+		start := strings.Index(p.Body, "## Severity bar")
+		require.NotEqual(t, -1, start, "profile %s has no severity section", name)
+		end := strings.Index(p.Body[start:], "\n## Reporting")
+		require.NotEqual(t, -1, end, "profile %s has no reporting section after severity", name)
+		section := p.Body[start : start+end]
+		if expected == "" {
+			expected = section
+		} else {
+			assert.Equal(t, expected, section, "full profiles must gate the same finding at the same severity")
+		}
+	}
+	assert.Contains(t, expected, "Severity is what goes wrong when the code runs")
+	assert.Contains(t, expected, "broken contract a caller executes against")
+	assert.Contains(t, expected, "Human-facing prose is never that")
+
+	final, err := set.Profile("final")
+	require.NoError(t, err)
+	finalText := strings.Join(strings.Fields(final.Body), " ")
+	assert.Contains(t, finalText, "Severity is what goes wrong when the code runs")
+	assert.Contains(t, finalText, "document a machine or an agent executes against as a contract")
+}
+
 func TestDefaults_LensesAreSelfContained(t *testing.T) {
 	set, err := Load(LoadOpts{})
 	require.NoError(t, err)

@@ -90,15 +90,17 @@ type configLayers struct {
 	user    string // --config-dir, or ~/.config/revmux
 }
 
-// reviewContext is one task directory, fully resolved. Every field is an absolute path and no context
-// file is ever opened: variables carry paths and the agent reads them itself.
+// reviewContext is one task directory, fully resolved. Every field is an absolute path. Prompt
+// composition carries paths without opening context files; the TUI separately reads a bounded startup
+// snapshot from InputDir.
 type reviewContext struct {
-	TaskDir string
-	Scope   string
-	Goal    string
-	Profile string
-	Context string
-	WorkDir string
+	TaskDir  string
+	InputDir string
+	Scope    string
+	Goal     string
+	Profile  string
+	Context  string
+	WorkDir  string
 }
 
 // parseArgs parses the command line, then layers the project and user INI files underneath it, and
@@ -336,7 +338,7 @@ func (o options) resolveContext() (reviewContext, error) {
 	}
 
 	input := filepath.Join(dir, o.Run, task.InputDir)
-	rc := reviewContext{TaskDir: dir}
+	rc := reviewContext{TaskDir: dir, InputDir: input}
 	if rc.Scope, err = o.contextFile(filepath.Join(input, task.ScopeFile)); err != nil {
 		return reviewContext{}, err
 	}

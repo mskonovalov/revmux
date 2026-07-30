@@ -3,6 +3,9 @@ package ui
 import (
 	"strings"
 	"unicode"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func (m Model) inputLines() []string {
@@ -14,7 +17,7 @@ func (m Model) inputLinesAt(tab int) []string {
 		return []string{"no such input"}
 	}
 	doc := m.cfg.Inputs[tab]
-	out := []string{m.style.muted.Render(doc.Path), ""}
+	out := []string{m.style.muted.Render(m.visibleMetadata(doc.Path)), ""}
 
 	switch {
 	case doc.Content == "" && doc.Notice == "":
@@ -28,7 +31,7 @@ func (m Model) inputLinesAt(tab int) []string {
 		if doc.Content != "" {
 			out = append(out, "")
 		}
-		out = append(out, Wrap("", m.style.warn.Render(doc.Notice), m.view.width())...)
+		out = append(out, Wrap("", m.style.warn.Render(m.visibleMetadata(doc.Notice)), m.view.width())...)
 	}
 	return out
 }
@@ -40,7 +43,7 @@ func (m Model) verbatimInput(text string) []string {
 			out = append(out, "")
 			continue
 		}
-		out = append(out, Wrap("", line, m.view.width())...)
+		out = append(out, m.verbatimLine("", line)...)
 	}
 	return out
 }
@@ -50,6 +53,7 @@ func (m Model) markdownInput(text string) []string {
 	var fence byte
 	fenceLen := 0
 	for line := range strings.SplitSeq(text, "\n") {
+		line = m.expandTabs(line, 0)
 		trimmed := strings.TrimSpace(line)
 		marker, markerLen := m.markdownFence(trimmed)
 		if fence == 0 && markerLen >= 3 {
@@ -61,7 +65,7 @@ func (m Model) markdownInput(text string) []string {
 				fence, fenceLen = 0, 0
 				continue
 			}
-			out = append(out, Wrap("    ", line, m.view.width())...)
+			out = append(out, m.verbatimLine("    ", line)...)
 			continue
 		}
 		if trimmed == "" {
@@ -84,6 +88,48 @@ func (m Model) markdownInput(text string) []string {
 		out = append(out, Wrap("", markdown(line), m.view.width())...)
 	}
 	return out
+}
+
+// verbatimLine hard-wraps input and fenced code without the word wrapper's whitespace folding.
+// Tabs are expanded first because terminal tab stops consume columns that lipgloss and ansi do not
+// count, which otherwise lets a valid input row escape the frame.
+func (m Model) verbatimLine(head, line string) []string {
+	headWidth := lipgloss.Width(head)
+	line = m.expandTabs(line, headWidth)
+	width := max(1, m.view.width()-headWidth)
+	wrapped := strings.Split(ansi.Hardwrap(line, width, true), "\n")
+	out := make([]string, 0, len(wrapped))
+	for _, part := range wrapped {
+		out = append(out, head+part)
+	}
+	return out
+}
+
+func (m Model) expandTabs(line string, column int) string {
+	const tabStop = 8
+	var out strings.Builder
+	for _, r := range line {
+		if r == '\t' {
+			spaces := tabStop - column%tabStop
+			out.WriteString(strings.Repeat(" ", spaces))
+			column += spaces
+			continue
+		}
+		out.WriteRune(r)
+		column += lipgloss.Width(string(r))
+	}
+	return out.String()
+}
+
+// visibleMetadata replaces every control character before caller-provided identity or filesystem
+// metadata reaches the terminal. Content is validated separately by the snapshotter.
+func (Model) visibleMetadata(text string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return '\uFFFD'
+		}
+		return r
+	}, text)
 }
 
 func (Model) markdownFence(line string) (byte, int) {

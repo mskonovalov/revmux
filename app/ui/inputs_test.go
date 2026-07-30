@@ -78,6 +78,43 @@ func TestModel_inputLines_wraps(t *testing.T) {
 	}
 }
 
+func TestModel_inputLines_verbatimPreservesWhitespace(t *testing.T) {
+	m := New(ModelConfig{})
+	m.view.cols = 20
+	line := strings.Repeat("x", 19) + "  y"
+	assert.Equal(t, line, strings.Join(m.verbatimLine("", line), ""),
+		"hard wrapping may move whitespace to another row but must not discard it")
+
+	code := "\tmake  target"
+	wrapped := m.verbatimLine("    ", code)
+	for i := range wrapped {
+		wrapped[i] = strings.TrimPrefix(wrapped[i], "    ")
+		assert.NotContains(t, wrapped[i], "\t", "tabs are expanded before width accounting")
+		assert.LessOrEqual(t, lipgloss.Width(wrapped[i]), 16)
+	}
+	assert.Equal(t, "    make  target", strings.Join(wrapped, ""))
+
+	m.cfg.Inputs = []InputDocument{{Path: "input/scope.md", Content: "word\tword", Markdown: true}}
+	m.view.mode = modeInputs
+	assert.NotContains(t, strings.Join(m.inputLines(), "\n"), "\t",
+		"Markdown prose uses the same tab expansion before its display-width wrapper")
+}
+
+func TestModel_inputLines_sanitizesMetadata(t *testing.T) {
+	m := New(ModelConfig{Task: "bad\x1b]52;c;payload\a", Run: "run\nspoof", Inputs: []InputDocument{{
+		Label: "name\x1b[2J", Path: "input/\npath", Notice: "failed\rspoof",
+	}}})
+	m.view.mode = modeInputs
+
+	assert.Equal(t, "bad�name", m.visibleMetadata("bad\nname"))
+	out := m.View()
+	assert.NotContains(t, out, "\x1b]52", "metadata must not emit an OSC command")
+	assert.NotContains(t, out, "\x1b[2J", "metadata must not emit a CSI command")
+	assert.Contains(t, out, "bad�]52;c;payload�/run�spoof")
+	assert.Contains(t, out, "input/�path")
+	assert.Contains(t, m.tabBar(), "name�[2J")
+}
+
 func TestModel_inputLines_missingTab(t *testing.T) {
 	m := New(ModelConfig{})
 	m.view.mode = modeInputs

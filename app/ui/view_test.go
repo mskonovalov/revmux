@@ -63,6 +63,21 @@ func TestModel_tabBar(t *testing.T) {
 		inputs = feed(t, inputs, press("3"))
 		assert.Contains(t, inputs.tabBar(), "▸ 3 design/spec.md")
 	})
+
+	t.Run("a late input remains named when the document count exceeds the width", func(t *testing.T) {
+		docs := make([]InputDocument, 130)
+		for i := range docs {
+			docs[i].Label = "context/file-" + strconv.Itoa(i) + ".md"
+		}
+		inputs := feed(t, New(ModelConfig{Inputs: docs}), tea.WindowSizeMsg{Width: 60, Height: 24}, press("i"))
+		inputs.focus(127)
+
+		out := inputs.tabBar()
+		assert.LessOrEqual(t, lipgloss.Width(out), 60)
+		assert.Contains(t, out, "context/file-127.md")
+		assert.Contains(t, out, "i back")
+		assert.NotContains(t, out, "context/file-0.md", "the bar windows around the focused document")
+	})
 }
 
 func TestModel_detailPane(t *testing.T) {

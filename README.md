@@ -601,15 +601,16 @@ full-detail scrollback. On completion the model switches to the findings browser
 agent tabs stay reachable so a reader can check why a finding was raised.
 
 Press `i` to replace those panes with the inputs captured when the TUI started. The status table remains
-visible, and the input tabs show `scope.md`, `goal.md`, `profile.md`, then each file under `context/`.
+visible, and the input tabs show `scope`, `goal`, `profile`, then each file under `context/`.
 Markdown files use the TUI's Markdown rendering; other safe UTF-8 files are shown as text. Press `i` or
 `esc` to return to the same review pane and scroll position. If the review completes while an input is
 open, the document stays on screen and the return goes to the findings browser.
 
 The snapshot is read after the tty opens and before any review process starts. It does not refresh during
-the run. Display is capped at 1 MiB per file, 8 MiB for the snapshot and 128 context files. Missing,
-unreadable, binary and truncated inputs keep their tabs and show an explanation; none of these display
-conditions changes whether the review runs. Headless runs do not read an input snapshot.
+the run. Display is capped at 1 MiB per file, 8 MiB for the snapshot and 128 context files; directory
+traversal stops after 1024 filesystem entries. Missing, unreadable, binary and truncated inputs keep their
+tabs and show an explanation; none of these display conditions changes whether the review runs. Headless
+runs do not read an input snapshot.
 
 | keys | action |
 |---|---|

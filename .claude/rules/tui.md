@@ -83,8 +83,9 @@ cover both.
   headings and titles.
   **There is one `Wrap`, in `app/ui`, and there were three.** Separate copies in the log, the browser
   and the plain renderer had already diverged — two measured display width and one counted runes, so
-  the same text broke differently depending on which pane it landed in. It is exported because
-  `app/progress.go` is the fourth caller and lives in `package main`.
+  the same text broke differently depending on which pane it landed in. The input viewer now shares it
+  for Markdown prose, and it is exported because `app/progress.go` is the fifth caller and lives in
+  `package main`.
   It walks runes, never bytes: trimming a byte at a time while measuring display cells exits inside a
   multi-byte rune, and since markdown rendering runs first the text also carries ANSI, so a byte cut
   can land inside an escape and spill it as literal characters. A model writes backticks and emphasis into
@@ -107,7 +108,8 @@ cover both.
   `i` or `esc` restores the review tab and scroll position; `q` and `ctrl+c` still quit.
   Review and input navigation are independent.
   Completion does not interrupt an open input; it makes findings the review tab restored on return.
-  The snapshot never refreshes and is limited to 1 MiB per file, 8 MiB total and 128 context files.
+  The snapshot never refreshes and is limited to 1 MiB per file, 8 MiB total, 128 context files and
+  1024 traversed filesystem entries.
   Binary, unsafe, unreadable and truncated files remain visible as non-fatal notices.
   Directory symlinks are listed but never traversed.
 - **The tab bar measures itself and degrades before it is clipped.** There is no horizontal scroll on

@@ -68,7 +68,13 @@ func (m Model) tabBar() string {
 	if len(names) == 0 {
 		return ""
 	}
+	if m.view.mode == modeInputs {
+		return m.inputTabBar()
+	}
+	return m.compactTabBar(names)
+}
 
+func (m Model) compactTabBar(names []string) string {
 	// clipping alone is not enough: it cuts the right-hand tabs off mid-word, so a reader cannot tell
 	// how many panes exist or what is hiding past the edge. There is no horizontal scroll on this line.
 	//
@@ -94,11 +100,55 @@ func (m Model) tabBar() string {
 	return m.clip(m.tabRow(names, len(names), true))
 }
 
+// inputTabBar windows the potentially 128-document input list around the focused document. Rendering
+// every token cannot fit once the list outgrows the terminal, even after every name collapses, and the
+// generic clip backstop would then hide a focused document near the right edge.
+func (m Model) inputTabBar() string {
+	if m.view.tab < 0 || m.view.tab >= len(m.cfg.Inputs) {
+		return ""
+	}
+	left, right := m.view.tab, m.view.tab
+	for {
+		expanded := false
+		if left > 0 {
+			if row := m.inputTabRow(left-1, right); lipgloss.Width(row) <= m.view.width() {
+				left--
+				expanded = true
+			}
+		}
+		if right+1 < len(m.cfg.Inputs) {
+			if row := m.inputTabRow(left, right+1); lipgloss.Width(row) <= m.view.width() {
+				right++
+				expanded = true
+			}
+		}
+		if !expanded {
+			break
+		}
+	}
+	return m.clip(m.inputTabRow(left, right))
+}
+
+func (m Model) inputTabRow(left, right int) string {
+	names := make([]string, 0, right-left+2)
+	for i := left; i <= right; i++ {
+		names = append(names, m.tabToken(i)+" "+m.visibleMetadata(m.cfg.Inputs[i].Label))
+	}
+	names = append(names, "i back")
+
+	window := m
+	window.view.tab -= left
+	if row := window.tabRow(names, 0, false); lipgloss.Width(row) <= m.view.width() {
+		return row
+	}
+	return window.tabRow(names, 0, true)
+}
+
 func (m Model) tabNames() []string {
 	if m.view.mode == modeInputs {
 		names := make([]string, 0, len(m.cfg.Inputs)+1)
 		for i, doc := range m.cfg.Inputs {
-			names = append(names, m.tabToken(i)+" "+doc.Label)
+			names = append(names, m.tabToken(i)+" "+m.visibleMetadata(doc.Label))
 		}
 		return append(names, "i back")
 	}

@@ -53,7 +53,7 @@ Stop on the first of these:
 | condition | what to report |
 |---|---|
 | a review returns zero gating findings | clean, plus whatever minors are left |
-| the gating count is not **strictly lower** than the previous round's | not converging — name what keeps coming back and stop |
+| the gating count is not **strictly lower** than the previous round's | not converging — identify a repeated finding, or say the count stalled on different findings, and stop |
 | five rounds | cap reached, with what is still open |
 | a run exits `2`, or `sources.degraded` is non-empty | the failure, not a verdict — `1` is findings and is the normal case |
 
@@ -61,8 +61,9 @@ Stop on the first of these:
 non-converging row is a comparison against that recorded number, and it fires on equal counts as well as
 on a rise: 3 → 1 → 1 stops at the second `1`. Two rounds that each leave one gating finding standing are
 not progress, however small the number looks, and the loop otherwise runs to the five-round cap on a
-count that never moves. Name the file the repeat finding sits in — the same file across rounds is what
-tells the user the fixes are circling rather than landing.
+count that never moves. Compare finding identity and location across the two rounds. If one repeated,
+name its file; if the findings changed, say the count stalled despite that turnover rather than inventing
+a repeat.
 
 On a clean exit with minors left, ask **once** whether to sweep them. Fix them if so and stop either
 way — no review round runs after that question.

@@ -306,6 +306,7 @@ func TestResolveContext_shapes(t *testing.T) {
 		check   func(t *testing.T, rc reviewContext)
 	}{
 		{name: "full round", task: "full", check: func(t *testing.T, rc reviewContext) {
+			assert.Equal(t, full, rc.InputDir)
 			assert.Equal(t, filepath.Join(full, task.ScopeFile), rc.Scope)
 			assert.Equal(t, filepath.Join(full, task.GoalFile), rc.Goal)
 			assert.Equal(t, filepath.Join(full, task.ProfileFile), rc.Profile)

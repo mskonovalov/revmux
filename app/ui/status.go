@@ -92,7 +92,7 @@ func (m Model) headerLine(p headerParts) string {
 	if m.view.mode == modeInputs {
 		head += m.style.muted.Render(" · inputs")
 		if p.identity && m.cfg.Task != "" && m.cfg.Run != "" {
-			head += m.style.muted.Render(" · " + m.cfg.Task + "/" + m.cfg.Run)
+			head += m.style.muted.Render(" · " + m.visibleMetadata(m.cfg.Task) + "/" + m.visibleMetadata(m.cfg.Run))
 		}
 	}
 	if p.agents {

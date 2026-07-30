@@ -1,11 +1,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -18,12 +20,14 @@ const (
 	inputFileLimit  int64 = 1 << 20
 	inputTotalLimit int64 = 8 << 20
 	inputCountLimit       = 128
+	inputEntryLimit       = 1024
 )
 
 type inputLimits struct {
 	fileBytes  int64
 	totalBytes int64
 	contexts   int
+	entries    int
 }
 
 type inputSnapshotter struct {
@@ -37,14 +41,36 @@ type inputFile struct {
 	path     string
 }
 
+type contextWalk struct {
+	docs    []ui.InputDocument
+	entries int
+	limited bool
+}
+
 func (s *inputSnapshotter) load(rc reviewContext) []ui.InputDocument {
 	docs := make([]ui.InputDocument, 0, 3)
 	docs = append(docs,
 		s.file(inputFile{label: "scope", relative: filepath.Join(task.InputDir, task.ScopeFile), path: rc.Scope}),
-		s.optional(inputFile{label: "goal", relative: filepath.Join(task.InputDir, task.GoalFile), path: rc.Goal}),
-		s.optional(inputFile{label: "profile", relative: filepath.Join(task.InputDir, task.ProfileFile), path: rc.Profile}),
+		s.optional(inputFile{label: "goal", relative: filepath.Join(task.InputDir, task.GoalFile),
+			path: s.inputPath(rc, task.GoalFile, rc.Goal)}),
+		s.optional(inputFile{label: "profile", relative: filepath.Join(task.InputDir, task.ProfileFile),
+			path: s.inputPath(rc, task.ProfileFile, rc.Profile)}),
 	)
 	return append(docs, s.context(rc.Context)...)
+}
+
+// inputPath preserves an optional file's existence for the display snapshot without changing the
+// prompt-facing resolved value, where a missing file and an empty file both intentionally become the
+// placeholder. All callers are snapshotter methods, so this filesystem decision stays on the owner.
+func (*inputSnapshotter) inputPath(rc reviewContext, name, resolved string) string {
+	if rc.InputDir == "" {
+		return resolved
+	}
+	path := filepath.Join(rc.InputDir, name)
+	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+		return ""
+	}
+	return path
 }
 
 func (s *inputSnapshotter) optional(file inputFile) ui.InputDocument {
@@ -78,80 +104,130 @@ func (s *inputSnapshotter) context(dir string) []ui.InputDocument {
 		}}
 	}
 
-	docs, limited := []ui.InputDocument{}, false
-	err = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
-		if path == dir {
-			if walkErr != nil {
-				docs = append(docs, ui.InputDocument{
-					Label: "context", Path: filepath.ToSlash(filepath.Join(task.InputDir, task.ContextDir)),
-					Notice: "cannot read context directory: " + walkErr.Error(),
-				})
-			}
-			return nil
-		}
-		if len(docs) >= s.limits.contexts {
-			limited = true
-			return fs.SkipAll
-		}
-
-		rel, relErr := filepath.Rel(dir, path)
-		if relErr != nil {
-			return fmt.Errorf("make context path relative: %w", relErr)
-		}
-		rel = filepath.ToSlash(rel)
-		if walkErr == nil && entry.IsDir() {
-			return nil
-		}
-
-		docPath := filepath.ToSlash(filepath.Join(task.InputDir, task.ContextDir, rel))
-		if walkErr != nil {
-			docs = append(docs, ui.InputDocument{
-				Label: rel, Path: docPath, Notice: "cannot read: " + walkErr.Error(),
-			})
-			return nil //nolint:nilerr // the failure is preserved in this input's visible notice
-		}
-
-		info, statErr := os.Stat(path) // follows a file symlink, matching what an agent opening the path sees
-		if statErr != nil {
-			docs = append(docs, ui.InputDocument{
-				Label: rel, Path: docPath, Notice: "cannot read: " + statErr.Error(),
-			})
-			return nil //nolint:nilerr // the failure is preserved in this input's visible notice
-		}
-		if info.IsDir() {
-			docs = append(docs, ui.InputDocument{
-				Label: rel + "/", Path: docPath, Notice: "symlinked directory not traversed",
-			})
-			return nil
-		}
-		if !info.Mode().IsRegular() {
-			docs = append(docs, ui.InputDocument{
-				Label: rel, Path: docPath, Notice: "not a regular file",
-			})
-			return nil
-		}
-		docs = append(docs, s.file(inputFile{label: rel, relative: docPath, path: path}))
-		return nil
-	})
-	if err != nil {
-		docs = append(docs, ui.InputDocument{
-			Label: "context", Path: filepath.ToSlash(filepath.Join(task.InputDir, task.ContextDir)),
-			Notice: "cannot read context directory: " + err.Error(),
-		})
-	}
-	if len(docs) == 0 && !limited {
-		docs = append(docs, ui.InputDocument{
+	state := &contextWalk{docs: []ui.InputDocument{}}
+	s.walkContext(dir, dir, state)
+	if len(state.docs) == 0 && !state.limited {
+		state.docs = append(state.docs, ui.InputDocument{
 			Label: "context", Path: filepath.ToSlash(filepath.Join(task.InputDir, task.ContextDir)),
 			Notice: "not provided",
 		})
 	}
-	if limited {
-		docs = append(docs, ui.InputDocument{
+	if state.limited {
+		state.docs = append(state.docs, ui.InputDocument{
 			Label: "more", Path: filepath.ToSlash(filepath.Join(task.InputDir, task.ContextDir)),
-			Notice: fmt.Sprintf("more context entries omitted after the %d-file display limit", s.limits.contexts),
+			Notice: fmt.Sprintf("more context entries omitted after the %d-file display or %d-entry traversal limit",
+				s.limits.contexts, s.limits.entries),
 		})
 	}
-	return docs
+	return state.docs
+}
+
+// walkContext incrementally reads at most the remaining entry budget from each directory. WalkDir
+// cannot provide this bound: it reads and sorts a whole directory before its callback sees one entry.
+func (s *inputSnapshotter) walkContext(root, dir string, state *contextWalk) {
+	if len(state.docs) >= s.limits.contexts {
+		state.limited = true
+		return
+	}
+	if state.entries >= s.limits.entries {
+		hasEntries, err := s.contextDirHasEntries(dir)
+		if err != nil {
+			s.contextNotice(root, dir, state, "cannot read: "+err.Error())
+			return
+		}
+		state.limited = state.limited || hasEntries
+		return
+	}
+
+	handle, err := os.Open(dir) //nolint:gosec // dir is intentionally the caller's resolved context tree
+	if err != nil {
+		s.contextNotice(root, dir, state, "cannot read: "+err.Error())
+		return
+	}
+	remaining := s.limits.entries - state.entries
+	entries, readErr := handle.ReadDir(remaining + 1)
+	closeErr := handle.Close()
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	if len(entries) > remaining {
+		entries = entries[:remaining]
+		state.limited = true
+	}
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		s.contextNotice(root, dir, state, "cannot read: "+readErr.Error())
+	}
+	if closeErr != nil {
+		s.contextNotice(root, dir, state, "close failed: "+closeErr.Error())
+	}
+
+	for _, entry := range entries {
+		if len(state.docs) >= s.limits.contexts || state.entries >= s.limits.entries {
+			state.limited = true
+			return
+		}
+		state.entries++
+		path := filepath.Join(dir, entry.Name())
+		if entry.IsDir() {
+			s.walkContext(root, path, state)
+			continue
+		}
+		s.contextEntry(root, path, state)
+	}
+}
+
+func (*inputSnapshotter) contextDirHasEntries(dir string) (bool, error) {
+	handle, err := os.Open(dir) //nolint:gosec // dir is intentionally the caller's resolved context tree
+	if err != nil {
+		return false, fmt.Errorf("open context directory: %w", err)
+	}
+	entries, readErr := handle.ReadDir(1)
+	closeErr := handle.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return false, fmt.Errorf("read context directory: %w", readErr)
+	}
+	if closeErr != nil {
+		return false, fmt.Errorf("close context directory: %w", closeErr)
+	}
+	return len(entries) > 0, nil
+}
+
+func (s *inputSnapshotter) contextEntry(root, path string, state *contextWalk) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		s.contextNotice(root, path, state, "cannot make path relative: "+err.Error())
+		return
+	}
+	rel = filepath.ToSlash(rel)
+	docPath := filepath.ToSlash(filepath.Join(task.InputDir, task.ContextDir, rel))
+
+	info, err := os.Stat(path) // follows a file symlink, matching what an agent opening the path sees
+	if err != nil {
+		state.docs = append(state.docs, ui.InputDocument{Label: rel, Path: docPath, Notice: "cannot read: " + err.Error()})
+		return
+	}
+	if info.IsDir() {
+		state.docs = append(state.docs, ui.InputDocument{
+			Label: rel + "/", Path: docPath, Notice: "symlinked directory not traversed",
+		})
+		return
+	}
+	if !info.Mode().IsRegular() {
+		state.docs = append(state.docs, ui.InputDocument{Label: rel, Path: docPath, Notice: "not a regular file"})
+		return
+	}
+	state.docs = append(state.docs, s.file(inputFile{label: rel, relative: docPath, path: path}))
+}
+
+func (s *inputSnapshotter) contextNotice(root, path string, state *contextWalk, notice string) {
+	if len(state.docs) >= s.limits.contexts {
+		state.limited = true
+		return
+	}
+	label, docPath := "context", filepath.ToSlash(filepath.Join(task.InputDir, task.ContextDir))
+	if rel, err := filepath.Rel(root, path); err == nil && rel != "." {
+		label = filepath.ToSlash(rel) + "/"
+		docPath = filepath.ToSlash(filepath.Join(task.InputDir, task.ContextDir, rel))
+	}
+	state.docs = append(state.docs, ui.InputDocument{Label: label, Path: docPath, Notice: notice})
 }
 
 func (s *inputSnapshotter) file(file inputFile) ui.InputDocument {
@@ -166,6 +242,9 @@ func (s *inputSnapshotter) file(file inputFile) ui.InputDocument {
 	}
 	if !info.Mode().IsRegular() {
 		doc.Notice = "not a regular file"
+		return doc
+	}
+	if info.Size() == 0 {
 		return doc
 	}
 

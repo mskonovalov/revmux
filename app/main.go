@@ -302,7 +302,8 @@ func (o runOpts) inputDocuments(rc reviewContext) []ui.InputDocument {
 		return o.snapshot(rc)
 	}
 	return (&inputSnapshotter{limits: inputLimits{
-		fileBytes: inputFileLimit, totalBytes: inputTotalLimit, contexts: inputCountLimit,
+		fileBytes: inputFileLimit, totalBytes: inputTotalLimit,
+		contexts: inputCountLimit, entries: inputEntryLimit,
 	}}).load(rc)
 }
 

@@ -179,6 +179,19 @@ func TestModel_key_inputs_completionDoesNotInterrupt(t *testing.T) {
 	assert.False(t, m.view.reviewFindings)
 }
 
+func TestModel_key_inputs_restoreFindingsAfterAgentListChanges(t *testing.T) {
+	m := New(ModelConfig{Roster: roster(), Inputs: []InputDocument{
+		{Label: "scope", Path: "input/scope.md", Content: "read me", Markdown: true},
+	}})
+	m = feed(t, m, CompletedMsg{Report: report()}, press("i"))
+	require.True(t, m.view.reviewFindings)
+
+	m = feed(t, m, event(pipeline.EventAgentStarted, "verify-late", "verify"), press("i"))
+
+	assert.Equal(t, modeReview, m.view.mode)
+	assert.Equal(t, m.findingsTab(), m.view.tab, "findings are restored by identity, not their stale numeric tab")
+}
+
 func TestModel_key_findingsFromInputsOpensAtTop(t *testing.T) {
 	m := New(ModelConfig{Roster: roster(), Inputs: []InputDocument{
 		{Label: "scope", Path: "input/scope.md", Content: "read me", Markdown: true},
