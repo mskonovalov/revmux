@@ -359,7 +359,9 @@ LAUNCHER
     # type it into the caller's interactive shell
     if [ -z "$HERDR_PANE_ID" ] || [ -z "$HERDR_TAB_ID" ]; then
         echo "error: herdr tab create did not return pane/tab ids: $HERDR_NEW" >&2
-        [ -n "$HERDR_TAB_ID" ] && herdr tab close "$HERDR_TAB_ID" >/dev/null 2>&1 || true
+        if [ -n "$HERDR_TAB_ID" ]; then
+            herdr tab close "$HERDR_TAB_ID" >/dev/null 2>&1 || true
+        fi
         exit "$RC_LAUNCH_FAIL"
     fi
 
