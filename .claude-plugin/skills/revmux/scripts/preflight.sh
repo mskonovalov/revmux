@@ -61,6 +61,8 @@ done
 # roster counts only when it will actually run, and the profile's base runner only when --lenses
 # replaces that roster with one agent on it. Unioning both over-checks and turns a review revmux can
 # run into a preflight failure, which is worse than the gap it would close.
+# $p is jq's own variable, bound by --arg, so the single quotes are deliberate.
+# shellcheck disable=SC2016
 executorQuery() {
     if [ -n "$lenses" ]; then
         echo '[.profiles[] | select(.name == $p) | (.runner.executor, .stages[].executor)] | unique | .[]'

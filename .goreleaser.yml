@@ -1,0 +1,53 @@
+version: 2
+
+release:
+  name_template: Version {{ .Version }}
+
+builds:
+  - id: revmux
+    main: ./app
+    binary: revmux
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.revision={{.Tag}}-{{.ShortCommit}}-{{ trimsuffix (replace (replace .CommitDate "-" "") ":" "") "Z" }}
+
+archives:
+  - id: revmux
+    ids:
+      - revmux
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+nfpms:
+  - id: revmux
+    package_name: revmux
+    ids:
+      - revmux
+    vendor: umputun
+    homepage: https://github.com/umputun/revmux
+    maintainer: umputun
+    description: Supervised multi-agent code review with parallel claude and codex subprocesses
+    license: MIT
+    formats:
+      - deb
+      - rpm
+
+brews:
+  - ids:
+      - revmux
+    repository:
+      owner: umputun
+      name: homebrew-apps
+    directory: Formula
+    homepage: https://github.com/umputun/revmux
+    description: Supervised multi-agent code review with parallel claude and codex subprocesses
+    license: MIT
+    test: |
+      system "#{bin}/revmux", "--version"

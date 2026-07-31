@@ -3,6 +3,7 @@ CLAUDE.local.md
 
 # build output
 .bin/
+dist/
 coverage.out
 coverage_no_mocks.out
 
