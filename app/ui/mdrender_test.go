@@ -202,6 +202,19 @@ func TestMDRenderer_linesCaches(t *testing.T) {
 func TestMDRenderer_renderBlockConstructs(t *testing.T) {
 	r := testMDRenderer()
 
+	t.Run("an ordered list marker is one space from its item", func(t *testing.T) {
+		out := plainMD(r.render("1. `agtermTests` covers the `.idle` route\n2. plain item\n", 70))
+		assert.Contains(t, out, "1. agtermTests covers the .idle route",
+			"an item opening with a code span is still one space from the marker")
+		assert.Contains(t, out, "2. plain item")
+		assert.NotContains(t, out, "1.  ", "glamour spells the marker as the number plus a two-character block prefix")
+
+		// the marker is the item's own number rather than its position, so a wider one still takes one space
+		wide := plainMD(r.render("10. tenth item\n11. eleventh item\n", 70))
+		assert.Contains(t, wide, "10. tenth item")
+		assert.Contains(t, wide, "11. eleventh item")
+	})
+
 	t.Run("a GFM table renders as a table", func(t *testing.T) {
 		out := plainMD(r.render("| flag | meaning |\n|---|---|\n| --task | the task id |\n", 60))
 		assert.Contains(t, out, "│", "cells are separated by a column rule")

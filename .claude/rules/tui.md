@@ -261,6 +261,16 @@ cover both.
   its background stands out; on this palette it does not, and beside the space the prose already has it
   is a gap twice as wide as the rest of the line. `mdStyle` clears both and keeps the color, which is
   what marks the span once the pad is gone.
+  **A list item that runs to a second line loses its hanging indent, and no style key reaches it.**
+  `elements.go` builds a list as a `BlockElement` whose `Indent` shifts every line of the block by the
+  same amount, and `ItemElement` emits the marker inline, so a continuation sits flush under the marker
+  rather than under the text — a wrapped item reads as a new one.
+  It happens whether the source wrapped the line or glamour did, and `StyleList.LevelIndent` does not
+  help: it applies only to a list nested inside another list.
+  Fixing it locally means rendering each item as its own document at the width the marker leaves and
+  re-attaching the marker, since re-indenting after the fact would push lines past the pane and need the
+  rendered ANSI re-wrapped. That is layout code rather than a style override, so it is deliberately not
+  done; single-line items, which is most of what a review writes, are unaffected.
 - **glamour deletes raw HTML, and CommonMark calls far more things raw HTML than a reader does.**
   `ansi.NewRenderContext` hardcodes a bluemonday `StrictPolicy` and every inline and block raw-HTML node
   goes through it, so `<task>`, `<T>` and `<binary>` are stripped out of a rendered pane with no marker
