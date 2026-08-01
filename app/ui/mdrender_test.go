@@ -403,6 +403,22 @@ func TestMDStyle(t *testing.T) {
 		assert.True(t, *s.H1.Bold)
 	})
 
+	t.Run("an inline code span carries no padding and keeps its color", func(t *testing.T) {
+		for _, dark := range []bool{true, false} {
+			s := mdStyle(dark)
+			assert.Empty(t, s.Code.Prefix, "glamour pads the span in its own style, which reads as a double space")
+			assert.Empty(t, s.Code.Suffix)
+			assert.NotNil(t, s.Code.Color, "the color is what marks the span once the pad is gone")
+		}
+	})
+
+	t.Run("a rendered code span sits one space from its prose", func(t *testing.T) {
+		r := testMDRenderer()
+		out := plainMD(r.render("the guard is `err != nil` here", 60))
+		assert.Contains(t, out, "the guard is err != nil here",
+			"one space either side, where glamour's own pad would put two")
+	})
+
 	t.Run("the light style is not the dark one", func(t *testing.T) {
 		assert.NotEqual(t, mdStyle(true), mdStyle(false))
 		require.NotNil(t, mdStyle(true).Document.Color)

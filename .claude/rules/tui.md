@@ -255,6 +255,12 @@ cover both.
   **glamour's h1 needs a second override the background choice does not cover.** Both of its styles
   spell h1 as color 228 on background 63; `mdStyle` clears the band to keep the markdown hash, so it
   clears the foreground with it, or a light terminal draws near-white text on white.
+  **A `Prefix` and `Suffix` are rendered in the element's own style, so they are padding rather than
+  text** — `BaseElement.doRender` passes them through `renderText` with the element's own rules.
+  glamour pads an inline code span with a space on each side that way, which reads as a chip only where
+  its background stands out; on this palette it does not, and beside the space the prose already has it
+  is a gap twice as wide as the rest of the line. `mdStyle` clears both and keeps the color, which is
+  what marks the span once the pad is gone.
 - **glamour deletes raw HTML, and CommonMark calls far more things raw HTML than a reader does.**
   `ansi.NewRenderContext` hardcodes a bluemonday `StrictPolicy` and every inline and block raw-HTML node
   goes through it, so `<task>`, `<T>` and `<binary>` are stripped out of a rendered pane with no marker

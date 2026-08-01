@@ -84,7 +84,8 @@ func newMDRenderer(profile termenv.Profile, dark bool) *mdRenderer {
 	}
 }
 
-// mdStyle picks glamour's base style for the terminal's background and puts h1's markdown hash back.
+// mdStyle picks glamour's base style for the terminal's background, puts h1's markdown hash back and
+// takes the padding off an inline code span.
 //
 // glamour renders h1 as a padded band with a background instead of a prefix, which breaks the rule
 // that a pane shows the same heading a reader sees in the file open beside it — h2 and h3 keep their
@@ -95,6 +96,12 @@ func newMDRenderer(profile termenv.Profile, dark bool) *mdRenderer {
 // that purple, which is legible only against it: dropping the band alone leaves near-white text on a
 // light terminal's white. Cleared, h1 inherits the document's own color and is marked by its bold and
 // its hash, exactly as h2 and h3 are.
+//
+// **An inline code span is padded the same way, and it reads as a double space.** Its prefix and
+// suffix are a space each, rendered in the span's own style, so the pad only shows as a chip where
+// that background stands out from the pane. Against 236 on the palette this pane uses it does not, and
+// what is left beside the space the prose already carries is a gap twice as wide as every other. The
+// color stays: it is what marks the span once the pad is gone.
 func mdStyle(dark bool) ansi.StyleConfig {
 	s := gstyles.LightStyleConfig
 	if dark {
@@ -104,6 +111,8 @@ func mdStyle(dark bool) ansi.StyleConfig {
 	s.H1.Suffix = ""
 	s.H1.BackgroundColor = nil
 	s.H1.Color = nil
+	s.Code.Prefix = ""
+	s.Code.Suffix = ""
 	return s
 }
 
