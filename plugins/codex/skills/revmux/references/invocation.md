@@ -39,6 +39,41 @@ Timeouts are configurable if a run is genuinely stuck rather than slow: `--idle-
 (default `20m`) caps a single attempt. Raising them makes a stalled run take longer to fail, not more
 likely to succeed.
 
+## Relay the milestones while it runs
+
+A headless run says nothing for ten minutes, and a user who cannot see the TUI has no other signal
+that anything is happening. Watch the round's `events.jsonl`: it is the run's own decision record,
+written a line at a time as the pipeline emits each event, and being structured it can be filtered
+down to the milestones exactly rather than by matching words in prose.
+
+```bash
+tail -n +1 -F <round_dir>/events.jsonl \
+  | grep -E --line-buffered '"kind":"(stage|agent_started|agent_done|agent_retried|agent_degraded|rate_limit)"'
+```
+
+Those six kinds are the whole vocabulary worth passing on — a stage boundary, an agent starting or
+finishing, a retry, a degrade, a rate limit. `agent_activity` and `agent_progress` are the model's own
+prose and tool calls; they arrive continuously, and relaying them turns the feed into a firehose the
+user has to read to find the two lines that mattered.
+
+The stderr log renders the same events for a human, but its agent column is ANSI-painted and its text
+is model prose, so a filter over it matches whatever an agent happened to say. Read the log to
+diagnose a run; filter `events.jsonl` to follow one.
+
+`events.jsonl` is created when the pipeline starts, a moment after launch, so the watch uses `-F`
+rather than `-f` to survive that gap. A run that fails before then writes none, and its own exit
+reports that.
+
+**Report what happened, at most once a minute, and nothing in between.** One short line folding
+together every event since the last one, rather than a line each: four agents start within seconds of
+one another at launch, and four messages saying so is the same noise arriving faster. A retry, a
+degrade or a rate limit is the exception and goes out when it arrives, since it changes what the user
+would do next. A quiet stretch is an agent thinking:
+there is nothing to report, and a line reporting it is worse than silence, because it is the same
+status the user already had, restated on a timer. Never send a heartbeat, a "no change since the last
+check", or a restatement of a milestone already relayed — those are what makes a progress feed
+something the user turns off.
+
 ## Overlay mode — running it with the TUI on screen
 
 revmux ships a live TUI: a status table with one row per supervised process (name, state, elapsed,

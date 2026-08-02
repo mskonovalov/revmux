@@ -65,6 +65,8 @@ round on the same task; revmux carries the prior rounds into every prompt itself
 - `AskUserQuestion` is replaced by numbered-list prompts, the Codex convention
 - `EnterPlanMode` is replaced by an inline markdown plan plus an explicit confirmation before any
   file is modified
+- the live progress feed is polled off the running command's own stdout, since Codex has nothing that
+  wakes an agent when a file grows; Claude Code arms a `Monitor` on the round's event log instead
 
 Everything else — the round's context files, the flags, the JSON shape, the exit codes, the overlay
 launcher and every reference file — is identical between the two.

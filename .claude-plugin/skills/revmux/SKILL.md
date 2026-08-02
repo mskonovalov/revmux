@@ -2,7 +2,7 @@
 name: revmux
 description: Run a supervised multi-agent code review by composing a task directory and driving the revmux CLI, then report or act on the findings it returns. revmux spawns and watches parallel claude and codex subprocesses with stall detection, retry, per-agent progress and a full run archive; this skill is the caller that writes the review context, launches it, reads the JSON back, and re-runs it after fixes. It also has a self mode that reads what past rounds produced and proposes tuning changes to the local profiles, lenses and knobs, one suggestion at a time with the numbers behind it. It fetches a pull request into a throwaway worktree, reviews it there and cleans up after. Also answers questions about revmux itself — profiles, lenses, task directories, flags, the JSON shape, exit codes and the run archive. Activates on "revmux", "run revmux", "multi-agent review", "supervised review", "review with revmux", "revmux this branch", "revmux the last commit", "revmux pr 123", "revmux this PR", "review PR 123 with revmux", "run a revmux round", "re-review after fixes", "revmux self", "self-improve revmux", "tune revmux", "revmux profiles", "revmux lenses", "what does revmux return", "revmux exit codes", "revmux task directory".
 argument-hint: 'optional: what to review ("pr 123", a ref, a path), plus "focused" / "final" / "loop" / "lenses a,b"'
-allowed-tools: [Bash, Read, Edit, Write, Grep, Glob, AskUserQuestion]
+allowed-tools: [Bash, Read, Edit, Write, Grep, Glob, AskUserQuestion, Monitor, TaskStop]
 ---
 
 # revmux — supervised multi-agent code review
@@ -51,6 +51,7 @@ Never treat `1` as failure. Never re-run on it.
 
 **2. Run it in the background.** A review takes 3-15 minutes. Redirect stdout to a file, wait for the
 completion notification. Do not poll, do not sleep-and-check. Applies to the overlay launcher too.
+Watching the round's event log is not polling — Step 4 arms it, and it speaks only when the run does.
 
 **3. Check `sources.degraded` before believing the findings.** If `expected != reported` the review is
 partial. Say so. Never report "no findings" from a degraded run as "the code is clean".
@@ -245,6 +246,27 @@ the cleanup deletes. `references/pr.md` has the reasoning.
 
 On a status request, read the tail of the stderr log and `events.jsonl` in the round directory. Report
 the stage, which agents are active, and elapsed. Never guess.
+
+**Then arm the progress feed, before yielding.** A `Monitor` over the round's own `events.jsonl`:
+
+```bash
+tail -n +1 -F <round_dir>/events.jsonl \
+  | grep -E --line-buffered '"kind":"(stage|agent_started|agent_done|agent_retried|agent_degraded|rate_limit)"'
+```
+
+`timeout_ms` of `1800000` and `persistent` false, and `TaskStop` it when the run's own completion
+notification arrives — `tail -F` never ends by itself. `references/invocation.md` says why those six
+kinds and not the log.
+
+**Speak at most once a minute, and only about what happened.** Fold every event since the last relay
+into one short line — the stage that opened, the agents that started or finished — rather than one
+line each: a roster launches four agents within seconds of each other, and four consecutive messages
+saying so is the same noise from the other direction. A retry, a degrade or a rate limit goes out when
+it arrives instead of waiting for the minute; those change what the user would do next.
+
+**Never report a quiet interval.** No heartbeat, no "no change since the last check", no restating a
+milestone already relayed — a feed that speaks when nothing happened is the one the user turns off.
+The monitor is woken by the file, so silence costs nothing and needs no announcing.
 
 **Overlay — when the user wants to watch:**
 
@@ -513,6 +535,7 @@ User: "revmux this branch"
 → write task.md, scope, goal, profile at the reported paths
 → revmux --task tui-rework --run 01-initial --no-tui > /tmp/…json  (background)
 → tell user: ~9 min, tail -f /tmp/…log for live progress
+→ Monitor on <round_dir>/events.jsonl, milestone kinds only; one folded line a minute, silence between
 → exit 1, sources 4/4, degraded []
 → 6 findings: 1 major, 5 minor; 2 corroborated across bugs+impl and codex
 ```

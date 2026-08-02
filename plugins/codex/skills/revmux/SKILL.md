@@ -80,7 +80,9 @@ resolved including user overrides, runs no pipeline, and is always safe to call.
 Never treat `1` as failure. Never re-run on it.
 
 **2. Run it in the background.** A review takes 3-15 minutes. Redirect stdout to a file, wait for the
-completion notification. Do not poll, do not sleep-and-check. Applies to the overlay launcher too.
+completion notification. Do not sleep-and-check in a loop. Applies to the overlay launcher too.
+The one wait that is not that is Step 4's: a managed background command, polled with blocking reads
+that carry the progress feed and return the moment the run ends.
 
 **3. Check `sources.degraded` before believing the findings.** If `expected != reported` the review is
 partial. Say so. Never report "no findings" from a degraded run as "the code is clean".
@@ -274,6 +276,36 @@ the cleanup deletes. `references/pr.md` has the reasoning.
 
 On a status request, read the tail of the stderr log and `events.jsonl` in the round directory. Report
 the stage, which agents are active, and elapsed. Never guess.
+
+**Carry the progress feed on the command's own stdout.** Nothing in the Codex CLI wakes the model when
+a file grows — `notify`, hooks and `tui.notifications` are all turn-bound, and there is no watch to
+subscribe to. What there is: a shell call that yields after about 30 seconds and hands back a session
+id, and empty `write_stdin` polls that block for more output. So the milestones have to come out of
+the command that is already being polled:
+
+```bash
+revmux --task <id> --run <name> --no-tui \
+       > /tmp/revmux-<id>-<run>.json 2> /tmp/revmux-<id>-<run>.log &
+rev=$!
+tail -n +1 -F <round_dir>/events.jsonl 2>/dev/null \
+  | grep -E --line-buffered '"kind":"(stage|agent_started|agent_done|agent_retried|agent_degraded|rate_limit)"' &
+feed=$!
+wait "$rev"; status=$?
+kill "$feed" 2>/dev/null
+echo "revmux exit $status"
+```
+
+Poll it with empty `write_stdin`, a minute a call, and answer each poll by what it returned:
+
+- **milestone lines** — one short message folding the whole batch together: the stage that opened, the
+  agents that started or finished, any retry or degrade. One line for the poll, not one per line in it
+- **nothing** — say nothing at all, and poll again. An empty batch is not news, and a message
+  reporting one is the tick this feed exists to avoid: no heartbeat, no "no change since the last
+  check", no restating a milestone already relayed.
+- **`revmux exit N`** — the run is over. Stop polling and read the report.
+
+Updates land at the poll boundary rather than the instant the event does, which is what having no
+watch costs. `references/invocation.md` says why those six kinds and not the stderr log.
 
 **Overlay — when the user wants to watch:**
 
@@ -542,6 +574,7 @@ User: "revmux this branch"
 → write task.md, scope, goal, profile at the reported paths
 → revmux --task tui-rework --run 01-initial --no-tui > /tmp/…json  (background)
 → tell user: ~9 min, tail -f /tmp/…log for live progress
+→ poll the managed command; relay each milestone batch, say nothing on an empty one
 → exit 1, sources 4/4, degraded []
 → 6 findings: 1 major, 5 minor; 2 corroborated across bugs+impl and codex
 ```
