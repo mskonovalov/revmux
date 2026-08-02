@@ -3,7 +3,10 @@ package ui
 import (
 	"strconv"
 	"strings"
+
 	"testing"
+
+	xansi "github.com/charmbracelet/x/ansi"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -112,7 +115,10 @@ func TestModel_findingsPane(t *testing.T) {
 	assert.Contains(t, pane, "    app/main.go:42-48", "with where it is on the line under it")
 	assert.Contains(t, pane, "\x1b[1m\x1b[36m### pane clipping  [80]\x1b[39m\x1b[22m")
 	assert.Contains(t, pane, "    app/ui/view.go", "a file-level finding renders as the bare path")
-	assert.Contains(t, pane, "    the write error is dropped", "a finding opens showing its body, not just its summary")
+	// the body is a rendered document and glamour colors it word by word, so the prose is asserted on the
+	// stripped text; the indent survives stripping and is still pinned
+	assert.Contains(t, xansi.Strip(pane), "    the write error is dropped",
+		"a finding opens showing its body, not just its summary")
 	assert.NotContains(t, pane, "is the retry budget right", "open questions are the report's, not the browser's")
 
 	t.Run("an unrecognized severity is grouped rather than dropped", func(t *testing.T) {
@@ -173,10 +179,10 @@ func TestFindingsState_rendersTheWholeReport(t *testing.T) {
 
 	assert.Contains(t, pane, "\x1b[1m\x1b[36m### unchecked error  [95]\x1b[39m\x1b[22m", "the title, as the report's ### heading")
 	assert.Contains(t, pane, "    app/main.go:42-48", "where it is, on the line under it")
-	assert.Contains(t, pane, "    the write error is dropped", "the body, indented under that")
-	assert.Contains(t, pane, "so a short write reads as success",
+	assert.Contains(t, xansi.Strip(pane), "    the write error is dropped", "the body, indented under that")
+	assert.Contains(t, xansi.Strip(pane), "so a short write reads as success",
 		"as a rendered document, so a soft line break folds into the paragraph rather than breaking it")
-	assert.Contains(t, pane, "    fix: check it")
+	assert.Contains(t, xansi.Strip(pane), "    fix: check it")
 	assert.Contains(t, pane, "    sources: bugs+impl, codex | lenses: bugs | verdict: confirmed")
 
 	t.Run("enter is not a fold and does nothing here", func(t *testing.T) {

@@ -4,9 +4,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/glamour/ansi"
-	gstyles "github.com/charmbracelet/glamour/styles"
+	"charm.land/glamour/v2"
+	"charm.land/glamour/v2/ansi"
+	gstyles "charm.land/glamour/v2/styles"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/lipgloss"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
@@ -252,8 +253,8 @@ func (r *mdRenderer) render(src string, width int) []string {
 			for i, line := range lines {
 				lines[i] = expandTabs(line, mdTabStop)
 			}
-			if out, err := tr.Render(r.escapeHTML(strings.Join(lines, "\n"))); err == nil {
-				return r.trim(out, width)
+			if out, err := tr.Render(r.escapeHTML(r.joinTightListLines(strings.Join(lines, "\n")))); err == nil {
+				return r.trim(r.downsample(out), width)
 			}
 		}
 	}
@@ -283,6 +284,74 @@ var mdEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 // Escaping makes glamour reparse the span as text rather than HTML, so an HTML *block* no longer
 // swallows the lines under it. That changes the block structure of exactly the input whose lines are
 // invisible today, and in the direction of showing them.
+// joinTightListLines turns a soft line break into a space before glamour sees it.
+//
+// glamour emits one as a literal newline, and only a paragraph takes it back out — `ParagraphElement`
+// wraps with `KeepNewlines` false. A list item's block goes straight to `x/ansi.Wordwrap`, which keeps
+// it, so in a semantic-line-break document every bullet continuation starts its own row.
+//
+// The breaks come from a parse, like `escapeHTML`'s spans: a newline in a fence or a table is content.
+// A hard break is deliberate and stays.
+func (r *mdRenderer) joinTightListLines(src string) string {
+	if !strings.Contains(src, "\n") {
+		return src
+	}
+
+	// each span is the newline plus the continuation indent between two runs of one item's text
+	var spans [][2]int
+	doc := r.parser.Parse(gtext.NewReader([]byte(src)))
+	err := gast.Walk(doc, func(n gast.Node, entering bool) (gast.WalkStatus, error) {
+		if !entering {
+			return gast.WalkContinue, nil
+		}
+		t, ok := n.(*gast.Text)
+		if !ok || !t.SoftLineBreak() || t.HardLineBreak() {
+			return gast.WalkContinue, nil
+		}
+		// measured off the source, not off the next sibling: a continuation opening with a code span is
+		// a CodeSpan, whose segments start inside the backticks
+		if end, ok := r.softBreakEnd(src, t.Segment.Stop); ok {
+			spans = append(spans, [2]int{t.Segment.Stop, end})
+		}
+		return gast.WalkContinue, nil
+	})
+	if err != nil || len(spans) == 0 {
+		return src
+	}
+	slices.SortFunc(spans, func(a, b [2]int) int { return a[0] - b[0] })
+
+	var out strings.Builder
+	out.Grow(len(src))
+	last := 0
+	for _, sp := range spans {
+		if sp[0] < last || sp[1] > len(src) {
+			continue
+		}
+		out.WriteString(src[last:sp[0]])
+		out.WriteString(" ")
+		last = sp[1]
+	}
+	out.WriteString(src[last:])
+	return out.String()
+}
+
+// softBreakEnd returns the offset past a soft break at from — trailing blanks, the newline, the
+// continuation indent. False when there is no newline there, so nothing the parse missed gets joined.
+func (r *mdRenderer) softBreakEnd(src string, from int) (int, bool) {
+	i := from
+	for i < len(src) && (src[i] == ' ' || src[i] == '\t') {
+		i++
+	}
+	if i >= len(src) || src[i] != '\n' {
+		return 0, false
+	}
+	i++
+	for i < len(src) && (src[i] == ' ' || src[i] == '\t') {
+		i++
+	}
+	return i, true
+}
+
 func (r *mdRenderer) escapeHTML(src string) string {
 	if !strings.Contains(src, "<") {
 		return src
@@ -353,8 +422,10 @@ func (r *mdRenderer) inline(src string, width int) []string {
 // for a width below one before glamour is asked for anything, which is the only nil a caller can
 // bring about and therefore the branch that makes the fallback reachable outside a forced failure.
 //
-// The style and the color profile are always explicit: glamour reads os.Stdout and the terminal's
-// background only on its AutoStyle path, and stdout is a pipe whenever the report is redirected.
+// The style is always explicit: glamour reads os.Stdout and the terminal's background only on its
+// AutoStyle path, and stdout is a pipe whenever the report is redirected. There is no color-profile
+// option to pass — v2's renderer is pure and emits the style's colors as written, which is what
+// downsample exists to correct.
 func (r *mdRenderer) build(width int) *glamour.TermRenderer {
 	if width < 1 {
 		return nil
@@ -365,13 +436,39 @@ func (r *mdRenderer) build(width int) *glamour.TermRenderer {
 	tr, err := glamour.NewTermRenderer(
 		glamour.WithStyles(r.style),
 		glamour.WithWordWrap(width),
-		glamour.WithColorProfile(r.profile),
 	)
 	if err != nil {
 		return nil
 	}
 	r.renderers[width] = tr
 	return tr
+}
+
+// downsample rewrites a rendered document's colors into what the terminal can show.
+//
+// glamour v2 dropped the color-profile option: its renderer is pure and emits the style as written.
+// Every other color here goes through the profile `newStyles` read off the tty, so without this the
+// document panes would be the one thing ignoring it. Before `trim`, so the cached lines are the bytes
+// the terminal receives.
+func (r *mdRenderer) downsample(out string) string {
+	p := colorprofile.TrueColor
+	switch r.profile {
+	case termenv.Ascii:
+		p = colorprofile.Ascii
+	case termenv.ANSI:
+		p = colorprofile.ANSI
+	case termenv.ANSI256:
+		p = colorprofile.ANSI256
+	case termenv.TrueColor:
+		return out // nothing to rewrite, and the writer takes the same shortcut
+	}
+	var buf strings.Builder
+	buf.Grow(len(out))
+	w := colorprofile.Writer{Forward: &buf, Profile: p}
+	if _, err := w.Write([]byte(out)); err != nil {
+		return out // a failed rewrite is a wrong palette, never a blank pane
+	}
+	return buf.String()
 }
 
 // trim splits a rendered document into pane lines, drops the blank lines glamour brackets a document

@@ -3,6 +3,7 @@ package ui
 import (
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -464,6 +465,84 @@ func TestMDRenderer_renderFitsWidth(t *testing.T) {
 				assert.Contains(t, plainMD(lines), "a"+strings.Repeat("a", 20),
 					"the code line survives, it is only broken up")
 			}
+		})
+	}
+}
+
+// glamour's own document margin, two columns each side, which it deducts from the wrap width
+const mdDocMargin = 2
+
+// pins what glamour v1 got wrong: it wrapped a paragraph twice, and reflow's wrapper did not count a
+// hyphen toward the line length, so the second wrap orphaned the last word onto a row of its own.
+func TestMDRenderer_renderKeepsHyphenatedParagraphsWhole(t *testing.T) {
+	src := "A Go CLI that runs a structured multi-agent code review by spawning and supervising " +
+		"`claude --print` and `codex exec` subprocesses, then returns findings on stdout. It exists " +
+		"because agent fan-out driven from inside an AI coding session is unobservable and " +
+		"unrecoverable, so the caller has no timeout, no kill, no retry and no progress.\n"
+
+	for _, width := range []int{60, 76, 80, 86, 100} {
+		t.Run(strconv.Itoa(width), func(t *testing.T) {
+			r := newMDRenderer(termenv.Ascii, true)
+			lines := r.render(src, width)
+			require.NotEmpty(t, lines)
+			for i := range len(lines) - 1 {
+				cur := strings.TrimSpace(xansi.Strip(lines[i]))
+				next := strings.Fields(xansi.Strip(lines[i+1]))
+				if cur == "" || len(next) == 0 {
+					continue
+				}
+				// a greedy wrapper breaks only where the next word no longer fits, so a line that
+				// still has room for the first word of the line below it was broken early
+				assert.Greater(t, len(cur)+1+len(next[0]), width-2*mdDocMargin,
+					"line %d had room for %q at width %d: %q", i, next[0], width, cur)
+			}
+		})
+	}
+}
+
+func TestMDRenderer_renderJoinsSoftBreaks(t *testing.T) {
+	tests := []struct {
+		name, src string
+		want      []string
+	}{
+		{"tight item", "- one item written across\n  two source lines\n",
+			[]string{"one item written across two source lines"}},
+		{"continuation opening with a code span", "- the caller, which post-processes in\n  `trim`\n",
+			[]string{"the caller, which post-processes in trim"}},
+		{"loose item", "- one item across\n  two lines\n\n- second\n",
+			[]string{"one item across two lines", "second"}},
+		{"nested item", "- outer across\n  two lines\n  - inner across\n    two lines\n",
+			[]string{"outer across two lines", "inner across two lines"}},
+		{"hard break stays", "- first half  \n  second half\n",
+			[]string{"first half\n", "second half"}},
+		{"fence keeps its lines", "- item\n\n  ```go\n  a := 1\n  b := 2\n  ```\n",
+			[]string{"a := 1\n", "b := 2"}},
+		{"table keeps its rows", "| a | b |\n|---|---|\n| 1 | 2 |\n", []string{"1", "2"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newMDRenderer(termenv.Ascii, true)
+			lines := r.render(tt.src, 60)
+			for _, want := range tt.want {
+				assert.Contains(t, plainMD(lines), want)
+			}
+		})
+	}
+}
+
+func TestMDRenderer_renderDownsamplesToProfile(t *testing.T) {
+	src := "# heading\n\nsome **bold** prose and `a code span` in it.\n"
+	for _, tt := range mdProfiles {
+		t.Run(tt.name, func(t *testing.T) {
+			out := strings.Join(newMDRenderer(tt.profile, true).render(src, 60), "\n")
+			assert.Contains(t, xansi.Strip(out), "a code span", "the text survives every profile")
+			// glamour's styles are spelled in 256-color codes, so a profile below that must not carry one
+			if tt.profile == termenv.Ascii || tt.profile == termenv.ANSI {
+				assert.NotContains(t, out, "38;5;", "a 256-color code reached a profile that cannot show it")
+				assert.NotContains(t, out, "48;5;")
+				return
+			}
+			assert.Contains(t, out, "38;5;", "256-color and truecolor keep the style's own colors")
 		})
 	}
 }

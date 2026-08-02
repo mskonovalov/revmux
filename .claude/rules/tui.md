@@ -271,6 +271,31 @@ cover both.
   re-attaching the marker, since re-indenting after the fact would push lines past the pane and need the
   rendered ANSI re-wrapped. That is layout code rather than a style override, so it is deliberately not
   done; single-line items, which is most of what a review writes, are unaffected.
+  **glamour reflows a paragraph's soft line breaks and keeps a list item's.** It emits one as a
+  literal newline; only `ParagraphElement` takes it back out, wrapping with `KeepNewlines` false. A
+  list item's block goes straight to `x/ansi.Wordwrap`, which keeps it, so in a semantic-line-break
+  document every bullet continuation starts its own row and a two-line bullet reads as two bullets.
+  `mdRenderer.joinTightListLines` rewrites those breaks to spaces before the render, from a goldmark
+  parse rather than a scan — a newline in a fence or a table is content — and leaves hard breaks alone.
+  The continuation is measured off the source, not off the next sibling: one opening with a code span
+  is a `CodeSpan`, whose segments start inside the backticks.
+  **v1 additionally wrapped each paragraph twice** — `ParagraphElement` with `muesli/reflow`, then the
+  document block with `x/ansi` — and reflow did not count a hyphen toward the line length, so the
+  second wrap orphaned the last word of any hyphenated paragraph. v2 dropped reflow and the orphan with
+  it. `TestMDRenderer_renderKeepsHyphenatedParagraphsWhole` pins that at five widths, and its oracle is
+  the only one that catches it: an orphan is not two lines that would have fit on one, it is a line
+  with room left for the first word of the line below.
+  **A hyphen is still a break opportunity, and only in a list.** v2 wraps a paragraph with
+  `lipgloss.Wrap(blk, width, "")` and the document block with `lipgloss.Wrap(s, width, " ,.;-+|")`. A
+  list item sees only the second, so `--dump-defaults` splits across rows at any width, while the same
+  token in a paragraph does not. The breakpoint set is hardcoded, so fixing it means taking wrapping
+  away from glamour.
+- **glamour v2 does no color downsampling.** Its renderer is pure, `WithColorProfile` is gone, and it
+  emits the style's own 256-color codes whatever the terminal is. `mdRenderer.downsample` puts them
+  through `colorprofile.Writer` at the profile `newStyles` read off the tty, before `trim`, so the
+  cached pane lines are the bytes the terminal receives.
+  v2 also colors word by word rather than per line, so a test asserting on prose in a rendered document
+  has to strip ANSI first — a plain `Contains` on the painted string passes on v1 and fails on v2.
 - **glamour deletes raw HTML, and CommonMark calls far more things raw HTML than a reader does.**
   `ansi.NewRenderContext` hardcodes a bluemonday `StrictPolicy` and every inline and block raw-HTML node
   goes through it, so `<task>`, `<T>` and `<binary>` are stripped out of a rendered pane with no marker
