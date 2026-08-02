@@ -1,7 +1,7 @@
 ---
 name: revmux
-description: Run a supervised multi-agent code review by composing a task directory and driving the revmux CLI, then report or act on the findings it returns. revmux spawns and watches parallel claude and codex subprocesses with stall detection, retry, per-agent progress and a full run archive; this skill is the caller that writes the review context, launches it, reads the JSON back, and re-runs it after fixes. It also has a self mode that reads what past rounds produced and proposes tuning changes to the local profiles, lenses and knobs, one suggestion at a time with the numbers behind it. It fetches a pull request into a throwaway worktree, reviews it there and cleans up after. Also answers questions about revmux itself — profiles, lenses, task directories, flags, the JSON shape, exit codes and the run archive. Activates on "revmux", "run revmux", "multi-agent review", "supervised review", "review with revmux", "revmux this branch", "revmux the last commit", "revmux pr 123", "revmux this PR", "review PR 123 with revmux", "run a revmux round", "re-review after fixes", "revmux self", "self-improve revmux", "tune revmux", "revmux profiles", "revmux lenses", "what does revmux return", "revmux exit codes", "revmux task directory".
-argument-hint: 'optional: what to review ("pr 123", a ref, a path), plus "focused" / "final" / "loop" / "lenses a,b"'
+description: Run a supervised multi-agent code review by composing a task directory and driving the revmux CLI, then report or act on the findings it returns. revmux spawns and watches parallel claude and codex subprocesses with stall detection, retry, per-agent progress and a full run archive; this skill is the caller that writes the review context, launches it, reads the JSON back, and re-runs it after fixes. It also has a self mode that reads what past rounds produced and proposes tuning changes to the local profiles, lenses and knobs, one suggestion at a time with the numbers behind it. It fetches a pull request into a throwaway worktree, reviews it there and cleans up after. Also answers questions about revmux itself — profiles, lenses, task directories, flags, the JSON shape, exit codes and the run archive. Activates on "revmux", "run revmux", "multi-agent review", "supervised review", "review with revmux", "revmux this branch", "revmux the last commit", "revmux pr 123", "revmux this PR", "review PR 123 with revmux", "run a revmux round", "re-review after fixes", "revmux it and show me", "revmux this, I want to watch", "run it visible", "show me the review", "revmux self", "self-improve revmux", "tune revmux", "revmux profiles", "revmux lenses", "what does revmux return", "revmux exit codes", "revmux task directory".
+argument-hint: 'optional: what to review ("pr 123", a ref, a path), plus "show me" / "focused" / "final" / "loop" / "lenses a,b"'
 allowed-tools: [Bash, Read, Edit, Write, Grep, Glob]
 ---
 
@@ -57,6 +57,8 @@ Before applying fixes, write the plan inline as markdown and ask for explicit co
 - "revmux this branch", "revmux the last commit", "revmux the uncommitted changes"
 - "revmux pr 123", "revmux this PR", a pull-request URL — the checkout half, `references/pr.md`
 - "another revmux round", "re-review after fixes"
+- "show me", "I want to watch", "run it visible", "in an overlay" — the overlay form in Step 4, which
+  puts the TUI on screen. Any of these with a review request means overlay; alone they are not a trigger
 - "revmux loop", "loop it", "keep going until clean" — the review-fix loop, `references/loop.md`
 - "revmux self", "self-improve revmux", "tune revmux" — the self mode below, which reviews nothing
 - questions: "revmux profiles", "what lenses are there", "revmux exit codes"
@@ -277,7 +279,7 @@ the cleanup deletes. `references/pr.md` has the reasoning.
 On a status request, read the tail of the stderr log and `events.jsonl` in the round directory. Report
 the stage, which agents are active, and elapsed. Never guess.
 
-**Carry the progress feed on the command's own stdout.** Nothing in the Codex CLI wakes the model when
+**Carry the progress feed on the command's own stdout — headless only.** Nothing in the Codex CLI wakes the model when
 a file grows — `notify`, hooks and `tui.notifications` are all turn-bound, and there is no watch to
 subscribe to. What there is: a shell call that yields after about 30 seconds and hands back a session
 id, and empty `write_stdin` polls that block for more output. So the milestones have to come out of
@@ -307,6 +309,9 @@ Poll it with empty `write_stdin`, a minute a call, and answer each poll by what 
 Updates land at the poll boundary rather than the instant the event does, which is what having no
 watch costs. `references/invocation.md` says why those six kinds and not the stderr log.
 
+**The feed belongs to this form alone.** It exists because a headless run says nothing for ten minutes
+and the user has no other signal. An overlay run is that signal, on screen, live.
+
 **Overlay — when the user wants to watch:**
 
 ```bash
@@ -318,7 +323,10 @@ vterm), runs revmux with its TUI in an overlay, returns the report on stdout. Un
 panel at 80% of the pane, or a blue-tinted pane overlay when the session is split, which leaves the
 sibling pane live. Do not pass `--no-tui`; the script rejects it.
 
-- it blocks for the whole review — background it exactly like the headless form
+- it blocks for the whole review, so background it and poll for its completion
+- **no progress feed, and none of the three-things announcement.** The TUI is the progress feed: a
+  relay here narrates in prose what the user is already watching render, and the three lines about
+  `tail -f` point at a log he does not need. Say what is running in one line and yield.
 - **its exit codes: `0`/`1`/`2` are revmux's, `3` is a launcher failure, `127` is revmux not
   installed.** A `3` means no review happened — that is the one to retry.
 - overrides: `REVMUX_AGTERM_PERCENT` (80, and forces the floating panel in a split),
@@ -595,6 +603,7 @@ User: "revmux the branch, I want to watch it"
 → revmux new --task tui-rework --run 01-initial → write its input
 → $SCRIPT_DIR/launch-revmux.sh --task tui-rework --run 01-initial > /tmp/…json  (background)
 → agterm: split session, so a pane overlay on the agent's own pane, TUI live, self-closes 30s after the report
+→ no progress feed and no status lines: he is watching it
 → same JSON, same exit code, Step 5 onward identical
 ```
 

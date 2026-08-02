@@ -42,7 +42,10 @@ likely to succeed.
 ## Relay the milestones while it runs
 
 A headless run says nothing for ten minutes, and a user who cannot see the TUI has no other signal
-that anything is happening. Watch the round's `events.jsonl`: it is the run's own decision record,
+that anything is happening. **This is for that form only.** An overlay run puts the TUI in front of
+him, so a relay there narrates what he is already watching and is noise by definition.
+
+Watch the round's `events.jsonl`: it is the run's own decision record,
 written a line at a time as the pipeline emits each event, and being structured it can be filtered
 down to the milestones exactly rather than by matching words in prose.
 
