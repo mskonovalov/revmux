@@ -14,6 +14,7 @@ import (
 	"github.com/yuin/goldmark"
 	gast "github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
+	east "github.com/yuin/goldmark/extension/ast"
 	gparser "github.com/yuin/goldmark/parser"
 	gtext "github.com/yuin/goldmark/text"
 )
@@ -317,19 +318,23 @@ func (r *mdRenderer) joinTightListLines(src string) string {
 	return out.String()
 }
 
-// inPlainListItem reports whether t sits in a list item that no blockquote encloses.
+// inPlainListItem reports whether t sits in a list item or a tight definition description that no
+// blockquote encloses.
 //
 // The scope is the whole safety of the rewrite. A blockquote's continuation opens with `>`, which is
 // syntax rather than indent, so joining across it splices that marker into the text and the pane shows
-// a character the document does not have. Outside a list nothing needs joining anyway: `ParagraphElement`
-// already replaces a paragraph's newlines with spaces.
+// a character the document does not have. A continuation is otherwise indent, which splices nothing.
+//
+// The two admitted containers are the ones whose block skips `ParagraphElement`, which is what would
+// have replaced the newline with a space: a tight definition description is a `TextBlock`, like a tight
+// list item. Everywhere else glamour joins the break itself.
 func (r *mdRenderer) inPlainListItem(t *gast.Text) bool {
 	inItem := false
 	for n := gast.Node(t); n != nil; n = n.Parent() {
 		switch n.(type) {
 		case *gast.Blockquote:
 			return false
-		case *gast.ListItem:
+		case *gast.ListItem, *east.DefinitionDescription:
 			inItem = true
 		}
 	}

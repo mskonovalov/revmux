@@ -278,6 +278,13 @@ cover both.
   document every bullet continuation starts its own row and a two-line bullet reads as two bullets.
   `mdRenderer.joinTightListLines` rewrites those breaks to spaces before the render, from a goldmark
   parse rather than a scan — a newline in a fence or a table is content — and leaves hard breaks alone.
+  **`inPlainListItem` is the whole safety of that rewrite, and it has been wrong in both directions.**
+  It admits exactly the containers whose block skips `ParagraphElement` — a tight list item and a tight
+  definition description, both `TextBlock` — and refuses anything a blockquote encloses. Too wide and a
+  blockquote's `>` continuation is spliced into the text, so the pane shows a character the document
+  does not carry; too narrow and a container glamour will not join for itself renders ragged. Anything
+  added to that switch needs both a joined case and a blockquoted one in
+  `TestMDRenderer_renderJoinsSoftBreaks`.
   The continuation is measured off the source, not off the next sibling: one opening with a code span
   is a `CodeSpan`, whose segments start inside the backticks.
   **v1 additionally wrapped each paragraph twice** — `ParagraphElement` with `muesli/reflow`, then the

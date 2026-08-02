@@ -523,6 +523,10 @@ func TestMDRenderer_renderJoinsSoftBreaks(t *testing.T) {
 			want: []string{"one item written across two source lines"}},
 		// a blockquote continuation opens with `>`, which is syntax: joining across it splices the
 		// marker into the text and the pane shows a character the document does not have
+		{name: "tight definition description", src: "Term\n: description across\n  two source lines\n",
+			want: []string{"description across two source lines"}},
+		{name: "blockquoted definition list is left alone", src: "> Term\n> : description across\n>   two source lines\n",
+			want: []string{"description across"}, notWant: []string{"across >"}},
 		{name: "blockquote is left alone", src: "> first line\n> second line\n",
 			want: []string{"first line"}, notWant: []string{"first line >"}},
 		{name: "blockquoted item is left alone", src: "> - one item across\n>   two source lines\n",
