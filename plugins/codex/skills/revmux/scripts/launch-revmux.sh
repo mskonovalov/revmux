@@ -22,7 +22,8 @@
 # SUCCESS. No launcher failure may ever exit 0, 1 or 2 - use RC_LAUNCH_FAIL.
 #
 # env overrides:
-#   REVMUX_AGTERM_PERCENT  agterm overlay size, 1-100      (default 80)
+#   REVMUX_AGTERM_PERCENT  agterm floating panel size, 1-100 (default 80; setting it also forces the
+#                          floating panel in a split, where the default is a pane overlay)
 #   REVMUX_POPUP_WIDTH     tmux/zellij popup width         (default 90%)
 #   REVMUX_POPUP_HEIGHT    tmux/zellij/wezterm popup height (default 90%)
 #   REVMUX_AUTO_EXIT       TUI self-close delay            (default 30s; 0 waits for the reader)
@@ -231,16 +232,106 @@ OVERLAY_TITLE="rm: ${DIR_NAME}${TITLE_TASK:+ [$TITLE_TASK]}"
 POPUP_W="${REVMUX_POPUP_WIDTH:-90%}"
 POPUP_H="${REVMUX_POPUP_HEIGHT:-90%}"
 
+# the agtermctl belonging to the RUNNING app, which is not always the one on PATH. agterm exports
+# GHOSTTY_BIN_DIR pointing into its own bundle, and a second install earlier in PATH answers
+# `command -v` while $AGTERM_SOCKET still reaches this one. That CLI is then version-skewed against
+# the app it drives: it rejects flags the app supports, and the feature probe below reads its answer
+# as the app's. Ghostty and cmux export the same variable, so the executable test is what makes this
+# agterm's bundle rather than theirs.
+if [ -n "${GHOSTTY_BIN_DIR:-}" ] && [ -x "$GHOSTTY_BIN_DIR/agtermctl" ]; then
+    AGTERMCTL="$GHOSTTY_BIN_DIR/agtermctl"
+else
+    AGTERMCTL=$(command -v agtermctl 2>/dev/null || true)
+fi
+
+# agtermctl carrying the calling session's socket. A wrapper rather than an argument array because the
+# default socket path contains spaces, and every call below needs it.
+agt() {
+    if [ -n "${AGTERM_SOCKET:-}" ]; then
+        "$AGTERMCTL" "$@" --socket "$AGTERM_SOCKET"
+    else
+        "$AGTERMCTL" "$@"
+    fi
+}
+
+# `--pane` on overlay open reached agtermctl after v0.9.0. On an older one it is a usage error, which
+# --block would surface as an exit code in revmux's own 0/1/2 vocabulary - so ask the CLI rather than
+# assume, and fall back to the floating panel every version has.
+agterm_supports_pane_overlay() {
+    "$AGTERMCTL" session overlay open --help 2>/dev/null | grep -q -- '--pane'
+}
+
+# the calling session's split state and its own solid background color, read in one tree call and
+# printed as `<0|1>:<#rrggbb-or-empty>`. Window-scoped because `tree` defaults to the FRONTMOST window,
+# which is not the agent's whenever the user is looking elsewhere - unscoped it would find no session
+# and report every split as absent. jq is what parses it; without jq there is no honest read, so it
+# reports "not split" and the floating panel stands.
+agterm_session_state() {
+    local tree
+    command -v jq >/dev/null 2>&1 || { printf '0:'; return 0; }
+    if [ -n "${AGTERM_WINDOW_ID:-}" ]; then
+        tree=$(agt tree --json --window "$AGTERM_WINDOW_ID" 2>/dev/null) || tree=""
+    else
+        tree=$(agt tree --json 2>/dev/null) || tree=""
+    fi
+    [ -n "$tree" ] || { printf '0:'; return 0; }
+    printf '%s' "$tree" | jq -r --arg s "$AGTERM_SESSION_ID" '
+        ([.result.tree.workspaces[].sessions[] | select(.id == $s)][0] // {})
+        | "\(if .split then 1 else 0 end):\(if .background.kind == "color" then .background.colorHex else "" end)"
+    ' 2>/dev/null || printf '0:'
+}
+
+# the theme actually rendering right now. `theme list` marks the current one `* `, EXCEPT under macOS
+# appearance sync, where it marks both slots and the marker can no longer say which is on screen - the
+# alphabetically-first mark is as likely to be the other one, and deriving the tint from a dark theme
+# while the pane renders a light one is how a full-pane overlay ends up unreadable. There the header
+# names the pair and macOS names the appearance. `defaults read` exiting non-zero IS light mode: the
+# key is simply absent there, so the light branch is the answer rather than a guess.
+agterm_theme_name() {
+    local list header appearance
+    list=$("$AGTERMCTL" theme list 2>/dev/null) || return 0
+    header=$(printf '%s\n' "$list" | sed -n '1{/^syncing with macOS appearance/p;}')
+    if [ -z "$header" ]; then
+        printf '%s\n' "$list" | sed -n 's/^\* //p' | head -1
+        return 0
+    fi
+    appearance=$(defaults read -g AppleInterfaceStyle 2>/dev/null) || appearance=""
+    case "$appearance" in
+        Dark*) printf '%s\n' "$header" | sed -n 's/^.*, dark: //p' ;;
+        *)     printf '%s\n' "$header" | sed -n 's/^.*light: \(.*\), dark: .*$/\1/p' ;;
+    esac
+}
+
+# the overlay's own background: what the pane shows now, shifted toward blue. A pane overlay is
+# full-pane and otherwise inherits the session's colors exactly, so the review would render as the
+# shell it covered and the user could not tell one from the other. $1 is the session's own color when
+# it carries one; failing that the resolved theme's `background`, failing that ghostty's default.
+agterm_overlay_tint() {
+    local hex="${1#\#}" theme file r g b
+    if [ -z "$hex" ]; then
+        theme=$(agterm_theme_name)
+        file="${GHOSTTY_RESOURCES_DIR:-}/themes/$theme"
+        if [ -n "$theme" ] && [ -r "$file" ]; then
+            hex=$(sed -n 's/^[[:space:]]*background[[:space:]]*=[[:space:]]*#\{0,1\}\([0-9a-fA-F]\{6\}\).*/\1/p' \
+                "$file" | head -1)
+        fi
+    fi
+    case "$hex" in
+        [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) ;;
+        *) hex="303030" ;;
+    esac
+    r=$((16#${hex:0:2})); g=$((16#${hex:2:2})); b=$((16#${hex:4:2}))
+    # 3% toward pure blue: enough to read as not-the-shell at a glance, little enough that the theme
+    # still looks like itself rather than like a blue terminal. Blending rather than adding is what
+    # keeps a light theme light and a dark one dark - adding blue to #ffffff would do nothing at all.
+    printf '#%02x%02x%02x' "$((r * 97 / 100))" "$((g * 97 / 100))" "$(((b * 97 + 255 * 3) / 100))"
+}
+
 # agterm: `session overlay open --block` runs revmux over the agent's own session and blocks until it
 # exits, returning revmux's exit code directly - so no sentinel file is needed, unlike every backend
 # below. Checked first so an agterm session uses its native overlay even when a multiplexer is also
-# present. --size-percent renders a floating framed panel rather than covering the whole pane, which
-# keeps the session visible around it; 80% is enough for the status table plus a readable detail pane.
-# --cwd pins the overlay to the launcher's directory instead of the agent session's own.
-if [ -n "${AGTERM_SESSION_ID:-}" ] && command -v agtermctl >/dev/null 2>&1; then
-    AGTERM_TARGET=(--target "$AGTERM_SESSION_ID")
-    [ -n "${AGTERM_SOCKET:-}" ] && AGTERM_TARGET+=(--socket "$AGTERM_SOCKET")
-
+# present. --cwd pins the overlay to the launcher's directory instead of the agent session's own.
+if [ -n "${AGTERM_SESSION_ID:-}" ] && [ -n "$AGTERMCTL" ]; then
     # Mark the session active for the duration. Deliberately `active` and not `blocked --blink`,
     # which is what an interactive tool would set: a review is work in progress, not a prompt waiting
     # on the user, and blinking for attention over ten minutes during which nothing needs them is
@@ -251,16 +342,54 @@ if [ -n "${AGTERM_SESSION_ID:-}" ] && command -v agtermctl >/dev/null 2>&1; then
     case "${AGTERM_PANE:-}" in
         left|right|scratch) AGTERM_STATUS+=(--pane "$AGTERM_PANE") ;;
     esac
-    agtermctl "${AGTERM_STATUS[@]}" "${AGTERM_TARGET[@]}" >/dev/null 2>&1 || true
+    agt "${AGTERM_STATUS[@]}" --target "$AGTERM_SESSION_ID" >/dev/null 2>&1 || true
     # the EXIT trap from the top already removes both temp files; these two only ensure it runs on a
     # signal rather than being skipped
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
-    AGTERM_PERCENT="${REVMUX_AGTERM_PERCENT:-80}"
+    # Geometry. --size-percent renders a floating framed panel centered over the session, which keeps
+    # it visible around the review; 80% is enough for the status table plus a readable detail pane.
+    # In a VISIBLE split that panel is centered over BOTH panes: it covers the sibling pane's work and
+    # leaves the review in a frame narrower than the pane the agent runs in. A pane overlay covers this
+    # pane alone and leaves the sibling live, so a split takes it instead. It is always full-pane -
+    # agterm refuses --size-percent with --pane - which is what the tint above exists for.
+    # An explicit REVMUX_AGTERM_PERCENT asks for the floating panel by name, so it opts back out.
+    AGTERM_GEOMETRY=(--size-percent "${REVMUX_AGTERM_PERCENT:-80}")
+    if [ -z "${REVMUX_AGTERM_PERCENT:-}" ]; then
+        case "${AGTERM_PANE:-}" in
+            left|right)
+                if agterm_supports_pane_overlay; then
+                    AGTERM_STATE=$(agterm_session_state)
+                    if [ "${AGTERM_STATE%%:*}" = "1" ]; then
+                        AGTERM_GEOMETRY=(--pane "$AGTERM_PANE"
+                                         --background-color "$(agterm_overlay_tint "${AGTERM_STATE#*:}")")
+                    fi
+                fi
+                ;;
+        esac
+    fi
+
     rc=0
-    agtermctl session overlay open "$REVMUX_CMD" "${AGTERM_TARGET[@]}" \
-        --cwd "$CWD" --size-percent "$AGTERM_PERCENT" --block || rc=$?
+    AGTERM_ERR=$(agt session overlay open "$REVMUX_CMD" --target "$AGTERM_SESSION_ID" \
+        --cwd "$CWD" "${AGTERM_GEOMETRY[@]}" --block 2>&1 >/dev/null) || rc=$?
+    if [ -n "$AGTERM_ERR" ]; then
+        printf '%s\n' "$AGTERM_ERR" >&2
+    fi
+
+    # A pane open agterm refused means revmux never ran, so the floating panel every version supports
+    # is still worth trying rather than reporting a launcher failure over geometry. Both refusals are
+    # post-checks and neither is decidable from the tree read above: the split can go away between
+    # that read and this call, and the pane's overlay slot is separate from the session-wide one, so a
+    # stale pane overlay is invisible to it. Gated on agterm's own message rather than on an empty
+    # report, which is also what revmux writes when it exits 2 on a failed archive write - retrying
+    # there would run the whole review a second time.
+    if [ "$rc" -ne 0 ] && [ "${AGTERM_GEOMETRY[0]}" = "--pane" ] &&
+        printf '%s' "$AGTERM_ERR" | grep -qE 'pane overlay already open|pane not visible'; then
+        rc=0
+        agt session overlay open "$REVMUX_CMD" --target "$AGTERM_SESSION_ID" \
+            --cwd "$CWD" --size-percent "${REVMUX_AGTERM_PERCENT:-80}" --block || rc=$?
+    fi
     print_report_and_exit "$rc"
 fi
 

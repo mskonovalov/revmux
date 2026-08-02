@@ -276,12 +276,14 @@ ${CLAUDE_SKILL_DIR}/scripts/launch-revmux.sh --task <id> --run <name> [any revmu
 
 Detects the terminal (agterm, tmux, zellij, herdr, kitty, wezterm/kaku, cmux, ghostty, iTerm2, Emacs
 vterm), runs revmux with its TUI in an overlay, returns the report on stdout. Under agterm: floating
-panel at 80% of the pane. Do not pass `--no-tui`; the script rejects it.
+panel at 80% of the pane, or a blue-tinted pane overlay when the session is split, which leaves the
+sibling pane live. Do not pass `--no-tui`; the script rejects it.
 
 - it blocks for the whole review — background it exactly like the headless form
 - **its exit codes: `0`/`1`/`2` are revmux's, `3` is a launcher failure, `127` is revmux not
   installed.** A `3` means no review happened — that is the one to retry.
-- overrides: `REVMUX_AGTERM_PERCENT` (80), `REVMUX_POPUP_WIDTH`/`HEIGHT` (90%), `REVMUX_AUTO_EXIT`
+- overrides: `REVMUX_AGTERM_PERCENT` (80, and forces the floating panel in a split),
+  `REVMUX_POPUP_WIDTH`/`HEIGHT` (90%), `REVMUX_AUTO_EXIT`
   (30s; `0` waits for the reader to quit), `REVMUX_TMUX_WINDOW=1` for a disconnect-resilient tmux window
 
 **Choose headless** unless the user asked to watch or is clearly at the terminal.
@@ -553,7 +555,7 @@ User: "fix the major one and run it again"
 User: "revmux the branch, I want to watch it"
 → revmux new --task tui-rework --run 01-initial → write its input
 → launch-revmux.sh --task tui-rework --run 01-initial > /tmp/…json  (background)
-→ agterm: floating overlay at 80%, TUI live, self-closes 30s after the report
+→ agterm: split session, so a pane overlay on the agent's own pane, TUI live, self-closes 30s after the report
 → same JSON, same exit code, Step 5 onward identical
 ```
 

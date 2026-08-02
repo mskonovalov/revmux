@@ -96,7 +96,7 @@ is visible while it runs.
 
 | backend | detected by | how it opens |
 |---|---|---|
-| agterm | `$AGTERM_SESSION_ID` + `agtermctl` | floating panel at 80% of the pane, blocking |
+| agterm | `$AGTERM_SESSION_ID` + `agtermctl` | floating panel at 80%, or a pane overlay in a split, blocking |
 | tmux window | `$TMUX` + `REVMUX_TMUX_WINDOW=1`, or agent-deck | server-owned window, survives a client drop |
 | tmux popup | `$TMUX` | `display-popup -E` at 90% |
 | zellij | `$ZELLIJ` | floating pane at 90% |
@@ -111,11 +111,20 @@ is visible while it runs.
 Order matters where environments overlap: herdr is checked before kitty because herdr-in-kitty sets
 `KITTY_LISTEN_ON`, and cmux before ghostty because cmux can expose Ghostty's environment variables.
 
+Under agterm the floating panel is centered over the whole session, so in a **visible split** it covers
+the sibling pane's work and frames the review inside something narrower than the pane it runs in.
+There the launcher opens a pane-scoped overlay on `$AGTERM_PANE` instead, leaving the sibling live. A
+pane overlay is always full-pane, so it is given a background tinted 3% toward blue — derived from the
+session's own color, else the resolved theme's `background` — or it renders as the shell it replaced.
+Both conditions are checked, never assumed: `--pane` reached `agtermctl` after v0.9.0, and reading the
+split state needs `jq`. Without either, the floating panel stands — and so it does when agterm refuses
+the pane open outright, since the split can go away between the check and the call.
+
 ### Environment overrides
 
 | variable | default | effect |
 |---|---|---|
-| `REVMUX_AGTERM_PERCENT` | `80` | agterm floating panel size, 1-100 |
+| `REVMUX_AGTERM_PERCENT` | `80` | agterm floating panel size, 1-100; setting it also forces the floating panel in a split |
 | `REVMUX_POPUP_WIDTH` | `90%` | tmux and zellij popup width |
 | `REVMUX_POPUP_HEIGHT` | `90%` | tmux, zellij and wezterm popup height |
 | `REVMUX_AUTO_EXIT` | `30s` | TUI self-close delay; `0` waits for the reader to quit |
