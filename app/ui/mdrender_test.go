@@ -504,20 +504,29 @@ func TestMDRenderer_renderJoinsSoftBreaks(t *testing.T) {
 	tests := []struct {
 		name, src string
 		want      []string
+		notWant   []string
 	}{
-		{"tight item", "- one item written across\n  two source lines\n",
-			[]string{"one item written across two source lines"}},
-		{"continuation opening with a code span", "- the caller, which post-processes in\n  `trim`\n",
-			[]string{"the caller, which post-processes in trim"}},
-		{"loose item", "- one item across\n  two lines\n\n- second\n",
-			[]string{"one item across two lines", "second"}},
-		{"nested item", "- outer across\n  two lines\n  - inner across\n    two lines\n",
-			[]string{"outer across two lines", "inner across two lines"}},
-		{"hard break stays", "- first half  \n  second half\n",
-			[]string{"first half\n", "second half"}},
-		{"fence keeps its lines", "- item\n\n  ```go\n  a := 1\n  b := 2\n  ```\n",
-			[]string{"a := 1\n", "b := 2"}},
-		{"table keeps its rows", "| a | b |\n|---|---|\n| 1 | 2 |\n", []string{"1", "2"}},
+		{name: "tight item", src: "- one item written across\n  two source lines\n",
+			want: []string{"one item written across two source lines"}},
+		{name: "continuation opening with a code span", src: "- the caller, which post-processes in\n  `trim`\n",
+			want: []string{"the caller, which post-processes in trim"}},
+		{name: "loose item", src: "- one item across\n  two lines\n\n- second\n",
+			want: []string{"one item across two lines", "second"}},
+		{name: "nested item", src: "- outer across\n  two lines\n  - inner across\n    two lines\n",
+			want: []string{"outer across two lines", "inner across two lines"}},
+		{name: "hard break stays", src: "- first half  \n  second half\n",
+			want: []string{"first half\n", "second half"}},
+		{name: "fence keeps its lines", src: "- item\n\n  ```go\n  a := 1\n  b := 2\n  ```\n",
+			want: []string{"a := 1\n", "b := 2"}},
+		{name: "table keeps its rows", src: "| a | b |\n|---|---|\n| 1 | 2 |\n", want: []string{"1", "2"}},
+		{name: "crlf item", src: "- one item written across\r\n  two source lines\r\n",
+			want: []string{"one item written across two source lines"}},
+		// a blockquote continuation opens with `>`, which is syntax: joining across it splices the
+		// marker into the text and the pane shows a character the document does not have
+		{name: "blockquote is left alone", src: "> first line\n> second line\n",
+			want: []string{"first line"}, notWant: []string{"first line >"}},
+		{name: "blockquoted item is left alone", src: "> - one item across\n>   two source lines\n",
+			want: []string{"one item across"}, notWant: []string{"across >"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -525,6 +534,9 @@ func TestMDRenderer_renderJoinsSoftBreaks(t *testing.T) {
 			lines := r.render(tt.src, 60)
 			for _, want := range tt.want {
 				assert.Contains(t, plainMD(lines), want)
+			}
+			for _, no := range tt.notWant {
+				assert.NotContains(t, plainMD(lines), no, "a marker the document does not carry")
 			}
 		})
 	}

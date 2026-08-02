@@ -266,24 +266,6 @@ func (r *mdRenderer) render(src string, width int) []string {
 // revisits what it has written, so an ampersand already in the text is escaped once.
 var mdEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 
-// escapeHTML entity-escapes exactly the spans goldmark reads as raw HTML, so glamour prints them
-// instead of deleting them.
-//
-// glamour hands every raw-HTML node to a bluemonday StrictPolicy, which strips it whole and leaves
-// nothing in its place. CommonMark reads `<task>`, `<T>` and `<binary>` as raw HTML, so a path
-// template or a type parameter written into a finding body or a caller's scope.md disappears
-// mid-sentence with no marker that anything was there — the inline path keeps that text verbatim, and
-// a forensic pane silently dropping it is worse than clipping it.
-//
-// **The spans come from a parse, not from a scan for angle brackets.** Escaping every `<` would reach
-// into fenced and indented code, where an entity is literal text and `&lt;` is what a reader would
-// see; it would also break autolinks and, escaping `>` with it, blockquotes. A raw-HTML node is none
-// of those by construction: goldmark has already decided that a code span, a code block, an autolink
-// and a blockquote marker are not it.
-//
-// Escaping makes glamour reparse the span as text rather than HTML, so an HTML *block* no longer
-// swallows the lines under it. That changes the block structure of exactly the input whose lines are
-// invisible today, and in the direction of showing them.
 // joinTightListLines turns a soft line break into a space before glamour sees it.
 //
 // glamour emits one as a literal newline, and only a paragraph takes it back out — `ParagraphElement`
@@ -305,7 +287,7 @@ func (r *mdRenderer) joinTightListLines(src string) string {
 			return gast.WalkContinue, nil
 		}
 		t, ok := n.(*gast.Text)
-		if !ok || !t.SoftLineBreak() || t.HardLineBreak() {
+		if !ok || !t.SoftLineBreak() || t.HardLineBreak() || !r.inPlainListItem(t) {
 			return gast.WalkContinue, nil
 		}
 		// measured off the source, not off the next sibling: a continuation opening with a code span is
@@ -335,11 +317,32 @@ func (r *mdRenderer) joinTightListLines(src string) string {
 	return out.String()
 }
 
-// softBreakEnd returns the offset past a soft break at from — trailing blanks, the newline, the
-// continuation indent. False when there is no newline there, so nothing the parse missed gets joined.
+// inPlainListItem reports whether t sits in a list item that no blockquote encloses.
+//
+// The scope is the whole safety of the rewrite. A blockquote's continuation opens with `>`, which is
+// syntax rather than indent, so joining across it splices that marker into the text and the pane shows
+// a character the document does not have. Outside a list nothing needs joining anyway: `ParagraphElement`
+// already replaces a paragraph's newlines with spaces.
+func (r *mdRenderer) inPlainListItem(t *gast.Text) bool {
+	inItem := false
+	for n := gast.Node(t); n != nil; n = n.Parent() {
+		switch n.(type) {
+		case *gast.Blockquote:
+			return false
+		case *gast.ListItem:
+			inItem = true
+		}
+	}
+	return inItem
+}
+
+// softBreakEnd returns the offset past a soft break at from — trailing blanks, an optional CR, the
+// newline, the continuation indent. False when there is no newline there, so nothing the parse missed
+// gets joined. The CR is what makes a CRLF document join at all: goldmark counts it as space, so the
+// text segment stops before it.
 func (r *mdRenderer) softBreakEnd(src string, from int) (int, bool) {
 	i := from
-	for i < len(src) && (src[i] == ' ' || src[i] == '\t') {
+	for i < len(src) && (src[i] == ' ' || src[i] == '\t' || src[i] == '\r') {
 		i++
 	}
 	if i >= len(src) || src[i] != '\n' {
@@ -352,6 +355,24 @@ func (r *mdRenderer) softBreakEnd(src string, from int) (int, bool) {
 	return i, true
 }
 
+// escapeHTML entity-escapes exactly the spans goldmark reads as raw HTML, so glamour prints them
+// instead of deleting them.
+//
+// glamour hands every raw-HTML node to a bluemonday StrictPolicy, which strips it whole and leaves
+// nothing in its place. CommonMark reads `<task>`, `<T>` and `<binary>` as raw HTML, so a path
+// template or a type parameter written into a finding body or a caller's scope.md disappears
+// mid-sentence with no marker that anything was there — the inline path keeps that text verbatim, and
+// a forensic pane silently dropping it is worse than clipping it.
+//
+// **The spans come from a parse, not from a scan for angle brackets.** Escaping every `<` would reach
+// into fenced and indented code, where an entity is literal text and `&lt;` is what a reader would
+// see; it would also break autolinks and, escaping `>` with it, blockquotes. A raw-HTML node is none
+// of those by construction: goldmark has already decided that a code span, a code block, an autolink
+// and a blockquote marker are not it.
+//
+// Escaping makes glamour reparse the span as text rather than HTML, so an HTML *block* no longer
+// swallows the lines under it. That changes the block structure of exactly the input whose lines are
+// invisible today, and in the direction of showing them.
 func (r *mdRenderer) escapeHTML(src string) string {
 	if !strings.Contains(src, "<") {
 		return src

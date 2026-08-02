@@ -238,8 +238,9 @@ cover both.
   writes, so a color decision made through it would be taken against the wrong stream.
 - **glamour reads stdout too, and only on one path.** `getDefaultStyle` consults `os.Stdout` and
   `termenv.HasDarkBackground` when the style is `AutoStyle`; an explicit style name skips it entirely.
-  So the renderer is always built with `WithStyles` and `WithColorProfile` and never with
-  `WithAutoStyle` or `WithEnvironmentConfig`.
+  So the renderer is always built with an explicit `WithStyles` and never with `WithAutoStyle` or
+  `WithEnvironmentConfig`. Color is not settled there — v2 has no profile option at all, see
+  `downsample` below.
   Both facts come from the one lipgloss renderer `newStyles` already builds against the tty, which is
   why `styles` carries `profile` and `dark` rather than a second renderer being built in `New`: two
   answers to "what can this terminal do" can disagree, and then the frame and the panes inside it do.
