@@ -82,12 +82,17 @@ func (s *inputSnapshotter) optional(file inputFile) ui.InputDocument {
 	return s.file(file)
 }
 
+// context is one document per context file, and **no document at all when the caller supplied none**.
+// An absent context/ is the ordinary case rather than a fact worth a tab: a tab that is always present
+// and always says "not provided" is one a reader learns to skip, which costs more than the ambiguity it
+// removes. Scope is required, so its own tab already proves the snapshot ran.
+//
+// A directory that could not be read, or a symlinked one left untraversed, still gets its document.
+// That is a failure to show what the agents saw rather than an honest absence, and the reader has no
+// other way to learn it.
 func (s *inputSnapshotter) context(dir string) []ui.InputDocument {
 	if dir == "" {
-		return []ui.InputDocument{{
-			Label: "context", Path: filepath.ToSlash(filepath.Join(task.InputDir, task.ContextDir)),
-			Notice: "not provided",
-		}}
+		return nil
 	}
 
 	rootInfo, err := os.Lstat(dir)
@@ -107,10 +112,7 @@ func (s *inputSnapshotter) context(dir string) []ui.InputDocument {
 	state := &contextWalk{docs: []ui.InputDocument{}}
 	s.walkContext(dir, dir, state)
 	if len(state.docs) == 0 && !state.limited {
-		state.docs = append(state.docs, ui.InputDocument{
-			Label: "context", Path: filepath.ToSlash(filepath.Join(task.InputDir, task.ContextDir)),
-			Notice: "not provided",
-		})
+		return nil // an empty directory is the same absence as no directory
 	}
 	if state.limited {
 		state.docs = append(state.docs, ui.InputDocument{

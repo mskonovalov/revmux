@@ -628,8 +628,10 @@ open, the document stays on screen and the return goes to the findings browser.
 
 The snapshot is read after the tty opens and before any review process starts. It does not refresh during
 the run. Display is capped at 1 MiB per file, 8 MiB for the snapshot and 128 context files; directory
-traversal stops after 1024 filesystem entries. Missing, unreadable, binary and truncated inputs keep their
-tabs and show an explanation; none of these display conditions changes whether the review runs. Headless
+traversal stops after 1024 filesystem entries. Unreadable, binary and truncated inputs keep their tabs and
+show an explanation, and so does a missing `goal` or `profile`, whose absence changes how the agents
+calibrate. An absent or empty `context/` gets no tab: it is the ordinary case rather than something to
+report. None of these display conditions changes whether the review runs. Headless
 runs do not read an input snapshot.
 
 | keys | action |

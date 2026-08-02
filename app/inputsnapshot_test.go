@@ -125,9 +125,53 @@ func TestInputSnapshotter_limits(t *testing.T) {
 			fileBytes: 10, totalBytes: 100, contexts: 10, entries: 2,
 		}}).context(contextDir)
 
-		require.Len(t, docs, 1)
+		// the budget is spent exactly, so nothing was omitted and no `more` entry may claim otherwise.
+		// Directories holding no file are the same absence as no directory, and get no tab either.
+		assert.Empty(t, docs)
+	})
+}
+
+// an absent or empty context/ is the ordinary case, so it costs no tab. A directory that could not be
+// read is not that: the reader has no other way to learn the snapshot failed to show what agents saw.
+func TestInputSnapshotter_absentContextHasNoTab(t *testing.T) {
+	root := t.TempDir()
+	scope := filepath.Join(root, "scope.md")
+	require.NoError(t, os.WriteFile(scope, []byte("scope"), 0o600))
+	s := &inputSnapshotter{limits: inputLimits{fileBytes: 1024, totalBytes: 4096, contexts: 10, entries: 20}}
+
+	t.Run("no context directory", func(t *testing.T) {
+		docs := s.load(reviewContext{Scope: scope})
+		assert.Equal(t, []string{"scope", "goal", "profile"},
+			[]string{docs[0].Label, docs[1].Label, docs[2].Label})
+		require.Len(t, docs, 3, "an absent context adds no tab, while goal and profile keep theirs")
+	})
+
+	t.Run("empty context directory", func(t *testing.T) {
+		assert.Empty(t, s.context(t.TempDir()))
+	})
+
+	t.Run("an unreadable directory keeps its tab", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root reads a directory with no permissions")
+		}
+		blocked := filepath.Join(t.TempDir(), "gone")
+		docs := s.context(blocked)
+		require.Len(t, docs, 1, "a failure to read is not an absence")
 		assert.Equal(t, "context", docs[0].Label)
-		assert.Equal(t, "not provided", docs[0].Notice)
+		assert.Contains(t, docs[0].Notice, "cannot read context directory")
+	})
+
+	t.Run("a symlinked directory keeps its tab", func(t *testing.T) {
+		root := t.TempDir()
+		target := filepath.Join(root, "real")
+		require.NoError(t, os.Mkdir(target, 0o750))
+		link := filepath.Join(root, "link")
+		require.NoError(t, os.Symlink(target, link))
+
+		docs := s.context(link)
+		require.Len(t, docs, 1, "an untraversed link is information, not an absence")
+		assert.Equal(t, "context/", docs[0].Label)
+		assert.Equal(t, "symlinked directory not traversed", docs[0].Notice)
 	})
 }
 

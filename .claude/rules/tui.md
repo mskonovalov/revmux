@@ -139,7 +139,11 @@ cover both.
 - The tabs after it are per-agent full-detail scrollback. Those are the forensic views.
 - `i` switches the detail area to the startup input snapshot while the status table keeps updating.
   Input tabs are scope, goal, profile and each context file in lexical relative-path order.
-  Missing optional inputs keep a tab that says they were not provided.
+  A missing `goal` or `profile` keeps a tab saying it was not provided: their absence changes how the
+  agents calibrated, so it is worth a tab. **An absent or empty `context/` gets none** — it is the
+  ordinary case, and a tab that is always there and always silent is one a reader learns to skip.
+  A context directory that could not be read, or a symlinked one left untraversed, still gets its tab:
+  that is a failure to show what the agents saw rather than an honest absence.
   Markdown files render as documents through glamour and other safe UTF-8 files render verbatim.
   Tables, rules, links, emphasis and fenced code all render as themselves; tabs are expanded per line
   before the document is handed over, since `expandTabs` carries a running column that a whole-document
