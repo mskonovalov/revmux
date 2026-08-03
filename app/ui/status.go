@@ -48,11 +48,8 @@ func (m Model) agentRow(a *agentState) string {
 // header names the run and what it is doing. The findings count is the one number worth finding at a
 // glance, so it carries the only accent on the line.
 func (m Model) header() string {
-	// **it degrades rather than being clipped, for the same reason the tab bar does.** statusTable clips
-	// this line, and the completion notice is the rightmost thing on it — so the severity breakdown,
-	// which is the longest thing on it, would push exactly the "complete, closing in 5s" off the edge at
-	// the moment it matters most. Parts are given up longest-first, and what a reader needs to know
-	// about where the run is survives longest.
+	// degrades rather than being clipped: statusTable clips this line and the completion notice is the
+	// rightmost thing on it, so the breakdown would push "complete, closing in 5s" off the edge
 	for _, level := range m.headerLevels() {
 		if line := m.headerLine(level); lipgloss.Width(line) <= m.view.width() {
 			return line
@@ -62,21 +59,10 @@ func (m Model) header() string {
 	return m.clip(m.headerLine(headerParts{count: countNone}))
 }
 
-// headerLevels is the degrade ladder, widest first.
-//
-// Order matters and is stated in .claude/rules/tui.md: the breakdown, then the quit hint, then the
-// agent count, then the stage, then the total. The count outlives the stage because a reader who has
-// lost the stage still learns whether anything was found, while a stage name without a count says only
-// that something is happening. The hint outlives the breakdown because the breakdown degrades and the
-// hint does not: the total keeps the worst severity in its color and the report restates the split at
-// the end, while a header with no hint leaves a reader who wants out with nothing on screen at all.
-// That is also why there is no breakdown-without-hint rung: it would only ever be reached at a width
-// where the rung above it already fits.
-//
-// The hint rungs are built only for a live run rather than being dropped later by headerLine. A rung
-// whose one distinguishing part its renderer discards is the rung below it spelled differently, so a
-// finished run would degrade through a step that changes nothing and the ladder read here would not
-// be the ladder that runs.
+// headerLevels is the degrade ladder, widest first. The order is stated in .claude/rules/tui.md, and
+// there is no breakdown-without-hint rung: it would only be reached at a width where the rung above it
+// already fits. The hint rungs are built only for a live run rather than dropped later by headerLine —
+// a rung whose distinguishing part its renderer discards is the rung below it spelled differently.
 func (m Model) headerLevels() []headerParts {
 	top := headerParts{identity: true, agents: true, stage: true, count: countFull}
 	levels := []headerParts{top}
@@ -137,9 +123,8 @@ func (m Model) headerLine(p headerParts) string {
 }
 
 // closing is what the header says once the run is over: that it is over, and how to leave. A finished
-// review otherwise looks identical to a stalled one — every row reads "done" and nothing moves — and a
-// reader who does not already know the key has no way to find it. While the run is still going the same
-// job belongs to the header's own hint, which is droppable where this notice is not.
+// review otherwise looks identical to a stalled one — every row reads "done" and nothing moves. It sits
+// outside the degrade ladder, where the live run's hint is droppable.
 func (m Model) closing() string {
 	if !m.done {
 		return ""

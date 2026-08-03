@@ -74,13 +74,10 @@ func (o ComposeOpts) render(body string) (string, error) {
 	return out + "\n\n" + strings.TrimSpace(o.History) + "\n\n" + historyGuard, nil
 }
 
-// substitute replaces every known variable and fails on anything left over. A leftover can only be a
-// bug by this point: an unknown name failed at load, and an absent file arrives as a placeholder.
-//
-// The miss is recorded during the pass rather than found by re-scanning the result, because a
-// substituted value is not part of the prompt's own vocabulary. {{FINDINGS}} carries model-authored
-// review text that routinely quotes template syntax, and re-scanning would read a finding about an
-// unescaped {{message}} as this prompt's own unresolved variable and fail the whole run.
+// substitute replaces every known variable and fails on anything left over, which by this point can only
+// be a bug. The miss is recorded during the pass rather than by re-scanning the result: {{FINDINGS}}
+// carries model-authored text that routinely quotes template syntax, and a re-scan would read a finding
+// about an unescaped {{message}} as this prompt's own unresolved variable.
 func (o ComposeOpts) substitute(body string) (string, error) {
 	missing := ""
 	out := varPattern.ReplaceAllStringFunc(body, func(m string) string {

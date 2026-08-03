@@ -25,12 +25,9 @@ var keys = struct {
 	startFilter: key.NewBinding(key.WithKeys("/")),
 }
 
-// key handles one keystroke. Quitting stops watching the run, it does not stop the run: package main
-// still holds the report and writes it once the program has returned.
-//
-// **Only ctrl+c ends a review that is still running.** `q` is inert until the report is in, and esc never
-// quits at all — it abandons a filter and it leaves the input viewer, nothing else. A reader who hits esc
-// to back out of something, or q expecting a pager, would otherwise lose the view of a live run.
+// key handles one keystroke. Quitting stops watching the run, not the run itself. Only ctrl+c ends a
+// review that is still running: q is inert until the report is in, and esc never quits at all — it
+// abandons a filter and leaves the input viewer, nothing else.
 func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		// checked ahead of the filter editor, which treats every other key as text: a half-typed

@@ -46,19 +46,13 @@ type record struct {
 	} `json:"stats"`
 }
 
-// History renders the prior-round inventory that every composed prompt carries: the task directory plus
-// one line per round with its timestamp, finding counts by severity and source status, so an agent can
-// judge which round is worth opening without opening any of them. A task with no prior round yields an
-// empty string, which omits the block rather than injecting it empty.
+// History renders the prior-round inventory every composed prompt carries: the task directory plus one
+// line per round with its timestamp, finding counts by severity and source status. A task with no prior
+// round yields an empty string, which omits the block rather than injecting it empty.
 //
-// taskDir is the task directory, never a round: the rounds are its children, and pointing this at one of
-// them finds nothing and omits the block with no error at all.
-//
-// Which directories are rounds is task.Rounds, the same enumeration `revmux config` reports: the round
-// being written is not one of them yet, so this is resolved before New rather than after it.
-//
-// It renders no independence instruction. prompt.ComposeOpts appends that to every composed prompt, so
-// emitting it here would duplicate it in each one.
+// taskDir is the task directory, never a round — pointing this at one finds nothing and omits the block
+// with no error. Rounds come from task.Rounds, resolved before New so the round being written is not one
+// of its own. It renders no independence instruction; prompt.ComposeOpts appends that.
 func History(taskDir string) (string, error) {
 	names, err := task.Rounds(taskDir)
 	if err != nil {

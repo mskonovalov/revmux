@@ -5,19 +5,16 @@ import (
 	"strings"
 )
 
-// Inline markdown a model writes into a line of prose — a log entry, a finding's title, its location
-// or its attribution. Both spans are common there: paths, identifiers and flags arrive in backticks,
-// and the emphasis a model puts on the one sentence that matters arrives in asterisks. Left raw, the
-// reader sees the punctuation instead of the effect.
+// inline markdown a model writes into a line of prose: paths and flags arrive in backticks, emphasis in
+// asterisks, and left raw the reader sees the punctuation instead of the effect.
 var (
 	mdCode = regexp.MustCompile("`([^`\n]+)`")
 	mdBold = regexp.MustCompile(`\*\*([^*\n]+)\*\*`)
 )
 
-// ANSI rather than lipgloss, deliberately. These are inline spans inside a line that clip() later
-// renders through lipgloss, and a nested lipgloss render ends in a full reset that would clear the
-// enclosing style — the trap .claude/rules/tui.md records. Each sequence therefore closes with the
-// narrow "back to default" code rather than a reset, which is what AgentSpec.Paint does too.
+// ANSI rather than lipgloss: these are inline spans inside a line clip() later renders through
+// lipgloss, and a nested lipgloss render ends in a full reset that clears the enclosing style. Each
+// sequence therefore closes with the narrow "back to default" code rather than a reset.
 const (
 	ansiBoldOn  = "\x1b[1m"
 	ansiBoldOff = "\x1b[22m"
@@ -28,30 +25,19 @@ const (
 )
 
 // heading renders a markdown heading the way the report writes it — "## Major", "### title" — bold and
-// accented, with the hashes kept rather than stripped. Keeping them is deliberate: the pane is showing
-// a markdown document, and a reader who has the report open beside it should see the same thing.
-//
-// Raw ANSI for the same reason markdown is, and closing on the narrow "back to default" codes rather
-// than a reset, which would clear the style of whatever clip() renders around it.
+// accented, with the hashes kept: a reader with the report open beside the pane should see the same.
 func heading(level int, text string) string {
 	return ansiHeadOn + strings.Repeat("#", level) + " " + markdownWithin(text, ansiHeadOn) + ansiHeadOff
 }
 
 // markdown renders the inline markdown in one line of model prose. Block constructs are deliberately
-// not handled: every caller left here holds a single line — a log event, an agent's scrollback row,
-// the browser's title, location and attribution rows, and the document renderer's own per-line
-// fallback. What is a document rather than a line goes to mdRenderer instead.
+// not handled: every caller left here holds a single line. A document goes to mdRenderer instead.
 func markdown(s string) string { return markdownWithin(s, "") }
 
-// markdownWithin renders inline markdown that sits inside an enclosing style, re-opening that style
-// after each span it closes.
-//
-// **Without the re-open, a span inside a heading turns the heading off from that point on.** A heading
-// is bold and accented; a code span closes with "back to default foreground" and emphasis closes with
-// "bold off" — the same two attributes. So `### fix **the** retry budget` rendered its first two words
-// as a heading and the rest as plain text, on the line whose whole job is to be a heading. Passing the
-// enclosing sequence back in is what keeps the nesting honest, and it stays raw ANSI rather than
-// lipgloss for the reason the constants above give.
+// markdownWithin renders inline markdown inside an enclosing style, re-opening that style after each
+// span it closes. Without the re-open a span inside a heading turns the heading off from that point on:
+// a code span closes with "back to default foreground" and emphasis with "bold off", the same two
+// attributes a heading opens with.
 func markdownWithin(s, reopen string) string {
 	s = mdBold.ReplaceAllString(s, ansiBoldOn+"$1"+ansiBoldOff+reopen)
 	return mdCode.ReplaceAllString(s, ansiCodeOn+"$1"+ansiCodeOff+reopen)

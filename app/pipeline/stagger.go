@@ -10,15 +10,9 @@ import (
 )
 
 // stagger releases agents onto the runners and caps how many run at once. The agent at index 0 goes
-// immediately; every other one waits until that leader produces real activity or stagger-delay
-// elapses, whichever comes first.
-//
-// The gate latches open on either path and never re-arms, which is what lets one instance serve every
-// stage: a later stage finds it already open instead of paying another delay to re-prove auth the
-// first stage already proved.
-//
-// It never groups, reorders or filters the roster — releasing is all it does, because roster
-// composition is a review-quality decision.
+// immediately; every other waits until that leader produces real activity or stagger-delay elapses. The
+// gate latches open on either path and never re-arms, which lets one instance serve every stage. It
+// never groups, reorders or filters the roster — roster composition is a review-quality decision.
 type stagger struct {
 	sem  chan struct{}
 	gate chan struct{}
@@ -69,12 +63,9 @@ func (s *stagger) release() {
 	<-s.sem
 }
 
-// leaderStarted opens the gate. Every call after the first is a no-op, so the timer firing after real
-// activity already released the roster costs nothing.
-//
-// The timer is deliberately not stopped here. Stopping it needs the handle, and reading a field the
-// constructor is still writing is a race the timer's own goroutine would win occasionally — a worse
-// bug than one runtime timer left armed for the rest of a one-shot process.
+// leaderStarted opens the gate; every call after the first is a no-op. The timer is deliberately not
+// stopped here — that needs the handle, and reading a field the constructor is still writing is a race
+// worse than one armed timer in a one-shot process.
 func (s *stagger) leaderStarted() { s.once.Do(func() { close(s.gate) }) }
 
 // open reports whether the gate has already latched. An agent arriving after the release must not

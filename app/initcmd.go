@@ -37,12 +37,9 @@ func (c *initCmd) Execute([]string) error { //nolint:unparam // the signature is
 	return nil
 }
 
-// writeInitPaths materializes ./.revmux/ and prints what is in it as JSON. Like the catalog and the
-// scaffolded round it is a carve-out in "stdout belongs to the report": no pipeline, archive or TUI
-// exists yet, so there is nothing for it to collide with.
-//
-// The prompt tree is loaded directly rather than through promptSet: a caller initializing a project has
-// not chosen a --profile yet, and refusing to materialize until he has is backwards.
+// writeInitPaths materializes ./.revmux/ and prints what is in it as JSON, one of the carve-outs in
+// "stdout belongs to the report". The prompt tree is loaded directly rather than through promptSet: a
+// caller initializing a project has not chosen a --profile yet.
 func (o runOpts) writeInitPaths() error {
 	set, err := prompt.Load(o.opts.promptOpts())
 	if err != nil {
@@ -76,14 +73,8 @@ func (o runOpts) writeInitPaths() error {
 
 // materializePrompts writes what each prompt file resolved to through w, leaving one already there
 // untouched. The bytes are the winning file's own, front matter included: a stripped write produces a
-// tree the next prompt.Load rejects, so init would break the project it just initialized.
-//
-// Every write goes through w's root, which is what keeps ./.revmux/ the one place init writes: a
-// symlinked subdirectory under it is refused where it sits rather than followed.
-//
-// A file that cannot be written stops the run with the path named, leaving what was already materialized
-// on disk. The tree is resumed by running init again — every file already there is reported and skipped,
-// so a second call completes exactly what the first did not.
+// tree the next prompt.Load rejects. A file that cannot be written stops the run with the path named,
+// and running init again completes exactly what the first call did not.
 func (o runOpts) materializePrompts(set *prompt.Set, w *treeWriter) ([]initFile, error) {
 	origins := set.Provenance()
 	out := make([]initFile, 0, len(origins))

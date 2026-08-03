@@ -19,12 +19,9 @@ func (c *newCmd) Execute([]string) error { //nolint:unparam // the signature is 
 	return nil
 }
 
-// writeTaskPaths creates the round and prints every path the caller writes to as JSON. Like the catalog
-// it is a carve-out in "stdout belongs to the report": no pipeline, archive or TUI exists yet, so there
-// is nothing for it to collide with.
-//
-// It is the only place revmux creates review context. The review path opens and never creates, so a
-// typo'd --task errors there rather than producing an empty task nobody filled.
+// writeTaskPaths creates the round and prints every path the caller writes to as JSON, one of the
+// carve-outs in "stdout belongs to the report". It is the only place revmux creates review context: the
+// review path opens and never creates, so a typo'd --task errors rather than producing an empty task.
 func (o runOpts) writeTaskPaths() error {
 	paths, err := task.Scaffold(task.Round{TasksDir: o.opts.TasksDir, Task: o.opts.Task, Run: o.opts.Run})
 	if err != nil {

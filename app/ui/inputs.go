@@ -54,10 +54,8 @@ func (m Model) verbatimInput(text string) []string {
 }
 
 // markdownInput renders one input document through glamour, cached per tab and width. It reads the
-// content off the tab rather than taking it: the tab is what names the cache entry, so a caller
-// handing over the two separately can name one tab's entry and fill it with another's. Tab expansion
-// is the renderer's, behind that cache and shared with the findings browser. The pass this runs inside
-// is inputLinesAt's, since a tab holding no markdown is still a pass.
+// content off the tab rather than taking it: the tab names the cache entry, so passing the two
+// separately can name one tab's entry and fill it with another's. The pass is inputLinesAt's.
 func (m Model) markdownInput(tab int) []string {
 	return m.md.lines(mdDoc{key: mdKey("input:" + strconv.Itoa(tab)), src: m.cfg.Inputs[tab].Content, width: m.view.width()})
 }

@@ -6,13 +6,9 @@ import (
 	"strings"
 )
 
-// Runner is one authored `model:` value, resolved. It is the whole runner selection a profile, a roster
-// entry or a stage makes: which binary, which of its models, and how hard it thinks.
-//
-// One field carries all three because the three are not independent. A model names a model *of a
-// binary* — `opus` means nothing to codex — so two fields let a file declare a pairing that cannot run,
-// and every layer that inherits one without the other recreates that pairing. Written together they
-// travel together, and a cascade has one thing to carry.
+// Runner is one authored `model:` value, resolved: which binary, which of its models, and how hard it
+// thinks. One field carries all three because they are not independent — `opus` means nothing to codex,
+// so separate fields let a file declare a pairing that cannot run.
 type Runner struct {
 	Executor string
 	Model    string
@@ -20,16 +16,10 @@ type Runner struct {
 }
 
 // parseRunner reads `<executor>[/<model>][:<effort>]` — `claude`, `claude/opus:high`,
-// `codex/gpt-5.6-sol`, `codex:high`.
-//
-// The executor is mandatory and closed, so the value validates itself: there is no way to write a model
-// without saying whose it is. An omitted model means the binary's own default, written as the binary
-// alone — a trailing slash is rejected rather than accepted as a second spelling of it. An omitted
-// effort falls back through the profile to the binary's.
-//
-// It splits on the **first** slash, so a model whose own name carries one survives, and on the **last**
-// colon, whose suffix must be a real effort rather than being folded into the model name — a typo'd
-// `:hgih` is a load error, not a model nobody notices is wrong.
+// `codex/gpt-5.6-sol`, `codex:high`. The executor is mandatory and closed, so the value validates
+// itself; a trailing slash is rejected rather than accepted as a second spelling of the bare binary.
+// It splits on the first slash, so a model name carrying one survives, and on the last colon, whose
+// suffix must be a real effort — a typo'd `:hgih` is a load error, not part of the model name.
 func parseRunner(s string) (Runner, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {

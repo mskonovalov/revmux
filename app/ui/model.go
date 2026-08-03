@@ -30,15 +30,8 @@ const (
 	chromeLines = 6
 )
 
-// ProgressInterval is how often a tool call earns a line of its own in a log.
-//
-// Neither extreme works. Logging every one buries the model's reasoning under pages of "Read";
-// logging none leaves an agent that opens by reading twenty files looking dead for minutes. One
-// heartbeat every few seconds says the run is alive without competing with the prose, which is never
-// throttled.
-//
-// Exported because the plain renderer in package main throttles on the same cadence. Two constants
-// would drift, and a reviewer switching renderers would get two different ideas of how busy a run is.
+// ProgressInterval is how often a tool call earns a line of its own in a log. Exported because the plain
+// renderer throttles on the same cadence, and two constants would drift.
 const ProgressInterval = 10 * time.Second
 
 // agent states as the status table shows them.
@@ -51,11 +44,8 @@ const (
 	stateDegraded = "degraded"
 )
 
-// ModelConfig is what package main hands the model.
-//
-// Roster is the same resolved slice the plain renderer takes, and it is where agent colors come from:
-// pipeline.Event names the agent and nothing else, so a color picked here would exist in one renderer
-// only and the two would disagree about the same agent.
+// ModelConfig is what package main hands the model. Roster is the same resolved slice the plain renderer
+// takes, and is where agent colors come from — a color picked here would exist in one renderer only.
 type ModelConfig struct {
 	Roster []prompt.AgentSpec
 	Events <-chan pipeline.Event
@@ -84,13 +74,9 @@ type InputDocument struct {
 	Markdown bool
 }
 
-// Model is the bubbletea model: a status table over one focused detail pane.
-//
-// Receivers are mixed on purpose. tea.Model requires value receivers on Init, Update and View, and
-// Update returns the mutated model rather than mutating in place, so those and their render helpers
-// take values while the internal mutators Update calls take pointers. The state sub-structs have no
-// such constraint and are pointer-only, since a value receiver there would copy scrollback on every
-// render.
+// Model is the bubbletea model: a status table over one focused detail pane. Receivers are mixed because
+// tea.Model requires value receivers on Init, Update and View; the state sub-structs are pointer-only,
+// since a value receiver there copies scrollback on every render.
 type Model struct {
 	cfg      ModelConfig
 	style    styles
@@ -175,10 +161,8 @@ func (m Model) Init() tea.Cmd { return m.next() }
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		// only when the width actually moved. Both renderer maps are keyed by width, so a resize already
-		// renders at the new width and this bounds memory rather than fixing anything — while a blanket
-		// drop on every message would throw the cache away on a height-only resize, and maxScroll below
-		// re-renders every document through glamour on the spot.
+		// only when the width actually moved: a height-only resize would otherwise throw the cache away,
+		// and maxScroll below re-renders every document through glamour on the spot
 		if msg.Width != m.view.cols {
 			m.md.reset()
 		}
@@ -213,15 +197,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// complete opens the findings browser over the finished report. The run being over is not a reason
-// to quit: package main writes the report once the reader is done with the terminal, and the agent
-// tabs stay reachable so he can check why a finding was raised.
+// complete opens the findings browser over the finished report. The run being over is not a reason to
+// quit: package main writes the report once the reader is done with the terminal.
 func (m *Model) complete(rep finding.Report) {
 	m.findings = newFindings(rep, m.md)
-	// **the header's count is rebuilt from the report, not left as the last event's.** Two stages after
-	// synthesis change the set without emitting a findings event — verify moves rejected findings into
-	// Immaterial and PreExisting, and --min-confidence filters before the report is handed over — so a
-	// tally fed only by events names severities the browser below it does not list.
+	// rebuilt from the report, not left as the last event's: verify and --min-confidence both change the
+	// set without emitting a findings event
 	m.found = tally{}
 	m.found.add(rep.Findings)
 	m.done = true
@@ -282,8 +263,8 @@ func (m *Model) apply(ev pipeline.Event) {
 		m.count(ev)
 	}
 	if ev.Kind == pipeline.EventAgentProgress {
-		// track has already put this in the status cell, where it belongs. It earns a line only when
-		// the agent has been quiet long enough that the log would otherwise look stalled.
+		// track has already put this in the status cell; it earns a line only once the agent has been
+		// quiet long enough that the log would otherwise look stalled
 		a.note(ev.Text)
 		if !a.due(ev.At) {
 			return
@@ -295,9 +276,8 @@ func (m *Model) apply(ev pipeline.Event) {
 	}
 	a.push(combinedEntry{at: ev.At, text: text})
 	m.combined.push(combinedEntry{agent: a.spec.Name, at: ev.At, text: text})
-	// **any** line counts as life, not just a heartbeat. An agent that narrates steadily — codex
-	// streams a reasoning headline every few seconds — is visibly alive already, so charging it a
-	// tool-call line every interval on top just buries what it is saying under "exec".
+	// any line counts as life, not just a heartbeat: an agent that narrates steadily is visibly alive
+	// already, and a tool-call line every interval on top buries what it is saying
 	a.beat = ev.At
 }
 
@@ -309,8 +289,8 @@ func (m *Model) agent(name string) *agentState {
 	if a := m.find(name); a != nil {
 		return a
 	}
-	// a stage or verify group is not in the roster, so its color comes from prompt.DerivedSpec — this
-	// package never picks one, or the plain --no-tui renderer would color the same agent differently
+	// a stage or verify group is not in the roster, so its color comes from prompt.DerivedSpec, which
+	// both renderers call
 	a := &agentState{spec: prompt.DerivedSpec(name), state: stateRunning}
 	m.agents = append(m.agents, a)
 	return a
@@ -328,9 +308,7 @@ func (m *Model) count(ev pipeline.Event) {
 	m.found.add(ev.Findings)
 }
 
-// tally is the header's findings count broken down by severity. A bare total says how much there is to
-// read and nothing about whether it is worth reading now — one critical among twenty is a different
-// run from twenty minor, and the header is where that difference is cheapest to show.
+// tally is the header's findings count broken down by severity.
 type tally struct {
 	total, critical, major, minor int
 }
@@ -349,9 +327,8 @@ func (t *tally) add(fs []finding.Finding) {
 	}
 }
 
-// String is the same shape the prior-round inventory uses, so a reader meets one vocabulary rather
-// than two. A severity the model invented is counted in the total and named nowhere, which is what
-// keeps the parts from ever exceeding it.
+// String is the same shape the prior-round inventory uses, so a reader meets one vocabulary. A severity
+// the model invented is counted in the total and named nowhere, so the parts never exceed it.
 func (t tally) String() string {
 	return strconv.Itoa(t.total) + " findings (" +
 		strconv.Itoa(t.critical) + " critical, " +
@@ -400,9 +377,8 @@ func (a *agentState) track(ev pipeline.Event) string {
 	case pipeline.EventAgentActivity, pipeline.EventAgentState:
 		a.state, a.last = stateRunning, ev.Text
 	case pipeline.EventAgentProgress:
-		// the one kind that updates the row without writing a line: it is liveness, and the next
-		// tool call replaces it a second later. Returning it would put "Read" in the scrollback
-		// dozens of times and drown the prose the reader is actually there for.
+		// the one kind that updates the row without writing a line: it is liveness, and the next tool
+		// call replaces it a second later
 		a.state, a.last = stateRunning, ev.Text
 		return ""
 	case pipeline.EventAgentDone:
@@ -420,7 +396,7 @@ func (a *agentState) track(ev pipeline.Event) string {
 		a.last = strconv.Itoa(len(ev.Findings)) + " findings emitted"
 		return ""
 	case pipeline.EventDropped:
-		// a log line rather than the status cell, which the done event overwrites a moment later. What
+		// a log line rather than the status cell, which the done event overwrites a moment later: what
 		// synthesis removed is the one thing about the stage the final report cannot be asked
 		return ev.Text
 	case pipeline.EventRateLimit:
@@ -438,8 +414,6 @@ func (a *agentState) due(at time.Time) bool {
 }
 
 // note remembers the newest tool call, which is what the next heartbeat reports.
-// Whichever call lands last before the interval boundary is what the line says, which is the most
-// recent thing the agent was doing.
 func (a *agentState) note(text string) {
 	if text == "" {
 		return
@@ -456,8 +430,7 @@ func (a *agentState) takeNote() string {
 }
 
 // push appends one scrollback entry, dropping the oldest once the pane's budget is spent. It keeps the
-// timestamp and the text apart rather than joined, so the pane can wrap the text under its own column
-// when the terminal is too narrow for it — a joined string cannot be re-split without parsing it back.
+// timestamp and the text apart, since a joined string cannot be re-split without parsing it back.
 func (a *agentState) push(line combinedEntry) {
 	a.lines = append(a.lines, line)
 	if len(a.lines) > scrollbackLimit {
@@ -465,24 +438,12 @@ func (a *agentState) push(line combinedEntry) {
 	}
 }
 
-// runtime is the agent's elapsed time as the status table shows it, measured between event timestamps
-// rather than off a clock so the table renders the same in a test as in a terminal.
 // finished reports whether this agent has reached a state it will not leave.
 func (a *agentState) finished() bool { return a.state == stateDone || a.state == stateDegraded }
 
-// runtime is how long this agent ran: from its own first event to its own last one once it has
-// finished, and to the newest event time anywhere in the run while it is still going.
-//
-// **Both halves matter and the obvious implementation gets one of them wrong.** Measuring against the
-// agent's own last event freezes a running agent's clock the moment it goes quiet — exactly when a
-// reader wants to know how long it has been quiet for. Measuring against the run instead makes a
-// finished agent's elapsed climb for the rest of the run, until every completed row converges on the
-// run's age and a reader can no longer tell the finder that took forty seconds from the one that took
-// four minutes.
-//
-// This still takes no clock. `.claude/rules/tui.md` forbids one here, and the reason holds: the
-// elapsed a reader sees has to be the elapsed the archive recorded, and a clock read in this package
-// would drift from the timestamps the pipeline stamped.
+// runtime is how long this agent ran: from its own first event to its own last one once it has finished,
+// and to the newest event time anywhere in the run while it is still going. Both halves matter and the
+// obvious implementation gets one wrong — see .claude/rules/tui.md. It reads no clock, by the same rule.
 func (a *agentState) runtime(now time.Time) string {
 	end := a.updated
 	if !a.finished() && now.After(end) {

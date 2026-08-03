@@ -39,15 +39,10 @@ type styles struct {
 	dark    bool
 }
 
-// newStyles builds the palette against the surface the frame is actually written to.
-//
-// **The renderer has to be the tty, never the default one.** lipgloss's default renderer profiles
-// termenv.DefaultOutput, which is os.Stdout — and `revmux --task pr-1 > findings.json` is one of the most
-// common invocations, so stdout is a pipe while the reader sits at a terminal watching the run. Left
-// on the default, every style here would render colorless in exactly that case while AgentSpec.Paint
-// kept emitting raw ANSI regardless, and the frame would come out half painted.
-//
-// A nil writer falls back to the default renderer, which is what a test wants.
+// newStyles builds the palette against the surface the frame is actually written to. The renderer has to
+// be the tty: lipgloss's default profiles os.Stdout, which is a pipe whenever the report is redirected,
+// so every style would render colorless while AgentSpec.Paint kept emitting raw ANSI. A nil writer falls
+// back to the default renderer, which is what a test wants.
 func newStyles(w io.Writer) styles {
 	r := lipgloss.DefaultRenderer()
 	if w != nil {
@@ -69,12 +64,9 @@ func newStyles(w io.Writer) styles {
 	}
 }
 
-// countStyle colors the header's findings count by the worst severity in it. A fixed green there reads
-// as a verdict on the run rather than as an accent, and a review that turned up a critical is exactly
-// the run a reader must not skim past. Green is reserved for a count with nothing above minor in it.
-//
-// The bold is applied here rather than carried on the three palette styles, which are also the row
-// states and are not bold.
+// countStyle colors the header's findings count by the worst severity in it. A fixed green reads as a
+// verdict on the run, so green is reserved for a count with nothing above minor. The bold is applied
+// here rather than on the three palette styles, which are also the row states and are not bold.
 func (m Model) countStyle() lipgloss.Style {
 	switch {
 	case m.found.critical > 0:

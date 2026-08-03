@@ -1,10 +1,7 @@
 // Package task owns the task-directory layout: the names every round is built from, the optional
 // task.md metadata file, and the validation a caller-supplied name passes before it becomes a path
-// component.
-//
-// Nothing here reads review context. task.md describes the task itself, so a caller can match an
-// existing task instead of guessing at an id, and revmux stores what it says without ever resolving
-// it — a branch or a base ref is reported back, never fetched.
+// component. Nothing here reads review context, and nothing task.md names is ever resolved — a branch
+// or a base ref is reported back, never fetched.
 package task
 
 import (
@@ -74,11 +71,8 @@ const metaTemplate = `---
 <!-- what this task covers, in prose. revmux reads the front matter above and never this. -->
 `
 
-// Meta is the task.md front matter. Every key is optional, and the anchors let a caller match a task
-// exactly rather than deriving an id that silently forks the history.
-//
-// It carries both yaml and json tags: it is parsed from front matter and marshaled into the
-// `revmux config` payload, where untagged fields would emit `URL` rather than `url`.
+// Meta is the task.md front matter, every key optional. Both yaml and json tags: it is parsed from front
+// matter and marshaled into the `revmux config` payload, where an untagged field emits `URL` not `url`.
 type Meta struct {
 	Description string `yaml:"description" json:"description"`
 	URL         string `yaml:"url" json:"url"`
@@ -116,13 +110,9 @@ func Load(dir string) (Meta, error) {
 	return m, nil
 }
 
-// CheckMarker reads a round's manifest.json from its own directory entry and is the single definition of
-// what the marker means: a regular file with content is a round that ran, an empty one is a claim its run
-// never came back from, and anything else is refused.
-//
-// fi must come from an Lstat. A symlink there is followed by the write that fills the marker in, so the
-// record of this run would truncate whatever it names — and os.Root.Stat resolves a link that lands back
-// inside the root, which is exactly the shape a round directory can hold.
+// CheckMarker is the single definition of what a round's manifest.json means: a regular file with content
+// is a round that ran, an empty one is a claim its run never came back from, anything else is refused.
+// fi must come from an Lstat — os.Root.Stat follows a link landing back inside the round.
 func CheckMarker(path string, fi fs.FileInfo) (ran bool, err error) {
 	if !fi.Mode().IsRegular() {
 		return false, fmt.Errorf("%s is not a regular file: revmux writes this run's record into it, and a link "+
@@ -131,11 +121,8 @@ func CheckMarker(path string, fi fs.FileInfo) (ran bool, err error) {
 	return fi.Size() > 0, nil
 }
 
-// HasRun reports whether dir is a round a review actually completed in.
-//
-// The marker is created empty as the round is claimed and filled in by the finished run, so an empty one
-// is a round still open rather than one of the task's history: listing it would put the round being
-// written into its own inventory. Whether an open round can be re-claimed is CheckReclaim's question.
+// HasRun reports whether dir is a round a review actually completed in. An empty marker is a round still
+// open, and listing it would put the round being written into its own inventory.
 func HasRun(dir string) bool {
 	path := filepath.Join(dir, ManifestFile)
 	fi, err := os.Lstat(path)
@@ -169,13 +156,8 @@ func Rounds(taskDir string) ([]string, error) {
 
 // CheckReclaim refuses re-using a round an interrupted run already wrote artifacts into: anything beside
 // input/ and the marker means a second run would claim two runs' artifacts under one manifest. entries are
-// that round's own directory entries, read by the caller through the handle it holds on the round —
-// archive.New's claim and Scaffold both read them the same way, so `revmux new` and the review path agree
-// about which rounds are still open.
-//
-// Nothing is deleted to make such a round usable: no path that reviews, scaffolds or reports removes
-// anything — `revmux cleanup` is the one command that does, it is asked for by name, and it takes a whole
-// task rather than a round. The caller's own input/ copies across to a new round.
+// that round's own entries, read through the caller's handle on it. Nothing is deleted to make such a
+// round usable — the caller's own input/ copies across to a new round.
 func CheckReclaim(dir string, entries []os.DirEntry) error {
 	leftovers := []string{}
 	for _, e := range entries {
@@ -192,9 +174,8 @@ func CheckReclaim(dir string, entries []os.DirEntry) error {
 		"wrote copies across, and nothing here deletes it", dir, strings.Join(leftovers, ", "), ManifestFile, InputDir)
 }
 
-// Round addresses one round: the tasks root, the task under it, and the round's own name. Scaffold
-// creates the round it names and archive.New opens it, so both take this rather than a joined path —
-// the archive anchors its whole chain at the tasks root instead of reopening a path string by name.
+// Round addresses one round: the tasks root, the task under it, and the round's own name. Scaffold and
+// archive.New both take this rather than a joined path, so each anchors its chain at the tasks root.
 type Round struct {
 	TasksDir string
 	Task     string
@@ -202,8 +183,7 @@ type Round struct {
 }
 
 // Paths is every path a caller writes to, plus the fields Scaffold actually created. Reporting them is
-// what keeps the layout revmux's own detail: the caller fills in what these name instead of composing
-// them from a documented shape that a later change would silently break.
+// what keeps the layout revmux's own detail rather than a shape every caller reproduces.
 type Paths struct {
 	TaskDir  string   `json:"task_dir"`
 	TaskFile string   `json:"task_file"`
@@ -227,20 +207,11 @@ const (
 )
 
 // Scaffold creates the round <TasksDir>/<Task>/<Run> with its input/, and the task directory and task.md
-// above it when they are not there yet. It is idempotent at task level: a second round on an existing
-// task creates only the round, and reports so.
+// above it when absent. It is idempotent at task level, and refuses a round that has already run.
 //
 // It walks down from the tasks root as nested os.Roots and writes through those handles rather than by
-// path, the same way archive.New reads. Checking a path and then writing to it by name are two
-// operations, so a directory swapped for a symlink in between is followed and the whole layout lands
-// wherever it points; a handle keeps referring to the directory the check accepted and refuses any name
-// that leaves it. That also makes `revmux new` and the review path agree by construction rather than by
-// two implementations of one rule.
-//
-// A round that has already run is refused rather than reopened — a filled-in manifest.json is the
-// marker, and the artifacts of a round that went badly are exactly what a later reflection agent reads.
-// An empty one is a claim a run never came back from, and that round is scaffolded again as long as the
-// run left nothing behind, the same way archive.New re-claims it.
+// path: a check on a path and the write that follows it are two operations, and a directory swapped for
+// a symlink in between is followed.
 func Scaffold(opts Round) (Paths, error) {
 	if opts.TasksDir == "" {
 		return Paths{}, errors.New("tasks directory is empty")
@@ -339,13 +310,9 @@ func (p *Paths) openTask(tasksRoot *os.Root, name string) (*os.Root, error) {
 	return r, nil
 }
 
-// openRound creates the round when it is absent and opens it as a root, refusing a symlink outright. A
-// link landing back inside the tasks root is contained and still points every path this reports at another
-// round, whose caller-written input/ the next scope.md overwrites — and archive.New refuses that shape, so
-// scaffolding it would hand back a round the review path can never open.
-//
-// The entry is read again against the open handle, because looking at it and opening it are two
-// operations and a link planted in between is resolved by os.Root whenever it lands back inside the task.
+// openRound creates the round when it is absent and opens it as a root, refusing a symlink outright: a
+// link landing back inside the tasks root is contained and still aliases another round's input/. The
+// entry is read again against the open handle, since looking and opening are two operations.
 func (p *Paths) openRound(taskRoot *os.Root, name string) (*os.Root, error) {
 	err := taskRoot.Mkdir(name, 0o750)
 	switch {
@@ -379,9 +346,8 @@ func (p *Paths) openRound(taskRoot *os.Root, name string) (*os.Root, error) {
 	return r, nil
 }
 
-// makeInput creates the round's input/ when it is absent. It carries the whole review context, so a
-// symlink there aliases this round's context onto another directory — the review path refuses one for
-// exactly that reason.
+// makeInput creates the round's input/ when it is absent. A symlink there aliases this round's whole
+// review context onto another directory, so the review path refuses one too.
 func (p *Paths) makeInput(roundRoot *os.Root) error {
 	err := roundRoot.Mkdir(InputDir, 0o750)
 	if err == nil {
@@ -410,17 +376,9 @@ func (p *Paths) checkRealDir(parent *os.Root, name, path string) error {
 	return nil
 }
 
-// List names every task under root, in the lexical order os.ReadDir returns. An absent tasks root is a
-// clean install rather than a failure to read one, so it has no tasks and is not an error.
-//
-// Which entries are tasks is decided through an os.Root on the tasks root, so this reports exactly what
-// archive.New can open: a task reached through a relative symlink to a sibling is a task a review runs
-// under, and omitting that id is how a caller mints a second one for a task already in flight. A link the
-// archive cannot walk — absolute, or pointing out of the root — is left out for the same reason reversed,
-// since listing it advertises a review that cannot run.
-//
-// It is the single enumerator every caller reads: `revmux config` reports these ids and `revmux stats`
-// aggregates them, and two walks over the tasks root are two chances to disagree about what a task is.
+// List names every task under root, in the lexical order os.ReadDir returns. An absent tasks root has no
+// tasks and is not an error. Which entries are tasks is decided through an os.Root, so this reports
+// exactly what archive.New can open. It is the single enumerator `revmux config` and `revmux stats` read.
 func List(root string) ([]string, error) {
 	out := []string{}
 	entries, err := os.ReadDir(root)
@@ -445,13 +403,9 @@ func List(root string) ([]string, error) {
 	return out, nil
 }
 
-// CheckContained verifies a path resolves to somewhere inside the tasks root: the lexical check on a name
-// cannot see a symlink planted under the root, so a task reached through one is refused rather than read.
-//
-// It applies where a path string is all there is — options.taskDir returns one for the prompt variables
-// and the round inventory to read. Nothing that writes uses it: Scaffold and archive.New walk down as
-// nested os.Roots instead, which contains every hop by construction rather than by a check that a rename
-// between the resolve and the write would defeat.
+// CheckContained verifies a path resolves to somewhere inside the tasks root, which the lexical check on
+// a name cannot do. It applies where a path string is all there is; nothing that writes uses it, since a
+// resolve followed by a write is two operations and the rename in between is the whole attack.
 func CheckContained(root, path string) error {
 	realPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
@@ -468,15 +422,8 @@ func CheckContained(root, path string) error {
 }
 
 // reclaimable refuses a round this run may not take over, reading it through the round's own handle the
-// same way archive.New's claim does — so `revmux new` never hands back a round the review path would
-// refuse, and never refuses one it would accept.
-//
-// A filled marker is a round that ran and is never reused. An empty one was claimed by a run that never
-// came back, and that round is scaffolded again only while nothing else it wrote is still in it. No marker
-// at all means no run ever claimed the round.
-//
-// The entry is read with Lstat: os.Root.Stat follows a link landing back inside the round, so a
-// manifest.json pointing at the caller's own goal.md would read as its size and pass as a round that ran.
+// same way archive.New's claim does. The entry is read with Lstat: os.Root.Stat follows a link landing
+// back inside the round, so a manifest.json aliasing goal.md would read as its size.
 func (p *Paths) reclaimable(roundRoot *os.Root) error {
 	path := filepath.Join(p.RoundDir, ManifestFile)
 	fi, err := roundRoot.Lstat(ManifestFile)
@@ -501,13 +448,9 @@ func (p *Paths) reclaimable(roundRoot *os.Root) error {
 	return CheckReclaim(p.RoundDir, entries)
 }
 
-// writeMeta materializes the commented-out task.md template, leaving one already there untouched: it
-// describes the task, and only the caller knows what he wrote in it.
-//
-// It is the one file Scaffold writes rather than a directory it creates. The entry is read with Lstat —
-// a dangling link is a link, not a missing file — and the create is exclusive through the task's own
-// handle, which refuses a link planted between the look and the write the same way archive.New's claim
-// does, rather than following it to whatever it names.
+// writeMeta materializes the commented-out task.md template, leaving one already there untouched. It is
+// the one file Scaffold writes rather than a directory it creates: the entry is read with Lstat, since a
+// dangling link is a link and not a missing file, and the create is exclusive through the task's handle.
 func (p *Paths) writeMeta(taskRoot *os.Root) error {
 	fi, err := taskRoot.Lstat(metaFile)
 	if err == nil {
@@ -539,11 +482,8 @@ func (p *Paths) writeMeta(taskRoot *os.Root) error {
 	return nil
 }
 
-// CheckName rejects a caller-supplied name before it becomes one path component. It is the single
-// definition of that rule: package main applies it to --task and --run, and app/archive repeats it
-// because Archive is reachable on its own and a round named `..` would write over the caller's input.
-//
-// what is the flag the name came from, so one rule speaks with one vocabulary wherever it is applied.
+// CheckName rejects a caller-supplied name before it becomes one path component, and is the single
+// definition of that rule. what is the flag the name came from, so one rule speaks with one vocabulary.
 func CheckName(what, name string) error {
 	switch {
 	case name == "":
@@ -560,11 +500,8 @@ func CheckName(what, name string) error {
 	return nil
 }
 
-// CheckRoundName is CheckName plus the one entry a round may not be named after, since a round is a direct
-// child of the task directory and shares its namespace with the task's own task.md. A round carrying that
-// name is read as the task's metadata rather than as a round: Load parses it, Rounds skips it, and
-// writeMeta then refuses to write the task's real metadata over a directory. Nothing is overwritten —
-// the round is simply unreachable as one, which is why the name is refused up front instead.
+// CheckRoundName is CheckName plus the one entry a round may not be named after: a round shares the task
+// directory's namespace with task.md, and one carrying that name is unreachable as a round.
 func CheckRoundName(what, name string) error {
 	if err := CheckName(what, name); err != nil {
 		return err

@@ -6,7 +6,11 @@ paths:
   - "app/newcmd.go"
   - "app/initcmd.go"
   - "app/statscmd.go"
+  - "app/cleanupcmd.go"
   - "app/treewriter.go"
+  - "app/artifacts.go"
+  - "app/inputsnapshot.go"
+  - "app/progress.go"
   - "app/archive/**"
 ---
 

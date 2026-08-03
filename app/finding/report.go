@@ -46,18 +46,11 @@ type SourceStat struct {
 	ActualModel    string   `json:"actual_model"`
 	Effort         string   `json:"effort"`
 
-	// Tokens is what the agent's own CLI reported, and **it is not the same quantity across executors —
-	// never compare one executor's number with another's.**
-	//
-	// claude sums input, output, cache reads and cache creation, so it is the run's whole footprint and it
-	// grows with every re-read of a cached prefix. codex is the single number it prints after its
-	// "tokens used" footer, which does not account for cache the same way. In one measured corpus the
-	// claude agents ranged from 0.11M to 7.0M per round on the same roster while the codex peer sat flat
-	// at 0.12-0.17M in every task — that gap is mostly the two definitions, not two costs.
-	//
-	// It is honest per agent and over time for that agent. Ranking agents of different executors by it is
-	// what it does not support, and a reflection agent that does it concludes the codex peer is nearly
-	// free.
+	// Tokens is what the agent's own CLI reported, and it is not the same quantity across executors —
+	// never compare one executor's number with another's. claude sums input, output and both cache
+	// counters; codex prints one number after its "tokens used" footer. In one measured corpus claude
+	// agents ranged 0.11M-7.0M per round while the codex peer sat flat at 0.12-0.17M, which is mostly
+	// the two definitions rather than two costs. It is honest per agent and over time for that agent.
 	Tokens   int  `json:"tokens"`
 	Degraded bool `json:"degraded"`
 }
@@ -71,13 +64,10 @@ type Stats struct {
 	Stages     []StageRun `json:"stages"`
 }
 
-// StageRun is one pipeline stage: how long it took and which runner it was resolved to. The runner
-// fields are a profile's to override, so a finished round cannot say which binary synthesized it
-// unless the stage that ran records it here.
-//
-// They carry the requested triple, never the model that answered: verify fans out into one process
-// per directory, so a single actual model on this entry would be ill-defined the moment two groups
-// fell back differently. The find stage leaves all three empty — its runners are the per-agent rows.
+// StageRun is one pipeline stage: how long it took and which runner it was resolved to. A profile can
+// override that runner, so nothing else in a finished round says which binary synthesized it. The fields
+// carry the requested triple, never the model that answered — verify fans out into one process per
+// directory. The find stage leaves all three empty; its runners are the per-agent rows.
 type StageRun struct {
 	Name       string `json:"name"`
 	DurationMS int64  `json:"duration_ms"`

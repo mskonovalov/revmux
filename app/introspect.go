@@ -41,12 +41,9 @@ type knob struct {
 	Source string `json:"source"`
 }
 
-// profileInfo is a profile, the roster it would dispatch with colors included, and the runner each
-// stage resolves to under it.
-//
-// Stages carries every stage rather than the ones this profile overrides, because a caller comparing
-// profiles would otherwise have to apply the fallback rule himself to learn what actually runs — and
-// this catalog exists so he does not have to reconstruct the resolution.
+// profileInfo is a profile, the roster it would dispatch with colors included, and the runner each stage
+// resolves to under it. Stages carries every stage rather than the overridden ones, so a caller does not
+// apply the fallback rule himself to learn what actually runs.
 type profileInfo struct {
 	Name        string             `json:"name"`
 	Description string             `json:"description"`
@@ -56,9 +53,8 @@ type profileInfo struct {
 }
 
 // stageInfo is one stage prompt as the catalog reports it: its description, plus a runner only when the
-// file itself authored one. The shipped pair author none — which binary reads a stage is the profile's
-// to say — so emitting `"executor": ""` here would put a value outside the vocabulary in front of a
-// caller and read as a fallback that does not exist. What runs is `profileInfo.Stages`.
+// file authored one. The shipped pair author none, so `"executor": ""` would put a value outside the
+// vocabulary in front of a caller. What runs is profileInfo.Stages.
 type stageInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -68,11 +64,8 @@ type stageInfo struct {
 }
 
 // stageRunner is a resolved runner as the catalog reports it — one per stage under a profile, plus the
-// profile's own base. It is a type of its own rather than a stageInfo with the description omitted:
-// sharing one would have to make that field omitempty, and a stage whose file carries no description
-// would then stop emitting the key rather than emitting it empty.
-//
-// Name is omitted on the profile's base runner, which names no stage.
+// profile's own base, where Name is omitted. It is its own type rather than a stageInfo with the
+// description omitted: sharing one needs that field omitempty, which would drop the key when empty.
 type stageRunner struct {
 	Name     string `json:"name,omitempty"`
 	Executor string `json:"executor"`
@@ -87,12 +80,10 @@ type vocabulary struct {
 	Efforts   []string `json:"efforts"`
 }
 
-// pathInfo is where this invocation resolved its directories, plus the tasks that already exist —
-// a --run name collides with an existing round and a caller cannot avoid that blind.
-//
-// TasksError and WorkDirError carry why a field is the raw flag rather than a resolved path. An
-// unreadable tasks root reported as no tasks at all is the same wrong advice an unreported meta_error
-// gives one level down: it reads as "nothing is there" and mints a duplicate id.
+// pathInfo is where this invocation resolved its directories, plus the tasks that already exist — a
+// --run name collides with an existing round and a caller cannot avoid that blind. TasksError and
+// WorkDirError carry why a field is the raw flag: an unreadable tasks root reported as no tasks reads
+// as "nothing is there" and mints a duplicate id.
 type pathInfo struct {
 	TasksDir     string     `json:"tasks_dir"`
 	TasksError   string     `json:"tasks_error,omitempty"`
@@ -103,14 +94,10 @@ type pathInfo struct {
 	Tasks        []taskInfo `json:"tasks"`
 }
 
-// taskInfo is one existing task: its id, what its task.md says about it, and the rounds already
-// recorded under it. This is what a caller model matches an in-flight review against, so an id alone
-// is not enough — without the anchors it cannot tell pr-123 from a near-duplicate it is about to mint.
-//
-// MetaError carries why the anchors are empty when task.md would not parse, and RoundsError why the
-// rounds are empty when the task directory could not be read. The task is still listed either way — one
-// omitted here is one a caller gives a second id to — but an empty field on its own reads as "there is
-// nothing here", which is the opposite advice.
+// taskInfo is one existing task: its id, what its task.md says about it, and the rounds already recorded
+// under it. This is what a caller matches an in-flight review against — without the anchors it cannot
+// tell pr-123 from the near-duplicate it is about to mint. MetaError and RoundsError carry why a field
+// is empty; the task is still listed either way, since one omitted is one a caller gives a second id to.
 type taskInfo struct {
 	ID string `json:"id"`
 	task.Meta
@@ -198,10 +185,9 @@ func (o options) knobs() []knob {
 	return out
 }
 
-// paths resolves the two roots and the working directory, and lists the tasks already under the tasks
-// root. Each part reports its own failure instead of a plausible-looking value: a workdir that would not
-// resolve is a review that dies later, and an unreadable tasks root is not an empty one. An absent tasks
-// root is a clean install and neither.
+// paths resolves the two roots and the working directory, and lists the tasks under the tasks root. Each
+// part reports its own failure instead of a plausible-looking value; an absent tasks root is a clean
+// install rather than a failure.
 func (o options) paths() pathInfo {
 	p := pathInfo{TasksDir: o.TasksDir, ConfigDir: o.layers.user, ProjectDir: o.layers.project,
 		WorkDir: o.WorkDir, Tasks: []taskInfo{}}
@@ -226,16 +212,10 @@ func (o options) paths() pathInfo {
 	return p
 }
 
-// tasks reports every task under the tasks root with the metadata a caller matches on. A task.md that
-// is absent or will not parse leaves the anchors empty rather than hiding the task: the directory is
-// there either way, and a task omitted from this list is one a caller mints a second id for.
-//
-// A parse failure is reported on the entry rather than dropped. Silently empty anchors are how a typo'd
-// key becomes a duplicate task id — the exact failure task.md exists to prevent. Rounds come from
-// task.Rounds, the same enumeration the prior-round inventory is built from.
-//
-// Which ids exist is task.List, the single enumerator `revmux stats` reads too, so the catalog and the
-// aggregate cannot disagree about what a task is.
+// tasks reports every task under the tasks root with the metadata a caller matches on. A task.md that is
+// absent or will not parse leaves the anchors empty and reports meta_error rather than hiding the task:
+// silently empty anchors are how a typo'd key becomes a duplicate id. Rounds come from task.Rounds and
+// ids from task.List, the same enumerations the inventory and `revmux stats` read.
 func (o options) tasks(root string) ([]taskInfo, error) {
 	out := []taskInfo{}
 	names, err := task.List(root)

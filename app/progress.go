@@ -29,11 +29,9 @@ const minCols = 40
 // fallbackCols is what an undetectable terminal gets — a redirected stderr, a pipe, a CI log.
 const fallbackCols = 120
 
-// progress is the plain event renderer, used with --no-tui and whenever the tty cannot be opened.
-// It writes to stderr, never to stdout, which belongs to the report alone.
-//
-// It takes the resolved roster for the same reason the TUI does: the color is on the agent's spec, so
-// a reviewer switching renderers sees the same agent in the same color.
+// progress is the plain event renderer, used with --no-tui and whenever the tty cannot be opened. It
+// writes to stderr, never to stdout. It takes the resolved roster for the same reason the TUI does: the
+// color is on the agent's spec, so both renderers show one agent in one color.
 type progress struct {
 	w       io.Writer
 	roster  []prompt.AgentSpec
@@ -84,18 +82,13 @@ func (pr *progress) run(events <-chan pipeline.Event) {
 	}
 }
 
-// finish closes the log with what the run came to. The pipeline emits no completion event — it signals
-// the end by closing the channel — so without this the last line on stderr is whichever agent finished
-// last, and a reader tailing the log cannot tell a clean finish from a process that died there.
-//
-// It reports the outcome, never the findings: those belong to stdout, and the TUI is the only renderer
-// that may put them on a screen.
-//
-// err is any failure that makes the run's own record unsound — the pipeline's, and the archive's, which
-// the caller folds in. Either prints nothing: a summary saying the review is complete, above the error
-// that says it is not, is the reading this exists to prevent. A report that reached the archive and
-// failed only on its way to stdout is not one of those, and keeps its summary — the review did complete,
-// the round is intact, and the error beneath says only that delivery did not.
+// finish closes the log with what the run came to. The pipeline emits no completion event, so without
+// this the last line on stderr is whichever agent finished last. It reports the outcome, never the
+// findings. err is any failure making the run's own record unsound — the pipeline's, and the archive's —
+// and either prints nothing, since a summary saying the review completed above an error saying it did
+// not is the reading this exists to prevent. A report that reached the archive and failed only on its
+// way to stdout is not one of those and keeps its summary: the round is intact, and the error beneath
+// says only that delivery was not.
 func (pr *progress) finish(rep finding.Report, err error) {
 	if err != nil {
 		return
@@ -121,14 +114,9 @@ func (pr *progress) sourceLine(rep finding.Report) string {
 	return out + ", DEGRADED: " + strings.Join(names, ", ")
 }
 
-// findingLine counts the findings by severity, worst first, and says so in the same words the report
-// does. Only the counts — a finding's text is the report's to carry.
-//
-// A severity outside the three constants is counted under its own name rather than dropped, so the parts
-// always sum to the total. Only the claude path has a schema constraining that vocabulary: codex is
-// handed the same contract as prompt prose, and a run that skips synthesis has nothing downstream to
-// normalize what it answers. app/finding keeps such a value visible for the same reason, and a tally
-// quietly short of its own total is the one way this line could mislead.
+// findingLine counts the findings by severity, worst first, in the same words the report uses. A
+// severity outside the three constants is counted under its own name rather than dropped, so the parts
+// always sum to the total: only the claude path has a schema constraining that vocabulary.
 func (pr *progress) findingLine(rep finding.Report) string {
 	if len(rep.Findings) == 0 {
 		return "no findings"
@@ -171,10 +159,8 @@ func (pr *progress) line(ev pipeline.Event) string {
 	case pipeline.EventAgentActivity, pipeline.EventAgentState:
 		what = ev.Text
 	case pipeline.EventAgentProgress:
-		// throttled rather than printed or dropped. This renderer has no status row, so every tool
-		// call would repeat "Read" for pages and bury the reasoning — but dropping them all leaves an
-		// agent that opens by reading twenty files looking dead, and here there is not even an elapsed
-		// counter to say otherwise. One heartbeat per interval, and prose is never held back.
+		// throttled rather than printed or dropped: this renderer has no status row and no elapsed
+		// counter, so printing every call buries the reasoning and dropping them all looks dead
 		pr.note(ev.Agent, ev.Text)
 		if !pr.due(ev.Agent, ev.At) {
 			return ""
@@ -223,11 +209,8 @@ func (pr *progress) cols() int {
 	return fallbackCols
 }
 
-// prefix is the agent column: the name padded to the widest in the roster and colored, with the
-// column itself doing the separating. An event naming no agent is indented to the same column.
-//
-// Padding is measured on the plain name and applied before painting, because a color sequence has no
-// display width — pad afterwards and each line indents by however many bytes that agent's color takes.
+// prefix is the agent column: the name padded to the widest in the roster and colored. Padding is
+// measured on the plain name and applied before painting, since a color sequence has no display width.
 func (pr *progress) prefix(agent string) string {
 	width := pr.nameWidth()
 	if agent == "" {
@@ -239,25 +222,14 @@ func (pr *progress) prefix(agent string) string {
 	return pr.paint(agent) + strings.Repeat(" ", max(0, width-lipgloss.Width(agent))) + "  "
 }
 
-// minNameWidth is the floor the column holds whatever the roster is called, so the `verify <group>` rows
-// revmux derives fit beside a short one: the focused roster is `bugs` and `codex`, five cells wide, and
-// without a floor those rows start to the right of every agent line.
-//
-// Stage banners need no floor — one carries no agent, so prefix("") indents it to the column by
-// construction whatever the width is.
-//
-// The value covers `verify root`, the no-directories fallback, and a group named after a short
-// directory. A longer one still runs past it, which the nameWidth godoc records: raising the floor to
-// fit the longest possible name would indent every line of every run to pay for the rarest.
+// minNameWidth is the floor the column holds whatever the roster is called, so the derived
+// `verify <group>` rows fit beside a short one — the focused roster is `bugs` and `codex`, five cells.
+// It covers `verify root` and a group named after a short directory; a longer one runs past it.
 const minNameWidth = len("verify root")
 
-// nameWidth is the widest name in the roster, floored so derived names fit, so every line's text starts
-// at one column. Measured in display cells rather than runes, the way the TUI measures it: a CJK or
-// combining-character name is not as many columns wide as it has runes, and the two renderers padding
-// one agent differently is the thing this column exists to avoid.
-//
-// A verify group named after a long directory can still run past it. That is the one ragged case left,
-// and it is preferred to clipping a name the reader uses to match a row against a finding.
+// nameWidth is the widest name in the roster, floored so derived names fit. Measured in display cells
+// rather than runes, the way the TUI measures it, so the two renderers cannot pad one agent differently.
+// A verify group named after a long directory still runs past it, which beats clipping the name.
 func (pr *progress) nameWidth() int {
 	width := 0
 	for _, spec := range pr.roster {

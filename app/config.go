@@ -320,12 +320,10 @@ func (o options) promptSet() (*prompt.Set, error) {
 	return set, nil
 }
 
-// resolveContext stats the round's input/ and returns its absolute paths. Nothing here opens a file:
-// scope emptiness is a size check, so a large scope can never reach a prompt.
-//
-// TaskDir stays the task directory even though every context file now sits two levels below it: it is
-// what archive.History enumerates rounds from, and pointing it at the round finds none and drops the
-// prior-round block from every prompt without an error.
+// resolveContext stats the round's input/ and returns its absolute paths. Nothing here opens a file, so
+// a large scope can never reach a prompt. TaskDir stays the *task* directory even though every context
+// file sits two levels below it: archive.History enumerates rounds from it, and pointing it at the round
+// finds none and drops the prior-round block from every prompt without an error.
 func (o options) resolveContext() (reviewContext, error) {
 	if err := o.checkNames(); err != nil {
 		return reviewContext{}, err
@@ -469,12 +467,9 @@ func (o options) workDir() (string, error) {
 	return dir, nil
 }
 
-// checkNames rejects a task or run name before it is joined into any path. Both are caller-supplied and
-// become filesystem paths, so a separator or a `..` would let revmux write over caller-authored context.
-// task.CheckName is the single definition of that rule; app/archive applies the same one.
-//
-// An omitted --run has no default to fall back on: the round is where the caller's own review context
-// lives, so revmux cannot name one he has not filled.
+// checkNames rejects a task or run name before it is joined into any path, through task.CheckName, the
+// single definition of that rule. An omitted --run has no default: the round is where the caller's own
+// review context lives, so revmux cannot name one he has not filled.
 func (o options) checkNames() error {
 	if err := task.CheckName("--task", o.Task); err != nil {
 		return fmt.Errorf("task directory name: %w", err)
@@ -489,16 +484,10 @@ func (o options) checkNames() error {
 	return nil
 }
 
-// initConfig materializes the commented-out template under ./.revmux/, leaving a customized file alone.
-// It returns the config path so a caller reporting it does not compose the same path a second time.
-//
-// **It reads and writes through tw, the same handle the prompt tree is materialized with, and that is
-// what makes ./.revmux/ the one place init writes rather than the one place it names.** By path this
-// was the last unhardened leaf on the init path: a dangling `config -> ../../elsewhere` had os.ReadFile
-// report the file absent and os.WriteFile then create the target outside the project, and a link to an
-// existing file carrying no `key = value` line was truncated and replaced with the template — while the
-// payload reported `<cwd>/.revmux/config` either way. Hardening the tree and leaving its config beside
-// it is how the same hole came back a level down twice.
+// initConfig materializes the commented-out template under ./.revmux/, leaving a customized file alone,
+// and returns the config path. It reads and writes through tw, the handle the prompt tree is
+// materialized with, which is what makes ./.revmux/ the one place init writes rather than the one it
+// names: by path, a dangling `config -> ../../elsewhere` created the target outside the project.
 func (o options) initConfig(tw *treeWriter, w io.Writer) (string, error) {
 	path := tw.dest(configFileName)
 	data, err := tw.read(configFileName)
@@ -516,12 +505,9 @@ func (o options) initConfig(tw *treeWriter, w io.Writer) (string, error) {
 	return path, nil
 }
 
-// dumpDefaults extracts the embedded prompt tree, skipping every file already present so an edited
-// override is never overwritten.
-//
-// It writes through the same treeWriter `revmux init` does, so one rule decides how a file lands on disk
-// and the two commands cannot diverge in what they refuse. What differs is the layer read — the embedded
-// bytes here, the resolved ones there — and the prose report, which is this command's whole output.
+// dumpDefaults extracts the embedded prompt tree, skipping every file already present. It writes through
+// the same treeWriter `revmux init` does; what differs is the layer read — the embedded bytes here, the
+// resolved ones there.
 func (o options) dumpDefaults(w io.Writer) error {
 	tw, err := newTreeWriter(o.DumpDefaults)
 	if err != nil {

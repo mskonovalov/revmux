@@ -11,13 +11,9 @@ import (
 )
 
 // treeWriter materializes prompt files under one destination directory, skipping whatever is already
-// there. It is the single implementation `revmux init` and `--dump-defaults` both write through: the two
-// differ in which layer they read and in what they report, never in how a file lands on disk.
-//
-// Every write goes through an os.Root on the destination, the way task.Scaffold writes through the tasks
-// root. Joining the path and writing to it contains the last component alone — os.Lstat dereferences every
-// directory above it, so a symlinked subdirectory sends the whole write wherever it points while the paths
-// reported back still name the destination.
+// there. It is the single implementation `revmux init` and `--dump-defaults` both write through. Every
+// write goes through an os.Root on the destination: a joined path contains its last component alone,
+// since os.Lstat dereferences every directory above it.
 type treeWriter struct {
 	dir  string
 	root *os.Root
@@ -79,12 +75,10 @@ func (w *treeWriter) write(relPath string, data []byte) (bool, error) {
 	return true, nil
 }
 
-// checkRegular reports whether relPath is there, refusing anything that is not a regular file.
-//
-// os.Root refuses a link that leaves the destination but follows one landing back inside it, and the
-// read-then-overwrite pair below is the one place that distinction bites: a config symlinked to another
-// file in the tree would be read through the alias and then truncated through it. That is the predicate
-// task.CheckMarker applies to manifest.json, for the same reason.
+// checkRegular reports whether relPath is there, refusing anything that is not a regular file. os.Root
+// refuses a link leaving the destination but follows one landing back inside it, and the
+// read-then-overwrite pair below is where that bites: an aliased config is read and then truncated
+// through the alias.
 func (w *treeWriter) checkRegular(relPath string) (bool, error) {
 	fi, err := w.root.Lstat(relPath)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -118,11 +112,9 @@ func (w *treeWriter) read(relPath string) ([]byte, error) {
 	return data, nil
 }
 
-// replace writes data over relPath, creating it when absent.
-//
-// It is what the config needs and write cannot give it: a config holding no uncommented key is rewritten
-// so an upgrade can move a default nobody set, and that is an O_TRUNC the O_EXCL in write exists to
-// refuse. Prompt files take write instead — one already there is never overwritten at all.
+// replace writes data over relPath, creating it when absent. It is what the config needs and write
+// cannot give it: a comments-only config is rewritten so an upgrade can move a default nobody set, which
+// is the O_TRUNC write's O_EXCL exists to refuse. Prompt files take write instead.
 func (w *treeWriter) replace(relPath string, data []byte) error {
 	if _, err := w.checkRegular(relPath); err != nil {
 		return err

@@ -32,12 +32,9 @@ type manifest struct {
 	Stages     []finding.StageRun   `json:"stages"`
 }
 
-// archiveRun writes the run's own artifacts into the archive. It runs before the report reaches either
-// the findings browser or stdout: a report shown next to a half-written archive reads as complete, and
-// the gap only surfaces when someone tries to audit it.
-//
-// The archived report is the filtered one, byte for byte what the caller was shown, so a later reader
-// sees the round as it was reported. The unfiltered set is still in stages/3-verified.json.
+// archiveRun writes the run's own artifacts into the archive, before the report reaches either the
+// findings browser or stdout. The archived report is the filtered one, byte for byte what the caller was
+// shown; the unfiltered set is still in stages/3-verified.json.
 func (o runOpts) archiveRun(a *archive.Archive, cfg pipeline.Config, rep finding.Report) error {
 	if err := o.writeArtifact(a, task.ReportFile, rep.Markdown); err != nil {
 		return err

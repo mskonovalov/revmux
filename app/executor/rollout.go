@@ -42,14 +42,9 @@ type rolloutPayload struct {
 var cmdPattern = regexp.MustCompile(`"?\bcmd"?\s*:\s*"((?:[^"\\]|\\.)*)"`)
 
 // execTools run a shell command and carry it in the payload, so the name alone reports nothing a reader
-// can act on. A call under one of these whose command cannot be recovered is dropped rather than shown:
-// codex composes some multi-command snippets as a JS array with no `cmd` key at all, and those put a bare
-// "exec" in the activity column for minutes at a time — worse than leaving the previous line standing,
-// which at least names something that happened. Every other tool keeps the name fallback, since
-// "apply_patch" or "update_plan" says what the agent is doing.
-//
-// Liveness does not ride on this. The rollout tail touches the idle timer whenever the file advances,
-// never from the sink, and a codex leader releases the stagger gate on its first raw stdout write.
+// can act on. A call under one of these whose command cannot be recovered is dropped: codex composes some
+// multi-command snippets as a JS array with no `cmd` key, and those left a bare "exec" in the activity
+// column for minutes. Every other tool keeps the name fallback. Liveness does not ride on this.
 var execTools = map[string]struct{}{"exec": {}, "exec_command": {}, "shell": {}}
 
 // sessionID pulls the session id out of one stderr line, or "" when the line is not the banner.
@@ -91,21 +86,13 @@ func (c *Codex) codexHome() string {
 	return filepath.Join(home, ".codex")
 }
 
-// tailRollout follows a codex session's rollout file and reports what the agent is doing.
+// tailRollout follows a codex session's rollout file and reports what the agent is doing. It exists
+// because codex writes nothing to stdout until it answers, and every byte of its reading and reasoning
+// lands here instead; stderr is read for the session id and nothing else.
 //
-// **This exists because codex writes nothing to stdout until it answers.** A review agent spends
-// minutes reading files and reasoning, and every byte of that lands in the rollout — stdout stays
-// empty, so a run watched through stdout alone shows one banner and then nothing at all for the whole
-// review. Its stderr carries the reasoning as prose, but parsing prose is what the rollout exists to
-// spare us; stderr is read for the session id and nothing else.
-//
-// **The file is looked for on every pass, not once at the start, and that is not a refinement.** Codex
-// prints the session id before it creates the rollout — measured at 32ms between the two — so a single
-// glob at the banner loses a race it has no reason to win, and losing it once silenced a codex source
-// for a whole eleven-minute review while the file beside it filled with 28 reasoning records. Giving up
-// there is indistinguishable from a codex that never worked. Nothing is lost by finding it late either:
-// the read starts at offset zero, so a file discovered a poll interval in is still read from its first
-// record.
+// The file is looked for on every pass, not once at the start: codex prints the session id 32ms before
+// it creates the rollout, and a single glob losing that race silenced a codex source for an entire
+// eleven-minute review. Nothing is lost by finding it late, since the read starts at offset zero.
 //
 // Blocks until ctx is done, so the caller runs it in its own goroutine and cancels it once the process
 // has exited AND flushed its last record.
@@ -133,11 +120,9 @@ func (c *Codex) tailRollout(ctx context.Context, sessionID string, sink EventSin
 			}
 		}
 
-		// **liveness is the file advancing, not a record that happens to render.** Touching from the
-		// sink instead ties the watchdog to the display filter: a tool call, a function_call_output, an
-		// event_msg or a reasoning record with an empty summary all move the file without producing an
-		// event, so codex could be demonstrably working and still starve the timer — the same failure
-		// this tail exists to fix, one layer in.
+		// liveness is the file advancing, not a record that happens to render: touching from the sink
+		// ties the watchdog to the display filter, and several record kinds move the file without
+		// producing an event at all
 		next := c.readRollout(path, offset, sink)
 		if next != offset && touch != nil {
 			touch()
@@ -169,13 +154,9 @@ func (c *Codex) readRollout(path string, offset int64, sink EventSink) int64 {
 		return offset
 	}
 
-	// ReadBytes rather than a Scanner, and that is the whole point of this loop. A Scanner strips the
-	// delimiter and cannot say whether the token it returned ended with one, so counting len+1 per
-	// token charges a byte that does not exist yet for the final line — and the final line of a file
-	// being appended to is a partial record most of the time. That both loses the record, since half
-	// an object fails to parse, and leaves the offset past bytes never read, so the completed record
-	// is skipped when it lands. ReadBytes returns the delimiter it found, and returns an error instead
-	// when it did not, which is exactly the boundary this needs.
+	// ReadBytes rather than a Scanner, and that is the whole point of this loop: a Scanner cannot say
+	// whether its token ended with the delimiter, so counting len+1 charges a byte that does not exist
+	// yet for a partial final record — losing that record and skipping the completed one when it lands
 	r := bufio.NewReader(f)
 	var read int64
 	for {
@@ -192,10 +173,8 @@ func (c *Codex) readRollout(path string, offset int64, sink EventSink) int64 {
 }
 
 // rolloutLine turns one rollout record into an event, or nil when it carries nothing worth showing.
-//
-// Reasoning summaries are activity: codex titles each step ("**Planning the diff**"), and that title is
-// the closest thing it has to the prose claude streams. Tool calls are progress, matching claude, so
-// one throttle governs both executors.
+// Reasoning summaries are activity — codex titles each step, the closest thing it has to the prose
+// claude streams — and tool calls are progress, matching claude, so one throttle governs both.
 func (c *Codex) rolloutLine(line []byte) *Event {
 	var ev rolloutEvent
 	if err := json.Unmarshal(line, &ev); err != nil {
@@ -231,12 +210,9 @@ func (c *Codex) rolloutLine(line []byte) *Event {
 	return nil
 }
 
-// rolloutCmd is the command a tool call actually ran. The name alone — "exec_command", "exec" — says
-// only that codex called a tool, which is the same nothing a bare "Read" said on the claude side.
-//
-// The two record shapes carry it differently: a function_call has JSON arguments, a custom_tool_call
-// has a JavaScript snippet where codex composes several calls, so that one is matched rather than
-// parsed. Returns "" when neither yields anything, and the caller falls back to the name.
+// rolloutCmd is the command a tool call actually ran. The two record shapes carry it differently: a
+// function_call has JSON arguments, a custom_tool_call has a JavaScript snippet where codex composes
+// several calls, so that one is matched rather than parsed. Returns "" and the caller falls back.
 func (c *Codex) rolloutCmd(p rolloutPayload) string {
 	if p.Arguments != "" {
 		var args struct {

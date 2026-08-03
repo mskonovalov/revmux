@@ -82,14 +82,10 @@ func (s *inputSnapshotter) optional(file inputFile) ui.InputDocument {
 	return s.file(file)
 }
 
-// context is one document per context file, and **no document at all when the caller supplied none**.
-// An absent context/ is the ordinary case rather than a fact worth a tab: a tab that is always present
-// and always says "not provided" is one a reader learns to skip, which costs more than the ambiguity it
-// removes. Scope is required, so its own tab already proves the snapshot ran.
-//
-// A directory that could not be read, or a symlinked one left untraversed, still gets its document.
-// That is a failure to show what the agents saw rather than an honest absence, and the reader has no
-// other way to learn it.
+// context is one document per context file, and no document at all when the caller supplied none: an
+// absent context/ is the ordinary case, and a tab that always says "not provided" is one a reader learns
+// to skip. A directory that could not be read, or a symlinked one left untraversed, still gets its
+// document — that is a failure to show what the agents saw rather than an honest absence.
 func (s *inputSnapshotter) context(dir string) []ui.InputDocument {
 	if dir == "" {
 		return nil

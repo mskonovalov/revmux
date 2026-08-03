@@ -17,15 +17,9 @@ import (
 )
 
 // CollectStats aggregates every round that ran under the query's tasks root: one entry per task, plus the
-// totals across all of them.
-//
-// Which directories are tasks is task.List and which are rounds is task.Rounds, the same two enumerations
-// `revmux config` reports. Two walks over the tasks root are two chances to disagree about what a task is,
-// and a caller reading both commands would see that disagreement as a task that has no history.
-//
-// A round whose artifacts will not decode is left out rather than folded in half — an interrupted run
-// leaves exactly that — but an unreadable task directory is an error: reported as no rounds it reads as a
-// task nobody reviewed, which is the wrong advice this whole document exists to avoid giving.
+// totals. It enumerates through task.List and task.Rounds, the same two `revmux config` reports. A round
+// whose artifacts will not decode is skipped; an unreadable task directory is an error, since no rounds
+// reads as a task nobody reviewed.
 func CollectStats(q StatsQuery) (Corpus, error) {
 	ids, err := q.tasks()
 	if err != nil {
@@ -45,13 +39,9 @@ func CollectStats(q StatsQuery) (Corpus, error) {
 }
 
 // tasks names the tasks this query covers, narrowed to q.Task when it is set. The narrowed name is looked
-// up in the enumeration rather than joined into a path of its own, so a name that is not one task directory
-// under the root — a separator, a parent hop, a link the archive could not walk — matches nothing and is
-// reported as absent.
-//
-// A tasks root that is not there has no tasks and is not an error: a project that has never run a review is
-// not a failure. Asking for one task by name is different — a typo'd id answered with an empty document
-// reads as a task with no history, so it says so instead.
+// up in the enumeration rather than joined into a path of its own. An absent tasks root has no tasks and
+// is not an error; a --task naming none is, since a typo answered with zeros reads as a task with no
+// history.
 func (q StatsQuery) tasks() ([]string, error) {
 	ids, err := task.List(q.TasksDir)
 	if err != nil {
@@ -67,12 +57,8 @@ func (q StatsQuery) tasks() ([]string, error) {
 }
 
 // collect folds one task's rounds into a single tally. Rounds counts the rounds these numbers were read
-// from, so a round skipped for being unreadable is not one of them: it is the denominator of everything
-// beside it.
-//
-// A skipped round is named in Skipped rather than dropped without a word. Three rounds where five ran is a
-// smaller corpus reading as a whole one, and the numbers a reflection agent then acts on are exactly the
-// ones that shrank.
+// from, so it is the denominator of everything beside it, and a skipped round is named in Skipped rather
+// than dropped without a word.
 func (q StatsQuery) collect(id string) (taskStats, error) {
 	dir := filepath.Join(q.TasksDir, id)
 	rounds, err := task.Rounds(dir)
@@ -91,10 +77,8 @@ func (q StatsQuery) collect(id string) (taskStats, error) {
 		out.add(taskStats{Rounds: 1, Agents: st.agents, Lenses: st.lenses, Stages: st.stages})
 	}
 
-	// what this task costs and when it was last reviewed are not read from a round's findings, so they are
 	// filled after the fold rather than accumulated through it: a round skipped for unreadable artifacts
-	// still occupies the disk it occupies, and leaving it out would understate exactly the task a caller
-	// deciding what to reclaim is looking at
+	// still occupies the disk it occupies
 	size, unread, err := dirSize(dir)
 	if err != nil {
 		return taskStats{}, err
@@ -121,18 +105,15 @@ func newTaskStats(id string) taskStats {
 		Agents: []agentStats{}, Lenses: []lensStats{}, Stages: []stageFlow{}}
 }
 
-// add folds another tally into this one, matching agents, lenses and stages by name and appending a name
-// this one has not seen. Two tasks with different rosters therefore keep every entry of both.
-//
-// It accumulates into the receiver rather than merging two arguments side by side: with two taskStats as
-// parameters the argument order silently decides which ID and Rounds survive, and both readings compile.
+// add folds another tally into this one, matching agents, lenses and stages by name. It accumulates into
+// the receiver rather than merging two arguments: with two taskStats as parameters the argument order
+// silently decides which ID and Rounds survive, and both readings compile.
 func (t *taskStats) add(o taskStats) {
 	t.Rounds += o.Rounds
-	// bytes rather than the reported megabytes: folding rounded values would drift by a tenth per task,
-	// and the totals are what a caller compares against the threshold he set
+	// bytes rather than the reported megabytes: folding rounded values drifts by a tenth per task
 	t.sizeBytes += o.sizeBytes
 	t.SizeMB = mb(t.sizeBytes)
-	// dates are ISO, so the later one is the greater one; the totals' date is the corpus's own last review
+	// dates are ISO, so the later one is the greater one
 	if o.LastRun > t.LastRun {
 		t.LastRun = o.LastRun
 	}
@@ -219,14 +200,13 @@ const (
 	stageReport    = "report"
 )
 
-// eventAgentRetried is the one events.jsonl entry these numbers read. The vocabulary is spelled here rather
-// than imported from app/pipeline: this package reads back what a run wrote, the way History decodes
-// findings.json into a record of its own, and pointing the artifact package at the orchestrator is the whole
-// cost of one string.
+// eventAgentRetried is the one events.jsonl entry these numbers read. It is spelled here rather than
+// imported from app/pipeline, which would point the artifact package at the orchestrator; CLAUDE.md's
+// keep-in-sync list carries the cost.
 const eventAgentRetried = "agent_retried"
 
-// event is the slice of an events.jsonl line these numbers need. The rest of the line is what makes the file
-// large — a findings event carries every finding's body — and none of it is a statistic.
+// event is the slice of an events.jsonl line these numbers need. The rest of the line is what makes the
+// file large — a findings event carries every finding's body — and none of it is a statistic.
 type event struct {
 	Kind  string `json:"kind"`
 	Agent string `json:"agent"`
@@ -273,15 +253,9 @@ func newRoundReader(dir string) *roundReader {
 	}
 }
 
-// read decodes the round's findings artifacts and its event log.
-//
-// stages/1-found.json is the one that must be there: every Raised is counted from it, and a round without
-// one has no review in it to count. The rest are optional — --no-synthesis and --no-verify each write no
-// snapshot for the stage they skip — so survivors come from the last stage snapshot the round actually
-// carries rather than from a fixed name that may never have been written.
-//
-// Anything that is there but will not decode is an error, and the caller skips the whole round: an
-// interrupted run leaves exactly that, and folding half of one in is worse than leaving it out.
+// read decodes the round's findings artifacts and its event log. stages/1-found.json is the one that must
+// be there; the rest are optional, since --no-synthesis and --no-verify each write no snapshot. Anything
+// present that will not decode is an error and the caller skips the whole round.
 func (r *roundReader) read() error {
 	reps, err := r.reports()
 	if err != nil {
@@ -341,11 +315,8 @@ func (r *roundReader) decode(file string) (finding.Report, bool, error) {
 }
 
 // roster records the round's source list: which agents ran, what each carried, what each spent, and which
-// of them degraded. A stage snapshot is a full finding.Report and carries all of it, so manifest.json is
-// not read at all — it holds the same roster and would be a second file to keep in step.
-//
-// Degraded is SourceStatus.DegradedNames rather than the explicit list alone, since that method exists
-// precisely because the two records disagree whenever one is written and the other is not.
+// degraded. A stage snapshot carries all of it, so manifest.json is not read at all. Degraded comes from
+// SourceStatus.DegradedNames, which exists because the two records disagree when one is not written.
 func (r *roundReader) roster(rep finding.Report) {
 	for _, a := range rep.Sources.Agents {
 		r.agent(a.Name).Tokens += a.Tokens
@@ -413,17 +384,9 @@ func (r *roundReader) addFlow(reps []namedReport) {
 	}
 }
 
-// judged counts what a stage did that its In and Out cannot show: findings it moved out of the actionable
-// list into immaterial or pre-existing, and findings it kept but rewrote.
-//
-// It is each stage's own contribution, measured as the growth over the stage before it, so a stage that
-// only carries earlier verdicts forward reports nothing. That is what keeps the `report` entry honest:
-// findings.json still holds every verdict and pre-existing issue verification wrote, and counting them
-// there would report the min-confidence filter as having reclassified what it merely passed through.
-// Growth cannot go negative for the same reason — the filter removes, and removal is In and Out's job.
-//
-// Both stages that judge are covered: synthesis splits out pre-existing issues, verification adds the
-// rest and writes every verdict.
+// judged counts what a stage did that its In and Out cannot show: findings it moved into immaterial or
+// pre-existing, and findings it kept but rewrote. Measured as growth over the stage before it, so the
+// `report` entry does not credit the min-confidence filter with what it merely passed through.
 func (r *roundReader) judged(prev, rep finding.Report) (reclassified, refined int) {
 	grew := func(before, after int) int {
 		if after > before {
@@ -450,18 +413,10 @@ func (r *roundReader) count(rep finding.Report) int {
 	return len(rep.Findings) + len(rep.OpenQuestions) + len(rep.PreExisting) + len(rep.Immaterial)
 }
 
-// readEvents counts the retries the run recorded. An absent events.jsonl is a round that wrote none, not a
-// failure, and a last line an interrupted run never finished is skipped rather than fatal.
-//
-// Only a name this round already tallied is counted — the roster the snapshot recorded, plus the sources
-// its findings were stamped with, which find fills with the executing agent's own name. The stages retry
-// under the same event kind, the synthesis stage emitting one that names itself, and a name nothing ran
-// under would otherwise become a source no roster contains, reported beside the agents that really ran.
-//
-// Lines are read without a size cap: a findings event carries every finding's body, so a fixed scan buffer
-// would silently stop counting partway through a large round. That is also why the kind is looked for in
-// the raw line first — every other event is discarded, and a findings event carries every finding's body
-// through the decoder to reach a field two of a thousand lines can match.
+// readEvents counts the retries the run recorded. An absent events.jsonl is a round that wrote none, and a
+// last line an interrupted run never finished is skipped rather than fatal. Only a name this round already
+// tallied is counted: the stages retry under the same kind, and one naming itself is not a roster agent.
+// Lines are read without a size cap, since a fixed scan buffer would silently stop counting partway.
 func (r *roundReader) readEvents() error {
 	path := filepath.Join(r.dir, task.EventsFile)
 	f, err := os.Open(path) //nolint:gosec // a round revmux itself wrote
@@ -513,9 +468,8 @@ func (r *roundReader) stats() roundStats {
 }
 
 // lastStage is the report survivors are counted from: the last per-stage snapshot the round carries.
-// findings.json is deliberately not one of them — it is what --min-confidence left of the last stage, and
-// counting survivors from it read 9 of 17 on a round whose threshold was not zero, which is exactly the
-// undercount that would have a reflection agent drop a working agent.
+// findings.json is deliberately not one of them — it is what --min-confidence left, and counting
+// survivors there read 9 of 17 on one measured round.
 func (r *roundReader) lastStage(reps []namedReport) finding.Report {
 	for _, rep := range slices.Backward(reps) {
 		if rep.stage != stageReport {
@@ -534,9 +488,9 @@ func (r *roundReader) all(rep finding.Report) []finding.Finding {
 	return append(out, rep.Immaterial...)
 }
 
-// ambiguous reports whether a stage-1 finding's lenses say anything beyond "this agent raised it". The find
-// stage falls back to the agent's whole lens set when the model names no valid lens, so a finding carrying
-// exactly that set from an agent carrying more than one cannot be attributed to either of them.
+// ambiguous reports whether a stage-1 finding's lenses say anything beyond "this agent raised it". find
+// falls back to the agent's whole lens set when the model names no valid lens, so a finding carrying
+// exactly that set from a multi-lens agent cannot be attributed to either.
 func (r *roundReader) ambiguous(f finding.Finding) bool {
 	named := slices.Sorted(slices.Values(f.Lenses))
 	for _, name := range f.Sources {

@@ -40,19 +40,9 @@ func (c *Claude) Run(ctx context.Context, req Request, sink EventSink) (Result, 
 }
 
 // ClaudeNarrationContract asks the model to say what it is doing, and exists because --json-schema
-// otherwise makes it silent.
-//
-// The schema forces every conclusion through a StructuredOutput tool call, so a review agent's text
-// blocks come back all but empty — one or two across a run of fifty tool calls — and a watcher sees a
-// wall of "Read foo.go" with no sign of what is being investigated or why. Codex needs none of this:
-// its reasoning summaries arrive in the rollout, which is where the comparable lines come from.
-//
-// Only with a schema. A schema-less claude call writes its answer as prose already, and asking it to
-// narrate on top would just interleave commentary with the answer.
-//
-// Exported for the same reason CodexOutputContract is: Run appends it after the caller has archived
-// the composed prompt, and an archived prompt missing an instruction the model was given describes a
-// run that did not happen.
+// otherwise makes it silent: the schema forces every conclusion through a StructuredOutput tool call, so
+// text blocks come back all but empty. Only with a schema — a schema-less call writes prose already.
+// Exported for the same reason CodexOutputContract is: Run appends it after the prompt was archived.
 func ClaudeNarrationContract(schema json.RawMessage) string {
 	if len(schema) == 0 {
 		return ""

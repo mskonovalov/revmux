@@ -57,16 +57,9 @@ func (c *Codex) Run(ctx context.Context, req Request, sink EventSink) (Result, e
 	session := make(chan string, 1)
 	errs := newCodexStderr(func(ev Event) { c.emit(sink, ev) }, session)
 
-	// **the rollout is codex's liveness, so it has to reach the watchdog.** Codex writes nothing to
-	// stdout until it answers and streams no reasoning on stderr, so during a long review both pipes
-	// are silent while the rollout fills with the steps it is working through. A watchdog reading only
-	// the pipes kills a healthy run at the idle timeout, retries it into the same wall and degrades the
-	// source that was working — the failure `.claude/rules/executor.md` describes for stdout alone,
-	// reached the same way one stream further out.
-	//
-	// It arrives through an atomic because the tail starts before proc.run exists to hand it over: the
-	// goroutine below blocks on the session id, which only stderr can supply, so by the time anything
-	// is read the touch is long since stored. A nil load simply means no idle timeout is armed.
+	// the rollout is codex's liveness, so it has to reach the watchdog: both pipes stay silent through a
+	// long review while the rollout fills. It arrives through an atomic because the tail starts before
+	// proc.run exists to hand it over. A nil load means no idle timeout is armed.
 	var touch atomic.Pointer[func()]
 	live := func() {
 		if f := touch.Load(); f != nil {
@@ -82,9 +75,8 @@ func (c *Codex) Run(ctx context.Context, req Request, sink EventSink) (Result, e
 		shareTouch: func(f func()) { touch.Store(&f) },
 	}
 
-	// follow the rollout for as long as the process runs. Canceled only after run returns, so the
-	// tailer gets one final pass over the records codex flushed on its way out — the last reasoning
-	// step and the answer both land after the last byte anyone was waiting on.
+	// follow the rollout for as long as the process runs, canceled only after run returns: the last
+	// reasoning step and the answer both land after the last byte anyone was waiting on
 	tailCtx, stopTail := context.WithCancel(context.WithoutCancel(ctx))
 	tailDone := make(chan struct{})
 	go func() {
@@ -97,11 +89,9 @@ func (c *Codex) Run(ctx context.Context, req Request, sink EventSink) (Result, e
 	}()
 
 	res, err := c.run(ctx, req, spec)
-	// **the touch is withdrawn before the tail is stopped, and that order matters.** run stops the idle
-	// timer on its way out, and the tail is still looping until stopTail lands — so its next pass could
-	// otherwise find new bytes and re-arm a timer belonging to a finished run. Suppressing the touch on
-	// the tail's own final pass does not cover this: the pass at the top of the loop has the same
-	// window. Withdrawing it here closes both, and the tail keeps emitting the records it finds.
+	// withdrawn before the tail is stopped, and that order is the fix: run stops the idle timer on its
+	// way out while the tail is still looping, so its next pass could re-arm a finished run's timer.
+	// Suppressing the touch on the tail's own final pass leaves the top-of-loop window open.
 	touch.Store(nil)
 	stopTail()
 	<-tailDone
@@ -129,12 +119,9 @@ func (c *Codex) args(req Request) []string {
 }
 
 // CodexOutputContract is codex's substitute for claude's --json-schema, appended to every prompt Run
-// dispatches. The schema comes off the request so a codex entry running synthesis or verify asks for that
-// stage's shape rather than the finder's.
-//
-// It is exported because Run appends it after the caller has already archived the composed prompt, and an
-// archived prompt missing the one instruction that asks for JSON at all describes a run that did not
-// happen. The caller appends this to what it stores; the text itself stays here, never in a lens file.
+// dispatches. The schema comes off the request, so a codex entry running synthesis or verify asks for
+// that stage's shape. Exported because Run appends it after the caller archived the composed prompt, and
+// an archived prompt missing it describes a run that did not happen.
 func CodexOutputContract(schema json.RawMessage) string {
 	if len(schema) == 0 {
 		return ""
@@ -152,9 +139,8 @@ func (c *Codex) drain(ctx context.Context, r io.Reader, sink EventSink) Result {
 	for ctx.Err() == nil {
 		n, err := r.Read(buf)
 		if n > 0 {
-			// progress, not activity: this fires when codex finally answers, long after the rollout has
-			// been narrating what it is doing, so logging it would append a bare "output" to a log that
-			// already said everything. It still opens the stagger gate, which is all it is for.
+			// progress, not activity: it fires when codex finally answers, long after the rollout has
+			// narrated what it is doing. It still opens the stagger gate, which is all it is for.
 			once.Do(func() { c.emit(sink, Event{Kind: EventProgress, Text: "answering"}) })
 		}
 		if err != nil {
@@ -243,28 +229,18 @@ func newCodexStderr(emit func(Event), session chan<- string) *codexStderr {
 	return &codexStderr{emit: emit, seen: make(map[string]bool), session: session}
 }
 
-// line handles one stderr line: it forwards the resolved model, sandbox and effort once each, keeps the
-// model so the report states what actually ran, counts the tokens the run reported, and records the last
-// CLI diagnostic. Diagnostics are kept separately from stdout because a plan-quota failure arrives here
-// with an empty stdout.
-//
-// The last one wins rather than the first, for the reason count keeps only the final token footer: codex
-// echoes the whole prompt to stderr ahead of anything it reports itself, so the first "error:" line is
-// routinely one the prompt quoted — a lens body, a finding describing an error, a scope excerpt — while
-// the diagnostic codex actually raised is the last thing it prints. Keeping the first reports a failure
-// as the prompt text that echoed, and hands classify a line that can carry a limit pattern the run never
-// hit, which is the contamination the tail bound on Raw exists to prevent on the other stream.
-//
-// The headers go out as EventInfo, never EventActivity: codex prints its banner before it contacts a
-// model, so forwarding them as activity would release a stagger gate the process has proved nothing to.
+// line handles one stderr line: it forwards the resolved model, sandbox and effort once each, counts the
+// tokens the run reported, and records the last CLI diagnostic — a plan-quota failure arrives here with
+// an empty stdout. The last diagnostic wins rather than the first, since codex echoes the whole prompt to
+// stderr ahead of anything it reports itself. The headers go out as EventInfo, never EventActivity: the
+// banner prints before codex has contacted a model, and activity is what releases the stagger gate.
 func (s *codexStderr) line(l string) {
 	s.count(l)
 	if s.diagnostic(l) {
 		s.diag = strings.TrimSpace(l)
 	}
-	// the one thing stderr is mined for beyond the headers: the id that names the rollout file, which
-	// is where codex's actual activity goes. Sent once, non-blocking, so a missing reader cannot stall
-	// the stderr drain and wedge the process behind a full pipe.
+	// the id that names the rollout file, which is where codex's actual activity goes. Sent once,
+	// non-blocking, so a missing reader cannot stall the stderr drain and wedge the process.
 	if !s.sentID && s.session != nil {
 		if id := s.sessionID(l); id != "" {
 			s.sentID = true
@@ -287,15 +263,10 @@ func (s *codexStderr) line(l string) {
 	s.emit(Event{Kind: EventInfo, Text: key + ": " + val})
 }
 
-// count reads the token footer, codex's only report of what a run spent — it has no result event to
-// carry a usage object. The marker and the count are separate lines, so the marker arms the next one and
-// anything that is not a number disarms it again: codex echoes the whole prompt to stderr, and a lens
-// body carrying those two words must not be read as a total.
-//
-// Disarming is not enough on its own, because an echoed prompt can carry the marker and a number on
-// consecutive lines, and a run that then fails never prints the real footer to overwrite it. The footer
-// is the last thing codex prints, so a count with any content after it was echoed rather than reported —
-// which is what total checks once the stream has ended.
+// count reads the token footer, codex's only report of what a run spent. The marker and the count are
+// separate lines, so the marker arms the next one and a non-number disarms it — codex echoes the whole
+// prompt to stderr. Disarming alone is not enough: an echoed prompt can carry both on consecutive lines,
+// which is why total additionally checks that nothing followed the count.
 func (s *codexStderr) count(l string) {
 	t := strings.TrimSpace(l)
 	if t == "" {
@@ -315,9 +286,8 @@ func (s *codexStderr) count(l string) {
 	}
 }
 
-// total is the run's token count, read once stderr has drained. A count something else followed came out
-// of the echoed prompt rather than the footer, so it is dropped instead of reported as a total: a failed
-// run charging itself for whatever number the prompt happened to contain is worse than reporting none.
+// total is the run's token count, read once stderr has drained. A count something else followed came from
+// the echoed prompt rather than the footer, so it is dropped rather than reported.
 func (s *codexStderr) total() int {
 	if !s.atEnd {
 		return 0

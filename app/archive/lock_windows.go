@@ -15,12 +15,9 @@ import (
 // the run's own manifest un-writable through the handle Writer opens.
 const lockOffsetHigh = 1 << 30
 
-// tryLock takes an exclusive lock on f and never waits for one: ok is false when another handle already
-// holds it.
-//
-// The lock belongs to the handle rather than to the process, so a second Archive on the same round is
-// refused even inside one revmux, and windows drops it when the holder dies — which is what makes an
-// abandoned round distinguishable from a live one with nothing to clean up and nothing to delete.
+// tryLock takes an exclusive lock on f and never waits for one. The lock belongs to the handle rather
+// than the process, so a second Archive on the same round is refused even inside one revmux, and windows
+// drops it when the holder dies — which is what tells an abandoned round from a live one.
 func tryLock(f *os.File) (ok bool, err error) {
 	overlapped := &windows.Overlapped{OffsetHigh: lockOffsetHigh}
 	err = windows.LockFileEx(windows.Handle(f.Fd()),

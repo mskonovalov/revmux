@@ -19,9 +19,8 @@ import (
 	gtext "github.com/yuin/goldmark/text"
 )
 
-// mdKey names a cached document. A named type rather than a bare string because lines takes the key
-// and the source next to each other: swapped, they cache under the document text and render the key,
-// which fails silently in the pane instead of at the call.
+// mdKey names a cached document. Named rather than a bare string because lines takes the key and the
+// source next to each other, and swapping them fails silently in the pane instead of at the call.
 type mdKey string
 
 type mdCacheKey struct {
@@ -30,12 +29,8 @@ type mdCacheKey struct {
 }
 
 // mdDoc is one request for a rendered document: what names it, what it says, the pane width it has to
-// fit, and the left pad the pane puts in front of it.
-//
-// The pad is part of the request rather than something the caller applies afterwards because it is
-// part of what is cached. The findings browser re-lays the whole report on every frame and only the
-// pane slices to the visible window, so padding outside the cache is one allocation per line of the
-// report per repaint.
+// fit, and the left pad. The pad is cached with the render, since the browser re-lays the whole report
+// on every frame.
 type mdDoc struct {
 	key    mdKey
 	src    string
@@ -44,20 +39,15 @@ type mdDoc struct {
 }
 
 // mdCacheEntry is one rendered document: its pane lines, the bytes they hold, and the frame that last
-// asked for it. The frame stamp is what eviction reads, and the reason it is here rather than derived
-// is that a pane asks for its documents one at a time — nothing else knows which of them belong
-// together.
+// asked for it. The frame stamp is what eviction reads.
 type mdCacheEntry struct {
 	lines []string
 	size  int
 	frame uint64
 }
 
-// mdRenderer turns markdown documents into pane lines through glamour.
-//
-// One glamour renderer per width, because WithWordWrap bakes the width in and two panes ask for two
-// different widths — a single renderer rebuilt on every width change would thrash on every keypress
-// that switches panes.
+// mdRenderer turns markdown documents into pane lines through glamour. One glamour renderer per width,
+// since WithWordWrap bakes the width in and two panes ask for two different widths.
 type mdRenderer struct {
 	style     ansi.StyleConfig
 	profile   termenv.Profile
@@ -68,9 +58,8 @@ type mdRenderer struct {
 	frame     uint64 // the layout pass in progress, stamped onto every entry it touches
 }
 
-// newMDRenderer takes the two terminal facts the renderer needs. Both are read from the same lipgloss
-// renderer newStyles builds against the tty, so the document panes and the frame never disagree about
-// what the terminal can do.
+// newMDRenderer takes the two terminal facts the renderer needs, both read from the lipgloss renderer
+// newStyles builds against the tty, so the panes and the frame agree about what the terminal can do.
 func newMDRenderer(profile termenv.Profile, dark bool) *mdRenderer {
 	return &mdRenderer{
 		style:   mdStyle(dark),
@@ -87,23 +76,8 @@ func newMDRenderer(profile termenv.Profile, dark bool) *mdRenderer {
 }
 
 // mdStyle picks glamour's base style for the terminal's background, puts h1's markdown hash back and
-// takes the padding off an inline code span.
-//
-// glamour renders h1 as a padded band with a background instead of a prefix, which breaks the rule
-// that a pane shows the same heading a reader sees in the file open beside it — h2 and h3 keep their
-// hashes, so the rule would break at exactly one level. Restoring the prefix also drops a purple band
-// that has nothing to do with this palette.
-//
-// **The foreground goes with the band.** Both of glamour's styles spell h1 as a pale yellow (228) on
-// that purple, which is legible only against it: dropping the band alone leaves near-white text on a
-// light terminal's white. Cleared, h1 inherits the document's own color and is marked by its bold and
-// its hash, exactly as h2 and h3 are.
-//
-// **An inline code span is padded the same way, and it reads as a double space.** Its prefix and
-// suffix are a space each, rendered in the span's own style, so the pad only shows as a chip where
-// that background stands out from the pane. Against 236 on the palette this pane uses it does not, and
-// what is left beside the space the prose already carries is a gap twice as wide as every other. The
-// color stays: it is what marks the span once the pad is gone.
+// takes the padding off an inline code span. The h1 foreground must be cleared along with the band:
+// both glamour styles spell it as 228, legible only against the purple that goes with it.
 func mdStyle(dark bool) ansi.StyleConfig {
 	s := gstyles.LightStyleConfig
 	if dark {
@@ -119,57 +93,23 @@ func mdStyle(dark bool) ansi.StyleConfig {
 }
 
 // mdMaxCache is the rendered-byte threshold at which a closing pass drops what it did not read. It is
-// not a ceiling: the pass's own working set stays whatever it comes to, so the cache sits above this
-// value for as long as one pane holds that much.
-//
-// Without a threshold at all the cache only ever shrinks on a width change, so at a stable width it
-// grows for as long as the reader keeps opening things. mdMaxDoc bounds one document and not the sum:
-// the snapshotter admits 128 context files, every non-empty markdown one of them at or under mdMaxDoc
-// takes the document path, and a rendered document runs many times its source — so the markdown tabs
-// of one snapshot alone can retain an order of magnitude more than the snapshot itself.
-//
-// There is nothing here worth an LRU: a miss costs one render of one document, and the entries worth
-// keeping are the ones the closing pass read. evict draws that line.
+// not a ceiling: the pass's own working set stays whatever it comes to.
 const mdMaxCache = 32 << 20
 
-// beginFrame opens a layout pass, and endFrame closes it, evicting what that pass did not read if the
-// cache has gone past mdMaxCache.
-//
-// **A pass is one pane laid out whole, and every pane runs one — not only the two that render
-// documents.** reviewPaneLines and inputLinesAt are where the pair is called, so the log panes, an
-// agent's scrollback, a verbatim file and an empty tab all open a pass and read nothing. Scoping it to
-// the document renderers instead leaves the browser's own entries looking current for as long as the
-// reader stays on a log, with no boundary coming to sweep them. A pane is sometimes laid out twice for
-// one repaint, since maxScroll measures it by building it; a pass that measured a pane is as complete
-// as one that drew it, so each is its own.
-//
-// **The two are separate calls because a pass has to be swept at its own end, not at the next one's
-// start.** Evicting on the way in keeps whatever the previous pass read, so the first log layout after
-// a report retains the whole report and only a second one would drop it — and a second layout is not
-// something to rely on: after a completed run with no auto-exit, a keypress can be the last message
-// the model sees. Sweeping on the way out drops it during that first layout instead.
+// beginFrame opens a layout pass. Every pane runs one, not only the two that render documents — see
+// .claude/rules/tui.md, where scoping it narrower is recorded as a retention bug nothing reports.
 func (r *mdRenderer) beginFrame() { r.frame++ }
 
-// endFrame is the only place the bound evicts anything — reset is the other way an entry leaves, and
-// it drops the whole cache on a width change rather than weighing it against mdMaxCache. It is
-// deferred by each pane entry point, so a pane that returns early is still a closed pass.
-//
-// **Eviction belongs at a pass boundary rather than at an insertion.** A pass is not made of inserts:
-// the browser re-lays the same report on every repaint, so a pass that narrows the filter to findings
-// already rendered is entirely cache hits, and one whose filter matches nothing asks for no document
-// at all. Neither reaches an insert, so a cache left over the bound would sit there until some
-// unrelated miss.
+// endFrame closes a layout pass and is the only place the bound evicts anything. It is deferred by each
+// pane entry point, so a pane that returns early is still a closed pass.
 func (r *mdRenderer) endFrame() {
 	if r.cached > mdMaxCache {
 		r.evict()
 	}
 }
 
-// lines renders one document to pane lines, caching by key and width. The width in the key is the
-// pane's, and the document is rendered into what is left of it once the pad is taken off.
-//
-// A hit is restamped with the current frame, which is how a pass tells eviction what it read. That is
-// all it says: the next pass may narrow a filter, or belong to another pane and read none of it.
+// lines renders one document to pane lines, caching by key and width. A hit is restamped with the
+// current frame, which is how a pass tells eviction what it read.
 func (r *mdRenderer) lines(d mdDoc) []string {
 	ck := mdCacheKey{key: d.key, width: d.width}
 	if e, ok := r.cache[ck]; ok {
@@ -197,16 +137,9 @@ func (r *mdRenderer) lines(d mdDoc) []string {
 	return out
 }
 
-// evict drops every entry the pass that has just ended did not ask for, and keeps every entry it did.
-// Only endFrame calls it, and only over the bound.
-//
-// **That pass's own working set is the floor, and it may carry the cache past mdMaxCache.** Neither
-// the number of findings nor the length of one body is bounded, so a report whose rendered bodies and
-// fixes come to more than the threshold is reachable — and dropping one of its entries drops one the
-// next pass asks for immediately, since the browser re-lays the whole report on every repaint.
-// Cleared whole, that report re-renders in full on every frame, keypress and scroll, which is the
-// browser becoming unusable rather than a slow first paint. One pane's working set is bounded by that
-// pane's own content; re-rendering it forever is bounded by nothing.
+// evict drops every entry the pass that has just ended did not ask for. The closing pass's own working
+// set is the floor and may carry the cache past mdMaxCache: dropping an entry it still uses re-renders
+// that entry on every repaint.
 func (r *mdRenderer) evict() {
 	for k, e := range r.cache {
 		if e.frame == r.frame {
@@ -217,36 +150,14 @@ func (r *mdRenderer) evict() {
 	}
 }
 
-// mdMaxDoc caps the source a document render is attempted on, in bytes.
-//
-// The ceiling exists because glamour's cost is structural rather than content-dependent: its Document
-// style carries a color, so every emitted row is padded to the wrap width with one SGR pair per
-// trailing space, and the output runs 2x to 80x the source. The render is synchronous on the
-// bubbletea goroutine, and the result is held by the lines cache — so a large input both stalls
-// Update, during which the pipeline's event channel drops, and is then retained.
-//
-// The value is measured against this package's own style at width 100. Fenced code and tables are the
-// worst class: 64 KiB of it renders in ~110ms into ~3.4 MB, 1 MiB into ~2.8s and ~84 MB. The
-// snapshotter allows 1 MiB per file, so without a cap here that limit alone permits the second case.
-// 64 KiB keeps the worst case to roughly one dropped frame, and leaves every realistic review input —
-// a scope, a goal, a diff excerpt, this repo's own 53 KiB README — on the document path.
+// mdMaxDoc caps the source a document render is attempted on, in bytes. Measured against this package's
+// style at width 100, with fenced code and tables the worst class: 64 KiB renders in ~110ms into ~3.4 MB,
+// 1 MiB into ~2.8s and ~84 MB.
 const mdMaxDoc = 64 << 10
 
-// render is the uncached path, and the one place tabs are expanded — behind the cache, so a large
-// document pays for it once, and on every caller's behalf, so no pane can forget it. A tab is one
-// cell to lipgloss and up to eight to the terminal, which is what lets an unexpanded row escape the
-// frame; a tab-indented snippet inside a fence is the common case, since that is how a model writes
-// Go. It expands at mdTabStop rather than the terminal's stop for the reason recorded on the two
-// constants, and per line because expandTabs never resets its column on a newline.
-//
-// It is also where the raw HTML a model never meant as HTML is escaped — see escapeHTML — so the two
-// paths agree on what text survives.
-//
-// A source over mdMaxDoc, a construction failure or a render failure all fall back to the inline
-// renderer, which is the same one the log panes use — so an oversized input is still fully readable
-// markdown, one line at a time, rather than blank or truncated. The oversized case is decided before
-// anything is split or expanded: the ceiling exists to keep a large document off the costly path, and
-// preparing it first would charge the whole cost to exactly the input that is not going to use it.
+// render is the uncached path, and the one place tabs are expanded — per line, because expandTabs never
+// resets its column on a newline. A source over mdMaxDoc, a construction failure or a render failure all
+// fall back to the inline renderer, so an oversized input stays readable rather than blank or truncated.
 func (r *mdRenderer) render(src string, width int) []string {
 	if len(src) <= mdMaxDoc {
 		if tr := r.build(width); tr != nil {
@@ -263,18 +174,13 @@ func (r *mdRenderer) render(src string, width int) []string {
 }
 
 // mdEscaper turns the three characters that make a span parse as raw HTML into the entities that
-// survive the sanitizer. Ampersand first is what a single-pass replacer gives for free: it never
-// revisits what it has written, so an ampersand already in the text is escaped once.
+// survive the sanitizer. Ampersand must come first: a single-pass replacer never revisits what it has
+// written, so an ampersand already in the text is escaped once.
 var mdEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 
-// joinTightListLines turns a soft line break into a space before glamour sees it.
-//
-// glamour emits one as a literal newline, and only a paragraph takes it back out — `ParagraphElement`
-// wraps with `KeepNewlines` false. A list item's block goes straight to `x/ansi.Wordwrap`, which keeps
-// it, so in a semantic-line-break document every bullet continuation starts its own row.
-//
-// The breaks come from a parse, like `escapeHTML`'s spans: a newline in a fence or a table is content.
-// A hard break is deliberate and stays.
+// joinTightListLines turns a soft line break into a space before glamour sees it, since a list item's
+// block keeps the newline where a paragraph's does not. The breaks come from a parse, never a scan: a
+// newline in a fence or a table is content. A hard break is deliberate and stays.
 func (r *mdRenderer) joinTightListLines(src string) string {
 	if !strings.Contains(src, "\n") {
 		return src
@@ -319,15 +225,9 @@ func (r *mdRenderer) joinTightListLines(src string) string {
 }
 
 // inPlainListItem reports whether t sits in a list item or a tight definition description that no
-// blockquote encloses.
-//
-// The scope is the whole safety of the rewrite. A blockquote's continuation opens with `>`, which is
-// syntax rather than indent, so joining across it splices that marker into the text and the pane shows
-// a character the document does not have. A continuation is otherwise indent, which splices nothing.
-//
-// The two admitted containers are the ones whose block skips `ParagraphElement`, which is what would
-// have replaced the newline with a space: a tight definition description is a `TextBlock`, like a tight
-// list item. Everywhere else glamour joins the break itself.
+// blockquote encloses. The scope is the whole safety of the rewrite and has been wrong in both
+// directions: too wide splices a blockquote's `>` into the text, too narrow leaves a container ragged.
+// Anything added to the switch needs both a joined and a blockquoted case in the test.
 func (r *mdRenderer) inPlainListItem(t *gast.Text) bool {
 	inItem := false
 	for n := gast.Node(t); n != nil; n = n.Parent() {
@@ -360,24 +260,9 @@ func (r *mdRenderer) softBreakEnd(src string, from int) (int, bool) {
 	return i, true
 }
 
-// escapeHTML entity-escapes exactly the spans goldmark reads as raw HTML, so glamour prints them
-// instead of deleting them.
-//
-// glamour hands every raw-HTML node to a bluemonday StrictPolicy, which strips it whole and leaves
-// nothing in its place. CommonMark reads `<task>`, `<T>` and `<binary>` as raw HTML, so a path
-// template or a type parameter written into a finding body or a caller's scope.md disappears
-// mid-sentence with no marker that anything was there — the inline path keeps that text verbatim, and
-// a forensic pane silently dropping it is worse than clipping it.
-//
-// **The spans come from a parse, not from a scan for angle brackets.** Escaping every `<` would reach
-// into fenced and indented code, where an entity is literal text and `&lt;` is what a reader would
-// see; it would also break autolinks and, escaping `>` with it, blockquotes. A raw-HTML node is none
-// of those by construction: goldmark has already decided that a code span, a code block, an autolink
-// and a blockquote marker are not it.
-//
-// Escaping makes glamour reparse the span as text rather than HTML, so an HTML *block* no longer
-// swallows the lines under it. That changes the block structure of exactly the input whose lines are
-// invisible today, and in the direction of showing them.
+// escapeHTML entity-escapes exactly the spans goldmark reads as raw HTML, so glamour's bluemonday
+// StrictPolicy prints them instead of deleting them. The spans come from a parse, never a scan for
+// angle brackets: escaping every `<` reaches into code, autolinks and blockquote markers.
 func (r *mdRenderer) escapeHTML(src string) string {
 	if !strings.Contains(src, "<") {
 		return src
@@ -430,11 +315,9 @@ func (r *mdRenderer) escapeHTML(src string) string {
 	return out.String()
 }
 
-// inline renders a document through the one-line-at-a-time path, expanding each line's tabs as it
-// reaches it. **No element it returns carries an embedded newline**, which is what the pane model
-// addresses a document by — Wrap over a whole document returns a single element with newlines inside
-// it whenever the longest line already fits, so this goes line by line. A source line too wide for
-// the pane still becomes several elements.
+// inline renders a document through the one-line-at-a-time path. No element it returns carries an
+// embedded newline, which is what the pane model addresses a document by — Wrap over a whole document
+// returns one element with newlines inside it whenever the longest line already fits.
 func (r *mdRenderer) inline(src string, width int) []string {
 	out := []string{}
 	for line := range strings.SplitSeq(src, "\n") {
@@ -443,15 +326,9 @@ func (r *mdRenderer) inline(src string, width int) []string {
 	return out
 }
 
-// build gets or creates the renderer for width. It returns nil rather than an error because every
-// caller treats a construction failure as "fall back" rather than propagating it — and it returns nil
-// for a width below one before glamour is asked for anything, which is the only nil a caller can
-// bring about and therefore the branch that makes the fallback reachable outside a forced failure.
-//
-// The style is always explicit: glamour reads os.Stdout and the terminal's background only on its
-// AutoStyle path, and stdout is a pipe whenever the report is redirected. There is no color-profile
-// option to pass — v2's renderer is pure and emits the style's colors as written, which is what
-// downsample exists to correct.
+// build gets or creates the renderer for width, returning nil where every caller falls back. The style
+// is always explicit: glamour reads os.Stdout and the terminal's background on its AutoStyle path, and
+// stdout is a pipe whenever the report is redirected.
 func (r *mdRenderer) build(width int) *glamour.TermRenderer {
 	if width < 1 {
 		return nil
@@ -470,12 +347,9 @@ func (r *mdRenderer) build(width int) *glamour.TermRenderer {
 	return tr
 }
 
-// downsample rewrites a rendered document's colors into what the terminal can show.
-//
-// glamour v2 dropped the color-profile option: its renderer is pure and emits the style as written.
-// Every other color here goes through the profile `newStyles` read off the tty, so without this the
-// document panes would be the one thing ignoring it. Before `trim`, so the cached lines are the bytes
-// the terminal receives.
+// downsample rewrites a rendered document's colors into what the terminal can show, since glamour v2
+// dropped the color-profile option and emits the style as written. Runs before trim, so the cached
+// lines are the bytes the terminal receives.
 func (r *mdRenderer) downsample(out string) string {
 	p := colorprofile.TrueColor
 	switch r.profile {
@@ -497,12 +371,9 @@ func (r *mdRenderer) downsample(out string) string {
 	return buf.String()
 }
 
-// trim splits a rendered document into pane lines, drops the blank lines glamour brackets a document
-// with, and hard-wraps whatever is still too wide — a long line inside a fence is not wrapped by
-// glamour, and clipping it would cut the tail of exactly the line worth reading.
-//
-// The document margin is left alone: glamour already deducts it from the wrap width, and stripping it
-// would cut into a code row that opens with a background sequence.
+// trim splits a rendered document into pane lines, drops the blank lines glamour brackets it with, and
+// hard-wraps whatever is still too wide, since glamour does not wrap a long line inside a fence. The
+// document margin is left alone: stripping it cuts into a code row opening with a background sequence.
 func (r *mdRenderer) trim(out string, width int) []string {
 	lines := strings.Split(out, "\n")
 	start, end := 0, len(lines)
@@ -524,9 +395,8 @@ func (r *mdRenderer) trim(out string, width int) []string {
 	return res
 }
 
-// reset drops the renderers and the cache, bounding memory by the widths in use rather than by every
-// width the terminal has ever been. It is not a correctness mechanism: both maps are keyed by width,
-// so a resize renders at the new width without it.
+// reset drops the renderers and the cache, bounding memory by the widths in use. It is not a
+// correctness mechanism: both maps are keyed by width, so a resize renders correctly without it.
 func (r *mdRenderer) reset() {
 	r.renderers = make(map[int]*glamour.TermRenderer)
 	r.cache = make(map[mdCacheKey]mdCacheEntry)

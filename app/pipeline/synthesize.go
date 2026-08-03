@@ -28,9 +28,8 @@ type synthesizer struct {
 }
 
 // synthesized is the wire shape of one merged finding: a Finding plus the ids of the inputs it came
-// from. Go derives sources and lenses from those ids, so no schema needs to expose sources — a field
-// the model can fill is a field it will fill, and one agent naming itself twice is the
-// self-corroboration the confidence boost would count as agreement.
+// from. Go derives sources and lenses from those ids, so no schema exposes sources — a field the model
+// can fill is a field it will fill.
 type synthesized struct {
 	finding.Finding
 	MergedIDs []string `json:"merged_ids"`
@@ -87,10 +86,9 @@ func (s *synthesizer) all(sources []sourceResult) []finding.Finding {
 	return out
 }
 
-// dispatch runs the stage, retrying once when the first attempt did not deliver. This is a single
-// call standing between every finder's completed work and the report, so a transient failure must not
-// discard it — the same reason find retries an agent before degrading it. A second failure still
-// fails the run, because an unmerged report nobody asked for is worse than a loud error.
+// dispatch runs the stage, retrying once when the first attempt did not deliver: this is a single call
+// standing between every finder's completed work and the report. A second failure fails the run, since
+// an unmerged report nobody asked for is worse than a loud error.
 func (s *synthesizer) dispatch(ctx context.Context, stage *prompt.Stage, text string) (executor.Result, error) {
 	spec := RunnerSpec{Executor: stage.Executor, Model: stage.Model, Effort: stage.Effort}
 	req := executor.Request{
@@ -116,17 +114,10 @@ func (s *synthesizer) dispatch(ctx context.Context, stage *prompt.Stage, text st
 	return executor.Result{}, fmt.Errorf("synthesis stage: %w", fault)
 }
 
-// fault judges one attempt. Anything that left the stage without structured output is what a retry
-// would be attempting to survive. A stall or a rate limit that nonetheless carried output is not one:
-// that payload only exists once the terminal result event has been read, so the merge is whole.
-//
-// Output that arrived but is not a merge — malformed, or an object of some other shape — is not one
-// either. The stage delivered, so parse rejects it and the run fails rather than paying for a second
-// call that returns the same reply.
-//
-// Output present therefore settles it before the exit code is consulted at all. A watchdog kill reaps
-// the process by signal, so a stalled-but-complete attempt exits -1 and checking the code first would
-// retry the very merge this carve-out exists to keep — and fail the run on a second stall.
+// fault judges one attempt. Anything that left the stage without structured output is what a retry would
+// be attempting to survive; a stall or a rate limit that nonetheless carried output is not, since that
+// payload only exists once the terminal result event has been read. Output present settles it before the
+// exit code is consulted at all — a watchdog kill reaps by signal, so a complete attempt exits -1.
 func (s *synthesizer) fault(res executor.Result, err error) error {
 	switch {
 	case err != nil:
@@ -252,11 +243,8 @@ func (s *synthesizer) parse(raw json.RawMessage,
 	return rep, s.unclaimed(inputs, claimed), nil
 }
 
-// unclaimed is every input finding no output took: what synthesis dropped rather than merged.
-//
-// attribute binds each input to at most one output and errors on a second claim, so claimed is exact
-// and this needs no comparison of its own. It is returned rather than emitted from here because parse
-// is otherwise pure, and a parse that reaches the event channel cannot be unit-tested without one.
+// unclaimed is every input finding no output took: what synthesis dropped rather than merged. attribute
+// errors on a second claim, so claimed is exact. It is returned rather than emitted so parse stays pure.
 func (s *synthesizer) unclaimed(inputs map[string]finding.Finding, claimed map[string]bool) []finding.Finding {
 	out := make([]finding.Finding, 0, len(inputs))
 	for id, f := range inputs {
@@ -270,16 +258,9 @@ func (s *synthesizer) unclaimed(inputs map[string]finding.Finding, claimed map[s
 	return out
 }
 
-// reportDropped announces what synthesis removed rather than merged.
-//
-// It is the pipeline's largest filter by a wide margin and was the only one silent about it: across one
-// archived corpus it removed 58 findings where verify removed 2, and three of the 58 were critical. The
-// drop rule is deliberate — a weak singleton nobody corroborated is meant to go — but a critical leaving
-// the run unremarked is indistinguishable from one no agent ever raised, and only a hand-diff of two
-// stage snapshots could tell them apart.
-//
-// The event carries the findings themselves, so events.jsonl answers which ones without reference to any
-// other artifact.
+// reportDropped announces what synthesis removed rather than merged — the pipeline's largest filter by a
+// wide margin: across one archived corpus it removed 58 findings where verify removed 2, three of them
+// critical. The event carries the findings themselves, so events.jsonl answers which ones on its own.
 func (s *synthesizer) reportDropped(dropped []finding.Finding) {
 	if len(dropped) == 0 {
 		return
@@ -297,25 +278,14 @@ func (s *synthesizer) reportDropped(dropped []finding.Finding) {
 	s.emit(Event{Kind: EventDropped, Agent: stageSynthesis, Text: text, Findings: dropped})
 }
 
-// attribute derives sources and lenses from the merged input ids, discarding whatever the model put
-// in either field. A merged id that is not an input is a hard error rather than a skip: it means the
-// model invented one, and dropping it quietly produces a finding with fewer sources than it earned.
+// attribute derives sources and lenses from the merged input ids, discarding whatever the model put in
+// either field. A merged id that is not an input is a hard error: dropping it quietly produces a finding
+// with fewer sources than it earned. So is a second output claiming an input already spoken for — one
+// finder's work became two report entries, possibly contradicting each other.
 //
-// claimed carries the input ids already spoken for, and a second claim on one is the same hard error
-// for the mirror-image reason. The schema binds each input to at most one output — at most, since the
-// drop rule leaves a weak singleton in none — so a reuse means one finder's work became two report
-// entries, possibly a finding and a pre-existing issue at once, contradicting each other. Renaming the
-// duplicate instead would keep both and invent an id for the second that no finder ever emitted,
-// leaving the archive unable to say which input it came from.
-//
-// It is one output holding an id twice that is not a reuse: the input still became exactly one report
-// entry, union already collapses it, and failing there would discard a whole find stage over a merge
-// that was correct. So each output tracks its own ids and skips its repeats, leaving claimed to catch
-// only what a second output takes.
-//
-// Rejecting a reuse is also what makes the output ids unique: each leads with its first merged id, and
-// distinct claims cannot collide. Verify keys its verdicts by id, and one verdict rejecting or
-// rewriting two findings silently corrupts a report the merge itself got right.
+// One output holding an id twice is not a reuse: the input still became exactly one entry, so each
+// output tracks its own ids and skips its repeats. Rejecting a reuse is also what makes the output ids
+// unique, which verify depends on, since it keys its verdicts by id.
 func (s *synthesizer) attribute(list []synthesized, inputs map[string]finding.Finding,
 	claimed map[string]bool) ([]finding.Finding, error) {
 	out := make([]finding.Finding, 0, len(list))

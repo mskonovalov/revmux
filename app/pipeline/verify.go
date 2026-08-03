@@ -31,12 +31,8 @@ const labelDirs = 3
 // being dropped, so app/executor and appexecutor cannot label the same.
 var labelUnsafe = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)
 
-// verifier owns the verify stage: one agent per directory group, each seeing only its own findings.
-// Materiality is a per-claim judgment, and a verifier holding the whole list anchors on the first
-// few and then rubber-stamps or batch-rejects the rest.
-//
-// The stagger is handed in rather than constructed: the gate latched open during find, so a fresh
-// instance would charge this stage another stagger delay to re-prove auth find already proved.
+// verifier owns the verify stage: one agent per directory group, each seeing only its own findings. The
+// stagger is handed in rather than constructed, since the gate latched open during find.
 type verifier struct {
 	cfg     Config
 	emit    func(Event)
@@ -110,11 +106,10 @@ func (v *verifier) run(ctx context.Context, rep finding.Report) (finding.Report,
 }
 
 // compose builds every group's prompt before any of them is dispatched. A prompt tree that does not
-// compose is a config error every group would hit identically, so it fails the run rather than
-// degrading each group in turn — an unresolved variable is a bug, not a warning.
+// compose is a config error every group would hit identically, so it fails the run rather than degrading
+// each group in turn.
 func (v *verifier) compose(groups []verifyGroup) error {
-	// resolved through the profile, not the set: a profile may override which binary verifies, and the
-	// caller reads the resolution back to record it
+	// resolved through the profile, not the set: a profile may override which binary verifies
 	stage, err := v.cfg.Profile.Stage(v.cfg.Set, stageVerify)
 	if err != nil {
 		return fmt.Errorf("resolve verify stage: %w", err)
@@ -128,17 +123,14 @@ func (v *verifier) compose(groups []verifyGroup) error {
 			return fmt.Errorf("compose verify prompt for %s: %w", groups[i].name, err)
 		}
 		groups[i].text = text
-		// one file per group: this stage fans out per directory, so a single verify.md would lose
-		// every prompt but the last and leave "what did that verifier see" unanswerable
+		// one file per group: a single verify.md would lose every prompt but the last
 		v.save(v.promptName(groups[i]), []byte(archivedPrompt(stage.Executor, text, finding.VerifySchema())))
 	}
 	return nil
 }
 
-// name resolves each group's label, suffixing any that collide. Two distinct directories can slug to
-// one label — app/executor and app-executor both give app-executor — and grouping buckets on the exact
-// path, so without this they would share one archived prompt and one event agent name. One prompt
-// silently overwriting another is precisely the un-auditable run the archive exists to prevent.
+// name resolves each group's label, suffixing any that collide. Two distinct directories slug to one
+// label — app/executor and app-executor both give app-executor — and would share one archived prompt.
 func (v *verifier) name(groups []verifyGroup) {
 	taken := make(map[string]bool, len(groups))
 	for i := range groups {
@@ -147,9 +139,8 @@ func (v *verifier) name(groups []verifyGroup) {
 		taken[name] = true
 	}
 
-	// the displayed name is resolved separately and stays short: the archived label spells out every
-	// directory because that is a filename an auditor reads at leisure, while a status row and a tab
-	// have one column each and "verify app-executor+app-ui+1-more" fits in neither
+	// the displayed name stays short: a status row and a tab have one column each, where the archived
+	// label is a filename an auditor reads at leisure
 	shown := make(map[string]bool, len(groups))
 	for i := range groups {
 		groups[i].shown = v.freeName(groups[i].shortLabel(), shown)
@@ -175,11 +166,7 @@ func (v *verifier) promptName(g verifyGroup) string {
 }
 
 // judge runs one group and falls back to leaving its findings unverified when the verifier does not
-// deliver. A dead verifier must not discard a review find and synthesis already paid for, and an
-// unverified verdict says exactly what happened rather than claiming the finding was checked.
-//
-// index is never zero: the leader slot belongs to the find stage, and a group taking it would open
-// a gate that is already open.
+// deliver. index is never zero: the leader slot belongs to the find stage.
 func (v *verifier) judge(ctx context.Context, g verifyGroup, index int) []finding.Finding {
 	if err := v.stagger.acquire(ctx, index); err != nil {
 		return v.unverifiedGroup(g, err)
@@ -202,8 +189,7 @@ func (v *verifier) runOne(ctx context.Context, g verifyGroup) ([]finding.Finding
 	res, err := v.cfg.NewRunner(spec).Run(ctx, executor.Request{
 		Prompt: g.text, Model: v.stage.Model, Effort: v.stage.Effort, Schema: finding.VerifySchema(),
 	}, newSink(agent, v.emit, nil))
-	// counted before the error is judged: a group that stalled or died still spent what it spent, and
-	// the run total is what was billed, not what was useful — the same accounting find and synthesis do
+	// counted before the error is judged: the run total is what was billed, not what was useful
 	v.tokens.Add(int64(res.Tokens))
 	if err != nil {
 		return nil, fmt.Errorf("verify %s: %w", g.name, err)
@@ -218,13 +204,9 @@ func (v *verifier) runOne(ctx context.Context, g verifyGroup) ([]finding.Finding
 	return out, nil
 }
 
-// apply turns the returned verdicts into findings. A finding the model said nothing about stays,
-// marked unverified: silence is not a rejection, and dropping it would let a lazy answer delete a
-// real problem.
-//
-// A payload carrying no verdicts key at all is a different thing from silence about a finding, and
-// degrades the group rather than passing for one that judged nothing: it means the process answered
-// something else, which on the codex path is whatever JSON its prose happened to carry first.
+// apply turns the returned verdicts into findings. A finding the model said nothing about stays, marked
+// unverified: silence is not a rejection. A payload carrying no verdicts key at all is different — the
+// process answered something else — and degrades the group.
 func (v *verifier) apply(g verifyGroup, raw json.RawMessage) ([]finding.Finding, error) {
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("verify %s returned no structured output", g.name)
@@ -261,9 +243,8 @@ func (v *verifier) apply(g verifyGroup, raw json.RawMessage) ([]finding.Finding,
 	return kept, nil
 }
 
-// rank orders the severity vocabulary so a change between two of them can be read as a direction rather
-// than as a pair. An unrecognized value ranks with minor: the codex path has no schema enforcing the
-// vocabulary, and inventing a rank for whatever arrives would report a direction nothing established.
+// rank orders the severity vocabulary so a change between two can be read as a direction. An
+// unrecognized value ranks with minor, since the codex path has no schema enforcing the vocabulary.
 func (v *verifier) rank(s finding.Severity) int {
 	switch s {
 	case finding.Critical:
@@ -275,12 +256,9 @@ func (v *verifier) rank(s finding.Severity) int {
 	}
 }
 
-// adjusted says what verification changed about a group beyond keeping or rejecting it.
-//
-// "2 of 2 kept" is the whole story only if verification is a filter, and it is not: measured over one
-// archived corpus it rejected 2 findings of the 150 that reached it while lowering the severity of 21
-// and rewriting many more. A group whose count did not move looks like a verifier that did nothing, and
-// that reading is what makes the stage look worth removing.
+// adjusted says what verification changed about a group beyond keeping or rejecting it. Measured over one
+// archived corpus the stage rejected 2 findings of the 150 that reached it while lowering 21 severities,
+// so a count that did not move reads as a verifier that did nothing.
 func (v *verifier) adjusted(before, after []finding.Finding) string {
 	was := make(map[string]finding.Severity, len(before))
 	for _, f := range before {
@@ -289,8 +267,7 @@ func (v *verifier) adjusted(before, after []finding.Finding) string {
 
 	lowered, raised, refined := 0, 0, 0
 	for _, f := range after {
-		// ranked rather than tested against minor at one end: critical -> major is a lowering the
-		// verifier really produces, and comparing only to minor counted it as neither direction
+		// ranked rather than tested against minor at one end: critical -> major is a lowering
 		if old, ok := was[f.ID]; ok {
 			switch was, now := v.rank(old), v.rank(f.Severity); {
 			case now < was:
@@ -328,9 +305,8 @@ func (v *verifier) vars(g verifyGroup) prompt.Vars {
 	return out
 }
 
-// groupByDir buckets findings by directory, merges the thin buckets into one and caps how many
-// groups result. Directory approximates code locality, so one verifier reads that area once and
-// judges several findings against it instead of re-reading a file per finding.
+// groupByDir buckets findings by directory, merges the thin buckets into one and caps how many groups
+// result. Directory approximates code locality, so one verifier reads that area once.
 func (v *verifier) groupByDir(findings []finding.Finding) []verifyGroup {
 	byDir := map[string][]finding.Finding{}
 	for _, f := range findings {
@@ -353,9 +329,8 @@ func (v *verifier) groupByDir(findings []finding.Finding) []verifyGroup {
 	return v.capped(groups)
 }
 
-// capped merges the smallest groups together until the count fits the configured limit. How many
-// verifiers run is a spend decision; which findings each one judges is not, so the merge takes
-// whole directories rather than splitting one.
+// capped merges the smallest groups together until the count fits the configured limit, taking whole
+// directories rather than splitting one.
 func (v *verifier) capped(groups []verifyGroup) []verifyGroup {
 	limit := v.cfg.VerifyGroups
 	if limit <= 0 || len(groups) <= limit {
@@ -395,9 +370,8 @@ func (v *verifier) unverifiedGroup(g verifyGroup, err error) []finding.Finding {
 	return out
 }
 
-// unverified is the --no-verify path: every finding is marked unverified rather than shipping with
-// an empty verdict that reads like it was checked. Open questions and pre-existing issues are never
-// verified, so neither is touched.
+// unverified is the --no-verify path: every finding is marked unverified rather than shipping with an
+// empty verdict that reads like it was checked. Open questions and pre-existing issues are never verified.
 func (v *verifier) unverified(rep finding.Report) finding.Report {
 	for i := range rep.Findings {
 		rep.Findings[i].Verdict = finding.Unverified
@@ -416,9 +390,7 @@ func (d verdict) known() bool {
 	}
 }
 
-// knownSeverity reports whether a refined verdict's severity is from the enum. Same reason as known
-// above: the codex path has no schema, so an unrecognized word must not replace a severity that was
-// schema-checked when the finder raised it.
+// knownSeverity reports whether a refined verdict's severity is from the enum, for the reason known has.
 func (d verdict) knownSeverity() bool {
 	switch d.Severity {
 	case finding.Critical, finding.Major, finding.Minor:
@@ -492,18 +464,14 @@ func (g verifyGroup) slug(dir string) string {
 	return out
 }
 
-// agent is what a reader sees: a verify group named for what it covers, which is all a status row or
-// a tab has space to say. The descriptive label stays on the archived prompt, where the space exists
-// and where an auditor needs to know every directory a group covered — and the group's own started
-// event lists those directories, so nothing is lost by keeping them out of the name.
+// agent is what a reader sees: a verify group named for what it covers. The descriptive label stays on
+// the archived prompt, and the group's own started event lists every directory it covers.
 func (g verifyGroup) agent() string {
 	return stageVerify + " " + g.shown
 }
 
-// shortLabel names the group by what it covers rather than by its position: "ui" says more than "3"
-// in the one column a row has, and a reader comparing a finding to a row can tell which is which.
-// The last element of the first directory, since the leading path is the same for every group in one
-// review.
+// shortLabel names the group by what it covers rather than by its position — the last element of the
+// first directory, since the leading path is the same for every group in one review.
 func (g verifyGroup) shortLabel() string {
 	if len(g.dirs) == 0 {
 		return "root"

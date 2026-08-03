@@ -38,13 +38,9 @@ func (m Model) paneLines() []string {
 	return m.reviewPaneLines(m.view.tab)
 }
 
-// reviewPaneLines is one review pane laid out whole, and it runs the document renderer's layout pass
-// around it.
-//
-// The pass belongs here rather than in the browser, which is the only review pane that renders
-// documents at all: the log and agent panes render none, and a pass they never run is a pass that
-// never sweeps what the browser left. An oversized report would then stay resident for as long as the
-// reader stayed on a log.
+// reviewPaneLines is one review pane laid out whole, running the document renderer's layout pass around
+// it. The pass belongs here rather than in the browser: a pass the log and agent panes never run is one
+// that never sweeps what the browser left.
 func (m Model) reviewPaneLines(tab int) []string {
 	m.md.beginFrame()
 	defer m.md.endFrame()
@@ -84,20 +80,10 @@ func (m Model) tabBar() string {
 }
 
 func (m Model) compactTabBar(names []string) string {
-	// clipping alone is not enough: it cuts the right-hand tabs off mid-word, so a reader cannot tell
-	// how many panes exist or what is hiding past the edge. There is no horizontal scroll on this line.
-	//
-	// **Collapse the fewest names that fit, and at each count keep the padding if it still fits.**
-	// That ordering is what makes the padding go before the first name, since a padded bar one name
-	// down is tried only after the tight bar with every name has failed — and it lets the padding come
-	// back once a further name has been spent, which is cheaper than it looks: two spaces per tab buys
-	// less than a word. Dropping every name the moment the bar is one column over throws away
-	// information nothing asked for.
-	//
-	// Names go from the left because panes fill left to right as a run goes on, so the right-hand end
-	// carries the recent work and the focused tab. Counting starts at tab two rather than tab one:
-	// "all" is four columns and it is the view a reader falls back to from anywhere, so spending it
-	// buys almost nothing and costs the one name most worth keeping.
+	// collapse the fewest names that fit, and at each count keep the padding if it still fits — a
+	// search, not a one-way ladder, which is what puts the padding ahead of the first name and lets it
+	// return once a further name is spent. Names go from the left, since the right-hand end carries the
+	// recent work; tab one is exempt, being the view a reader falls back to from anywhere.
 	for n := range names {
 		for _, tight := range []bool{false, true} {
 			if bar := m.tabRow(names, n, tight); lipgloss.Width(bar) <= m.view.width() {
@@ -178,12 +164,9 @@ func (m Model) tabNames() []string {
 	return names
 }
 
-// tabRow renders the bar with collapse tabs reduced to their leading token — a digit for the first
-// nine panes and a letter after that — taken from tab two rightward, never from tab one.
-//
-// The focused tab always keeps its name, whatever its position: its content is what fills the pane
-// below, so a bare token there names nothing a reader can see. tight drops the padding around the
-// separator and the padding inside every cell with it.
+// tabRow renders the bar with collapse tabs reduced to their leading token, taken from tab two rightward
+// and never from tab one. The focused tab always keeps its name, whatever its position: its content is
+// what fills the pane below. tight drops the padding around the separator and inside every cell.
 func (m Model) tabRow(names []string, collapse int, tight bool) string {
 	// padded, the marker and the blank are the same width, so a name sits in the same column whichever
 	// tab is focused. The tight row trades that alignment away for the columns it saves: there the
@@ -208,18 +191,14 @@ func (m Model) tabRow(names []string, collapse int, tight bool) string {
 	return strings.Join(labels, m.style.muted.Render(sep))
 }
 
-// tabLetters carry on where the digits stop. **Every letter already bound to something is missing
-// from this list on purpose** — f opens the findings browser, h and l switch panes, j and k scroll, g
-// goes to the top and q quits. Those keys are matched before the token lookup is ever reached, so a
-// tab assigned one of them would simply be unreachable, and only on a run with enough panes to get
-// that far.
+// tabLetters carry on where the digits stop. Every letter already bound to something is missing from
+// this list on purpose — f, g, h, i, j, k, l and q are matched before the token lookup is reached, so a
+// tab assigned one would be unreachable, and only on a run with enough panes to get that far.
 const tabLetters = "abcdemnoprstuvwxyz"
 
-// tabToken is the single character that selects a pane: 1-9, then the letters above.
-//
-// One character, always. A two-digit token costs a column in every tab on the bar and reads as two
-// numbers beside a name that may itself end in one. Panes past the tokens have none — they are still
-// reachable with tab and the arrows, and a run with that many panes has bigger problems.
+// tabToken is the single character that selects a pane: 1-9, then the letters above. One character
+// always: a two-digit token costs a column in every tab and reads as two numbers beside a name that may
+// end in one. Panes past the tokens have none and stay reachable with tab and the arrows.
 func (m Model) tabToken(idx int) string {
 	switch {
 	case idx < 9:

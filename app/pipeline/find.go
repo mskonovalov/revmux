@@ -105,11 +105,8 @@ func (f *finder) runAgent(ctx context.Context, spec prompt.AgentSpec, index int)
 	}
 	defer f.stagger.release()
 
-	// **started means running, and is emitted here rather than on entry for that reason.** Announcing
-	// it before the stagger slot is acquired starts every agent's clock at once, so a row counts the
-	// time it spent queued as time it spent working and every row reads the same elapsed early on —
-	// which is the opposite of what the stagger exists to make visible. The roster already shows an
-	// agent as waiting until this lands.
+	// started means running, and is emitted after the stagger slot is acquired for that reason:
+	// announcing it on entry starts every agent's clock at once and every row reads the same elapsed
 	f.emit(Event{Kind: EventAgentStarted, Agent: spec.Name, Text: strings.Join(spec.Lenses, ", ")})
 
 	opts := attemptOpts{spec: spec, prompt: text, leader: index == 0}
@@ -170,24 +167,13 @@ func (f *finder) attempt(ctx context.Context, opts attemptOpts) (executor.Result
 }
 
 // fault judges one attempt. A nil return means the process delivered; anything else is what a retry
-// would be attempting to survive — a stall, a rate limit, a dead process, a transport error, or a clean
-// exit carrying nothing. That last one is the codex path's own failure mode: it has no --json-schema, so
-// its output contract is prompt-driven and an agent can exit 0 having written prose no JSON came out of.
-// Degrading it on the first attempt writes off a whole source the retry-once policy owes another try.
+// would survive — a stall, a rate limit, a dead process, a transport error, or a clean exit carrying
+// nothing, which is the codex path's own failure mode since its output contract is prompt-driven.
 //
-// A payload that arrived but is not the answer — malformed, or an object of some other shape — is not
-// one of them. The process delivered; a second launch buys the same reply. parse rejects it instead,
-// which degrades this source alone.
-//
-// A stall or a rate limit that nonetheless carries structured output is not one of them. That payload
-// only exists once the terminal result event has been read, so the agent's answer is whole: the watchdog
-// fired on the teardown behind it — a descendant holding the stdout pipe open past the child's own exit —
-// and a rate limit reported mid-stream was one the CLI went on to survive. Retrying either pays for the
-// same findings twice and degrades the source when the second attempt hits the same wall.
-//
-// The exit code carries the same carve-out, and needs it for the stall case to work at all: a watchdog
-// kill reaps the process by signal, so its code is -1 rather than 0 and an unguarded check would retry
-// every stalled-but-complete attempt the case above just kept.
+// Three things are not faults. A payload that arrived but is not the answer: the process delivered, so
+// parse rejects it and degrades this source alone. A stall or rate limit that nonetheless carried
+// structured output: that payload only exists once the terminal result event has been read. And the
+// exit code follows the same carve-out — a watchdog kill reaps by signal, so the code is -1, not 0.
 func (f *finder) fault(spec prompt.AgentSpec, res executor.Result, err error) error {
 	switch {
 	case res.IdleTimedOut && len(res.StructuredOutput) == 0:
@@ -205,10 +191,8 @@ func (f *finder) fault(spec prompt.AgentSpec, res executor.Result, err error) er
 }
 
 // parse turns one agent's structured output into findings, assigning both attribution fields in Go.
-//
-// sources is overwritten with the executing agent's name, discarding whatever the model put there:
-// a source is a process, and one agent naming itself twice is self-corroboration the confidence
-// boost would count as agreement. id is rewritten for the same reason — four agents on one schema
+// sources is overwritten with the executing agent's name: a source is a process, and one agent naming
+// itself twice is self-corroboration. id is rewritten for the same reason — four agents on one schema
 // each emit "1", and synthesis derives the sources union from the ids it merged.
 func (f *finder) parse(spec prompt.AgentSpec, raw json.RawMessage) ([]finding.Finding, error) {
 	if len(raw) == 0 {

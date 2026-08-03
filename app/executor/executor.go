@@ -43,16 +43,10 @@ type Timer interface {
 // EventKind names what an Event reports.
 type EventKind string
 
-// Event kinds emitted by every executor.
-//
-// EventActivity and EventProgress both mean the process produced **model output** — prose in one case,
-// a tool call in the other — and they are kept distinct from everything else for one reason: a caller
-// waiting on first output, which the stagger is, must not be released by anything a process emits
-// before it has reached a model. A startup banner is not output, and neither is a fork.
-//
-// There is deliberately no "started" kind. One existed, proc emitted it the instant the fork
-// succeeded, and it bought nothing the pipeline had not already announced — while giving the sink an
-// event to mistake for output.
+// Event kinds emitted by every executor. EventActivity and EventProgress both mean the process produced
+// model output — prose in one case, a tool call in the other — and are kept distinct from everything
+// else because the stagger waits on first output and must not be released by a banner or a fork. There
+// is deliberately no "started" kind: one existed and latched the gate before a byte had been read.
 const (
 	EventInfo      EventKind = "info"
 	EventActivity  EventKind = "activity"
@@ -68,10 +62,8 @@ type Event struct {
 }
 
 // Opts is the construction-time configuration shared by every run of one executor. Model and effort are
-// deliberately absent: they travel on Request, because one instance serves roster entries that differ.
-//
-// A zero IdleTimeout or HardTimeout disables that watchdog, so the composition root has to set both
-// from config rather than relying on a default here.
+// deliberately absent: they travel on Request, since one instance serves roster entries that differ. A
+// zero IdleTimeout or HardTimeout disables that watchdog, so the composition root sets both.
 type Opts struct {
 	IdleTimeout    time.Duration
 	HardTimeout    time.Duration

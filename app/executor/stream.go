@@ -118,13 +118,9 @@ type permissionDenial struct {
 	} `json:"tool_input"`
 }
 
-// denials names the tool calls the permission layer refused, or "" when it refused none.
-//
-// **A denied agent does not fail, which is exactly why this has to be reported.** It says so in its
-// own prose — "Bash is denied in this mode, so I'll work from the files directly" — and then carries
-// on with less, so a review silently narrows to whatever the permission layer happened to allow and
-// still returns a full-looking report. Left unread, the only trace is a sentence buried in one
-// agent's scrollback.
+// denials names the tool calls the permission layer refused, or "" when it refused none. A denied agent
+// does not fail — it says so in its own prose and carries on with less — so a review silently narrows to
+// whatever the layer allowed and still returns a full-looking report.
 func (e streamEvent) denials() string {
 	if len(e.Denials) == 0 {
 		return ""
@@ -165,13 +161,9 @@ func (e streamEvent) actualModel() string {
 	return name
 }
 
-// activity is what the model actually said in one assistant turn: the first line of its first
-// non-empty text block, or "" for a turn that only called tools or only thought.
-//
-// Tool names are deliberately not reported here. A review agent's turns are overwhelmingly tool
-// calls, so a log fed by them reads as "tool: Read" a hundred times over and buries the reasoning
-// that is the whole reason to watch a run. What a tool call is good for is liveness, and that is
-// what progress covers — the two are different questions and must not share a field.
+// activity is what the model actually said in one assistant turn: the first line of its first non-empty
+// text block, or "" for a turn that only called tools or only thought. Tool names are deliberately not
+// reported here — that is liveness, which progress covers, and the two must not share a field.
 func (e streamEvent) activity() string {
 	if e.Message == nil {
 		return ""
@@ -189,13 +181,9 @@ func (e streamEvent) activity() string {
 	return ""
 }
 
-// progress is a short label for what the turn is doing right now: the tool it called. It
-// feeds a status cell that is overwritten on every turn, never a scrollback line.
-//
-// It is also what keeps the stagger honest: the leader gate opens on the first sign of life from
-// agent 1, and an agent that spends its opening minute reading files produces no prose at all. Were
-// liveness folded into activity, every run would wait out the full stagger delay before releasing
-// the rest.
+// progress is a short label for what the turn is doing right now: the tool it called. It feeds a status
+// cell overwritten on every turn, never a scrollback line, and it is what keeps the stagger honest — an
+// agent that spends its opening minute reading files produces no prose at all.
 func (e streamEvent) progress() string {
 	if e.Message == nil {
 		return ""

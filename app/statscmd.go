@@ -19,13 +19,9 @@ func (c *statsCmd) Execute([]string) error { //nolint:unparam // the signature i
 	return nil
 }
 
-// writeStats aggregates every round that ran under the tasks root and prints it as JSON. Like the catalog
-// and the scaffolded round it is a carve-out in "stdout belongs to the report": no pipeline, archive or
-// TUI exists yet, so there is nothing for it to collide with.
-//
-// The query is built from --tasks-dir and --task, the flags a review already carries. A second --task
-// declared on the subcommand would put `revmux --task x stats` and `revmux stats --task x` in different
-// fields, and the one a caller passed would be the one nothing read.
+// writeStats aggregates every round that ran under the tasks root and prints it as JSON, one of the
+// carve-outs in "stdout belongs to the report". The query is built from --tasks-dir and --task, the flags
+// a review already carries: a second --task on the subcommand would land in a different field.
 func (o runOpts) writeStats() error {
 	corpus, err := archive.CollectStats(archive.StatsQuery{TasksDir: o.opts.TasksDir, Task: o.opts.Task})
 	if err != nil {

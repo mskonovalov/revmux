@@ -50,12 +50,8 @@ func (m Model) combinedLines() []string {
 	return out
 }
 
-// prefix is the agent column: the name padded to the widest in the roster and colored, with the
-// column itself doing the separating. A stage line names no agent and is indented to the same column.
-//
-// Padding happens before painting and the width is measured on the plain name, because a color
-// sequence has no display width — pad the painted string and every line indents by however many bytes
-// that agent's color happens to take, which is what left the log ragged.
+// prefix is the agent column: the name padded to the widest in the roster and colored. Padding happens
+// before painting and is measured on the plain name, since a color sequence has no display width.
 func (m Model) prefix(agent string) string {
 	if agent == "" {
 		return strings.Repeat(" ", m.nameWidth()+2)

@@ -13,20 +13,10 @@ import (
 	"github.com/umputun/revmux/app/task"
 )
 
-// dirSize sums the sizes of the regular files under dir. It reads sizes rather than block counts, so the
-// same task measures the same on any filesystem and a caller comparing two of them is comparing what the
-// review wrote rather than how it was stored.
-//
-// A symlink contributes nothing and is never followed: a round's artifacts are its own, and following one
-// would count a file twice or count a tree outside the tasks root as this task's cost.
-//
-// **An entry it cannot read is skipped and named, never fatal and never silently zero.** One unreadable
-// round under one task must not discard every other task's numbers — `revmux stats` reports the corpus,
-// and a caller reading nothing at all learns less than one reading a number with a caveat beside it. The
-// names come back so the caller can say what the total is missing, the way a round that will not decode is
-// named in Skipped rather than dropped.
-//
-// An absent dir itself is zero and not even a skip: a task with no rounds yet has no size.
+// dirSize sums the sizes of the regular files under dir, reading sizes rather than block counts so the
+// same task measures the same on any filesystem. A symlink contributes nothing and is never followed.
+// An entry it cannot read is skipped and named, never fatal and never silently zero — the names come
+// back so the caller can say what the total is missing. An absent dir is zero and not even a skip.
 func dirSize(dir string) (total int64, unread []string, err error) {
 	if _, statErr := os.Lstat(dir); errors.Is(statErr, fs.ErrNotExist) {
 		return 0, nil, nil // a task with no rounds yet, or a root no review has written to
@@ -65,15 +55,10 @@ func mb(bytes int64) float64 {
 	return math.Round(float64(bytes)/(1024*1024)*10) / 10
 }
 
-// lastRun is the date of the most recent round's completion, read from the finished_at each round's
-// manifest carries. The manifest is filled in when the run completes, so this says when the task was last
-// reviewed rather than when anything last touched the directory — a copied or re-read tree keeps its
-// answer.
-//
-// It decodes through a local struct rather than importing package main's manifest type: the artifact
-// package must not import the orchestrator to read back what it wrote, the same way events.jsonl is read
-// here. A round whose manifest will not decode simply does not date the task; it is already named in
-// Skipped when its artifacts are the reason it was left out.
+// lastRun is the date of the most recent round's completion, from the finished_at each round's manifest
+// carries — when the task was last reviewed rather than when anything last touched the directory. It
+// decodes through a local struct rather than importing package main's manifest type, the same way
+// events.jsonl is read here; CLAUDE.md's keep-in-sync list carries the cost.
 func lastRun(taskDir string, rounds []string) string {
 	var newest time.Time
 	for _, name := range rounds {

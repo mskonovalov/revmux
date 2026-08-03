@@ -132,11 +132,10 @@ func run(o runOpts) int {
 	return rep.ExitCode()
 }
 
-// writeCatalog prints the resolved configuration as JSON. It is the one carve-out in "stdout belongs
-// to the report": no pipeline, archive or TUI exists yet, so there is nothing for it to collide with.
-//
-// The prompt tree is loaded directly rather than through promptSet: a caller running this to discover
-// which profiles exist is exactly the caller whose --profile does not resolve.
+// writeCatalog prints the resolved configuration as JSON, one of the carve-outs in "stdout belongs to
+// the report" — no pipeline, archive or TUI exists yet. The prompt tree is loaded directly rather than
+// through promptSet: a caller discovering which profiles exist is the one whose --profile does not
+// resolve.
 func (o runOpts) writeCatalog() error {
 	set, err := prompt.Load(o.opts.promptOpts())
 	if err != nil {
@@ -209,19 +208,13 @@ func (o runOpts) pipelineConfig() (configuredReview, error) {
 }
 
 // review runs the pipeline with a renderer subscribed to its events, writes the run's own artifacts,
-// hands the finished report to that renderer, and returns only once the renderer has let go of the
-// terminal.
+// hands the finished report to that renderer, and returns once the renderer has let go of the terminal.
 //
 // The archive lands between the pipeline finishing and the report reaching the renderer, because finish
-// blocks until the reader closes the findings browser and the run ending is deliberately not a reason to
-// quit it. Archiving afterwards leaves a run parked there — or killed there — holding every
-// pipeline-owned artifact and none of the three package main owns, which reads as a review that died
-// mid-run when it actually completed, and a round with no findings.json is one archive.History cannot
-// see at all, so a loop accumulating rounds silently loses it.
-//
-// --min-confidence is applied here, before the renderer sees the report, because the findings browser
-// is a rendering path like stdout is: filtering afterwards would list in the TUI exactly the findings
-// the printed report and the exit code both claim are absent.
+// blocks until the reader closes the browser: archiving afterwards leaves a run killed there holding
+// every pipeline-owned artifact and none of package main's, and a round with no findings.json is
+// invisible to archive.History. --min-confidence is applied before the renderer sees the report, since
+// the browser is a rendering path like stdout is.
 func (o runOpts) review(ctx context.Context, review configuredReview) (finding.Report, error) {
 	cfg, arc := review.pipeline, review.archive
 	p := pipeline.New(cfg)
@@ -312,19 +305,11 @@ func (o runOpts) inputDocuments(rc reviewContext) []ui.InputDocument {
 	}}).load(rc)
 }
 
-// finish hands the report to the findings browser and waits for the reader to close it. A failed run
-// has nothing to browse and its error belongs on stderr, so the program is asked to quit instead.
-//
-// The wait is what keeps the report off stdout until the terminal is free: writing it while the TUI
-// still owns the screen would interleave it with the final frame.
-//
-// The stderr renderer is summarized after that wait rather than before it, because its own goroutine is
-// what writes the event lines: summarizing first would put the closing lines above the last agent's.
-//
-// arcErr is the archive failure, which the pipeline error does not carry: a run whose archive did not
-// land exits 2 over an unusable round, so its log may not close with a summary saying the review is
-// complete. Only the stderr summary is gated on it. The findings browser still opens, because the
-// findings themselves are sound and are all that survives a round nothing can be read back from.
+// finish hands the report to the findings browser and waits for the reader to close it. A failed run has
+// nothing to browse, so the program is asked to quit instead. The wait keeps the report off stdout until
+// the terminal is free. The stderr renderer is summarized after that wait, since its own goroutine
+// writes the event lines. arcErr gates only the stderr summary — the browser still opens, because the
+// findings are sound and are all that survives a round nothing can be read back from.
 func (r *renderer) finish(rep finding.Report, err, arcErr error) {
 	switch {
 	case r.prog == nil:
@@ -370,13 +355,8 @@ func (o runOpts) runnerFactory(rc reviewContext) func(pipeline.RunnerSpec) pipel
 	}
 }
 
-// write puts the report on stdout, as JSON unless a human asked for the rendered form.
-//
-// **JSON is the default because the caller is a program.** revmux is driven by a model composing an
-// invocation and parsing what comes back; the two human-facing renderings are the terminal UI, which
-// is on screen while the run happens, and `report.md` in the run archive, which is on disk afterwards.
-// Markdown on stdout served neither of them and had to be parsed back out by everything that did read
-// it.
+// write puts the report on stdout, as JSON unless a human asked for the rendered form. JSON is the
+// default because the caller is a program; the two human-facing renderings are the TUI and report.md.
 func (o runOpts) write(rep finding.Report) error {
 	render := rep.JSON
 	if o.opts.Markdown {
