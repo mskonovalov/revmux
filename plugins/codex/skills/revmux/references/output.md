@@ -171,8 +171,8 @@ its own name, because a second run there would leave one round holding two runs'
 deleted to make it usable: open the next round and copy the `input/` across. A directory with no
 `manifest.json` at all is a round prepared but never reviewed.
 
-Rounds are permanent. revmux deletes nothing, so reclaiming space is `rm -rf <round_dir>` run by hand,
-safe at any time because nothing links rounds together.
+Nothing removes a round as a side effect of a review. Reclaiming space is `revmux cleanup --task <id>`,
+which takes a whole task and is refused while a running review holds one of its rounds.
 
 ## The plain progress renderer
 

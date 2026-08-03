@@ -410,7 +410,17 @@ func TestCollectStats(t *testing.T) {
 		}, got.Tasks[1].Agents)
 	})
 
+	t.Run("totals fold exact bytes, not the rounded megabytes each task reports", func(t *testing.T) {
+		assert.Equal(t, got.Tasks[0].sizeBytes+got.Tasks[1].sizeBytes, got.Totals.sizeBytes)
+		assert.InDelta(t, mb(got.Totals.sizeBytes), got.Totals.SizeMB, 0.001)
+		assert.Positive(t, got.Tasks[0].sizeBytes, "a task that recorded rounds occupies disk")
+	})
+
 	t.Run("totals match names across tasks and append the ones only one task ran", func(t *testing.T) {
+		totals := got.Totals
+		// size is asserted above against the tasks it folded; zeroing it here keeps this an exhaustive
+		// comparison of everything else rather than one pinned to the byte count of the fixtures
+		totals.sizeBytes, totals.SizeMB = 0, 0
 		assert.Equal(t, taskStats{
 			Rounds: 3, Skipped: []string{},
 			Agents: []agentStats{
@@ -427,7 +437,7 @@ func TestCollectStats(t *testing.T) {
 				{Name: "tests", Verdicts: map[finding.Verdict]int{}},
 			},
 			Stages: []stageFlow{{Name: "verify", In: 10, Out: 4}},
-		}, got.Totals, "the totals carry no id: they are every task at once")
+		}, totals, "the totals carry no id: they are every task at once")
 	})
 
 	t.Run("a task's verdict counts are its own after the totals folded them in", func(t *testing.T) {
@@ -799,4 +809,100 @@ func preExisting() []finding.Finding {
 
 func merged(verdict finding.Verdict, srcs []string, lenses ...string) finding.Finding {
 	return finding.Finding{Sources: srcs, Lenses: lenses, Verdict: verdict}
+}
+
+func TestCollectStats_disk(t *testing.T) {
+	t.Run("a task carries its size, its task.md description and the date of its last round", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, "alpha")
+		recordRound(t, filepath.Join(dir, "01-initial"), map[string]finding.Report{
+			foundFile: {Sources: sources(agent("solo", "bugs")), Findings: raised(1, "solo", "bugs")},
+		})
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "01-initial", manifestFile),
+			[]byte(`{"run":"01-initial","finished_at":"2026-07-27T10:00:00Z"}`), 0o600))
+		recordRound(t, filepath.Join(dir, "02-after-fix"), map[string]finding.Report{
+			foundFile: {Sources: sources(agent("solo", "bugs")), Findings: raised(1, "solo", "bugs")},
+		})
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "02-after-fix", manifestFile),
+			[]byte(`{"run":"02-after-fix","finished_at":"2026-07-31T09:00:00Z"}`), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "task.md"),
+			[]byte("---\ndescription: the round-layout rework\n---\n"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "01-initial", "bulk"), make([]byte, 2<<20), 0o600))
+
+		got, err := CollectStats(StatsQuery{TasksDir: root})
+		require.NoError(t, err)
+		require.Len(t, got.Tasks, 1)
+		assert.Equal(t, "the round-layout rework", got.Tasks[0].Description)
+		assert.InDelta(t, 2.0, got.Tasks[0].SizeMB, 0.1, "the artifacts plus the 2MB file")
+		assert.Equal(t, "2026-07-31", got.Tasks[0].LastRun, "the latest round dates the task")
+		assert.Equal(t, "2026-07-31", got.Totals.LastRun)
+	})
+
+	t.Run("a task with no task.md reports no description rather than failing", func(t *testing.T) {
+		root := t.TempDir()
+		recordRound(t, filepath.Join(root, "alpha", "01-initial"), map[string]finding.Report{
+			foundFile: {Sources: sources(agent("solo", "bugs")), Findings: raised(1, "solo", "bugs")},
+		})
+
+		got, err := CollectStats(StatsQuery{TasksDir: root})
+		require.NoError(t, err)
+		assert.Empty(t, got.Tasks[0].Description)
+	})
+
+	t.Run("a task.md that will not parse leaves the description empty, and revmux config names why", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, "alpha")
+		recordRound(t, filepath.Join(dir, "01-initial"), map[string]finding.Report{
+			foundFile: {Sources: sources(agent("solo", "bugs")), Findings: raised(1, "solo", "bugs")},
+		})
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "task.md"), []byte("---\ntitel: typo\n---\n"), 0o600))
+
+		got, err := CollectStats(StatsQuery{TasksDir: root})
+		require.NoError(t, err)
+		assert.Empty(t, got.Tasks[0].Description)
+		assert.Equal(t, 1, got.Tasks[0].Rounds, "the corpus is still reported")
+	})
+
+	t.Run("a round whose manifest carries no finished_at does not date the task", func(t *testing.T) {
+		root := t.TempDir()
+		recordRound(t, filepath.Join(root, "alpha", "01-initial"), map[string]finding.Report{
+			foundFile: {Sources: sources(agent("solo", "bugs")), Findings: raised(1, "solo", "bugs")},
+		})
+
+		got, err := CollectStats(StatsQuery{TasksDir: root})
+		require.NoError(t, err)
+		assert.Empty(t, got.Tasks[0].LastRun)
+		assert.Positive(t, got.Tasks[0].SizeMB+float64(got.Tasks[0].sizeBytes), "it still has a size")
+	})
+}
+
+func TestCollectStats_unreadableEntry(t *testing.T) {
+	// the regression this pins: dirSize walking the whole tree made one unreadable directory under one
+	// task fatal for the corpus, so `revmux stats` reported nothing about the other tasks at all
+	t.Run("one unreadable directory does not discard every other task's numbers", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root traverses a 0000 directory regardless of its mode")
+		}
+		root := t.TempDir()
+		recordRound(t, filepath.Join(root, "alpha", "01-initial"), map[string]finding.Report{
+			foundFile: {Sources: sources(agent("solo", "bugs")), Findings: raised(2, "solo", "bugs")},
+		})
+		recordRound(t, filepath.Join(root, "beta", "01-initial"), map[string]finding.Report{
+			foundFile: {Sources: sources(agent("solo", "bugs")), Findings: raised(1, "solo", "bugs")},
+		})
+		blocked := filepath.Join(root, "alpha", "01-initial", "agents")
+		require.NoError(t, os.MkdirAll(blocked, 0o700))
+		require.NoError(t, os.Chmod(blocked, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(blocked, 0o700) }) //nolint:gosec // G302 is about files, not dirs
+
+		got, err := CollectStats(StatsQuery{TasksDir: root})
+		require.NoError(t, err, "the corpus still prints")
+		require.Len(t, got.Tasks, 2)
+		assert.Equal(t, []string{"alpha", "beta"}, ids(got))
+		assert.Equal(t, 1, got.Tasks[1].Rounds, "beta's numbers survive alpha's unreadable entry")
+
+		// and the shortfall is named rather than left to read as alpha's real cost
+		require.NotEmpty(t, got.Tasks[0].Skipped)
+		assert.Contains(t, strings.Join(got.Tasks[0].Skipped, " "), "unreadable")
+	})
 }

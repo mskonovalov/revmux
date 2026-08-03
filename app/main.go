@@ -101,6 +101,11 @@ func run(o runOpts) int {
 			return o.fail(err)
 		}
 		return 0
+	case o.opts.showCleanup:
+		if err := o.writeCleanup(); err != nil {
+			return o.fail(err)
+		}
+		return 0
 	}
 
 	review, err := o.pipelineConfig()

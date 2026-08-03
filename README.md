@@ -240,14 +240,18 @@ and on a first round it is omitted entirely.
 
 ### Cleaning up
 
-revmux deletes nothing, ever. To reclaim space, remove rounds yourself:
+Nothing removes anything as a side effect: a review, `new`, `init`, `config` and `stats` all leave the
+archive alone. Reclaiming is [`revmux cleanup`](#revmux-cleanup), a dedicated command that removes one named
+task:
 
 ```
-rm -rf .revmux/tasks/pr-123/01-initial
+revmux cleanup --task pr-123
 ```
 
-That is safe at any time. Nothing links rounds together: the prior-round inventory is rebuilt from whichever
-round directories are present, so removing one loses that round's own record and affects nothing else.
+Whole tasks rather than rounds, because a task's rounds are one review's history and are read together. It
+refuses a task a running review holds — a check rather than a lock held across the removal, so don't run
+it against a task under review — and nothing links
+tasks: the prior-round inventory is rebuilt from whichever round directories are present.
 
 ## Run archive
 
@@ -510,10 +514,11 @@ The runtime knobs below also read from the config file, under the same name as t
 `--task` and `--run` are both required for a review, and neither is a config key: a config file naming the
 round to write would make the same command review different context in different directories.
 
-Four subcommands, all of which print JSON and exit before any review starts: [`revmux config`](#revmux-config)
+Five subcommands, all of which print JSON and exit before any review starts: [`revmux config`](#revmux-config)
 reports the resolved configuration, [`revmux new`](#revmux-new) creates a round and reports its paths,
-[`revmux init`](#revmux-init) materializes the local prompt tree, and [`revmux stats`](#revmux-stats) reports
-what past rounds produced.
+[`revmux init`](#revmux-init) materializes the local prompt tree, [`revmux stats`](#revmux-stats) reports
+what past rounds produced, and [`revmux cleanup`](#revmux-cleanup) removes a task once it is no longer
+worth keeping.
 
 ## Output
 
@@ -807,7 +812,8 @@ $ revmux stats --task pr-123      # one task
 ```json
 {
   "tasks": [
-    {"id": "pr-123", "rounds": 5, "skipped": [],
+    {"id": "pr-123", "description": "the auth refactor", "rounds": 5,
+     "size_mb": 6.6, "last_run": "2026-07-27", "skipped": [],
      "agents": [{"name": "bugs+impl", "raised": 8, "survived": 8, "corroborated": 5,
                  "degraded_rounds": 0, "retries": 0, "tokens": 10441185}],
      "lenses": [{"name": "bugs", "raised": 14, "ambiguous": 3,
@@ -816,7 +822,8 @@ $ revmux stats --task pr-123      # one task
                 {"name": "verify", "in": 46, "out": 46},
                 {"name": "report", "in": 46, "out": 46}]}
   ],
-  "totals": {"rounds": 5, "skipped": [], "agents": [], "lenses": [], "stages": []}
+  "totals": {"rounds": 5, "size_mb": 6.6, "last_run": "2026-07-27",
+             "skipped": [], "agents": [], "lenses": [], "stages": []}
 }
 ```
 
@@ -856,9 +863,53 @@ Two numbers come from elsewhere and say so: the `report` stage entry reads `find
 measure what the filter removed, and `retries` comes from `events.jsonl`, the only artifact that records a
 relaunch.
 
+**Per task, off the artifacts.** `size_mb` is what the task occupies — every round and the caller's own
+`input/` — summed from file sizes rather than disk blocks, so it reads a little under `du` and the same on
+any filesystem. `last_run` is the `finished_at` of the newest round's `manifest.json`, so it says when the
+task was last reviewed rather than when anything last touched the directory. `description` is its `task.md`
+one-liner, the same one `revmux config` reports; a task with no `task.md`, or one that will not parse,
+simply has none here. Together they are what [`revmux cleanup`](#revmux-cleanup) is decided from.
+
 An empty tasks root is a valid empty document rather than an error; a `--task` naming no task under the root
 exits `2`, because a typo answered with zeroes reads as a task with no history. `degraded_rounds` and
 `retries` come out zero on a healthy corpus, and that zero is an absence rather than a finding.
+
+## `revmux cleanup`
+
+`revmux cleanup --task <id>` removes one task and everything under it, and prints what went as JSON.
+It is the only thing in revmux that deletes anything: a review, `new`, `init`, `config` and `stats` remove
+nothing, so nothing is ever removed as a side effect of doing something else.
+
+```console
+$ revmux cleanup --task since-1f21e93
+```
+
+```json
+{
+  "tasks_dir": "/repo/.revmux/tasks",
+  "removed": [{"id": "since-1f21e93", "rounds": 5, "size_mb": 6.6}],
+  "total_mb_after": 6.4
+}
+```
+
+`total_mb_after` is absent when the tasks root could not be measured once the tree was gone — that
+measurement runs after the removal has succeeded, so its failure omits the number rather than failing the
+call.
+
+The archive grows by roughly half a megabyte per round and revmux never prunes on its own, so reclaiming is
+a decision rather than a policy — there is no age threshold, no size cap and no all-tasks form. What to
+remove is read off `revmux stats`, which reports every task's size, round count, description and date.
+
+**It removes a whole task, never a round inside one.** A task's rounds are one review's history and are read
+together; a task that quietly lost its early rounds would keep being reported by `revmux stats` as the whole
+record.
+
+**It refuses more than it removes.** A name that is not one task directly under the tasks root — a path, a
+`..`, a round, a typo — is an error and nothing is removed. An absent `--task` names the flag rather than
+meaning every task. A task a running review holds is refused, though that is a check taken as it goes
+rather than a lock held across the removal: a review claiming a round after the check has passed it, or one
+claiming a round `revmux new` prepared that has no marker to lock yet, loses that round. The cost is one
+interrupted review, so cleanup is not run against a task under review rather than being made airtight.
 
 ## Agent skills
 

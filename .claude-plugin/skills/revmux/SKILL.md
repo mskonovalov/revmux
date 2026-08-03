@@ -2,7 +2,7 @@
 name: revmux
 description: Run a supervised multi-agent code review by composing a task directory and driving the revmux CLI, then report or act on the findings it returns. revmux spawns and watches parallel claude and codex subprocesses with stall detection, retry, per-agent progress and a full run archive; this skill is the caller that writes the review context, launches it, reads the JSON back, and re-runs it after fixes. It also has a self mode that reads what past rounds produced and proposes tuning changes to the local profiles, lenses and knobs, one suggestion at a time with the numbers behind it. It fetches a pull request into a throwaway worktree, reviews it there and cleans up after. Also answers questions about revmux itself — profiles, lenses, task directories, flags, the JSON shape, exit codes and the run archive. Activates on "revmux", "run revmux", "multi-agent review", "supervised review", "review with revmux", "revmux this branch", "revmux the last commit", "revmux pr 123", "revmux this PR", "review PR 123 with revmux", "run a revmux round", "re-review after fixes", "revmux it and show me", "revmux this, I want to watch", "run it visible", "show me the review", "revmux self", "self-improve revmux", "tune revmux", "revmux profiles", "revmux lenses", "what does revmux return", "revmux exit codes", "revmux task directory".
 argument-hint: 'optional: what to review ("pr 123", a ref, a path), plus "show me" / "focused" / "final" / "loop" / "lenses a,b"'
-allowed-tools: [Bash, Read, Edit, Write, Grep, Glob, AskUserQuestion, Monitor, TaskStop]
+allowed-tools: [Bash, Read, Edit, Write, Grep, Glob, Agent, AskUserQuestion, Monitor, TaskStop]
 ---
 
 # revmux — supervised multi-agent code review
@@ -110,7 +110,11 @@ git clone https://github.com/umputun/revmux.git && cd revmux && make install
 | "pr 123", "this PR", a PR URL | `references/pr.md` — resolve, fetch into a worktree, review it there |
 | a path | that subtree, as a diff plus a read list |
 
-Run the git commands here to learn scale and file list.
+One command here, and no more git than this — measuring the change is the subagent's job in Step 2:
+
+```bash
+git branch --show-current && git status --short
+```
 
 **A pull request is a different shape, not a harder ref range.** revmux fetches nothing and checks
 nothing out, so a PR has to be on disk before there is anything to review, and the checkout has to be
@@ -118,78 +122,77 @@ removed afterwards. Read `references/pr.md` and follow it — it covers steps 1 
 and hands back here at Step 5.
 
 Ask only when genuinely ambiguous — a feature branch with uncommitted work is the standard case. Use
-AskUserQuestion, here and at the headless-versus-overlay choice in Step 4.
+AskUserQuestion, here and at the headless-versus-overlay choice in Step 4. **The question is always
+this session's, never a subagent's**: a subagent cannot ask, and one that guesses reviews the wrong
+thing at full cost.
 
-### Step 2: Open a round and write its context
+### Step 2: Prepare the round — in a subagent
 
-Read `references/task-dir.md` first.
+Everything between the resolved scope and a round ready to run is delegated: the git commands that
+measure the change, matching the task, opening the round, and writing its context files. That is a
+dozen tool calls and several screens of diff stat whose output answers nothing the user asked — and
+it buries the review it is preparing for.
 
-**Match an existing task before minting an id.** A second id for one subject runs as a first round with
-no history.
+**Expand every path before handing the brief over.** The subagent does not have this skill loaded, so
+`${CLAUDE_SKILL_DIR}` means nothing in its shell — substitute the resolved absolute path into the brief's text
+rather than passing the variable through, or its `task-state.sh` step silently runs nothing.
 
-```bash
-revmux config | jq '.paths.tasks'
-```
+**Say one line first, then spawn it:** `Preparing the round for <what is being reviewed>…` — the
+subject in the user's own terms, "the branch against master", "PR 123", "the last 3 commits". Then
+nothing further until the subagent returns: a delegated step the user was told about reads as work in
+progress, while an unannounced pause reads as a stall.
 
-Entries carry `id`, `description`, `url`, `branch`, `base` and `rounds`. Match on `url` or `branch`
-exactly; failing that, on `description` against the subject in hand. Reuse the matched `id` verbatim.
+Spawn **one** `general-purpose` agent. Hand it the resolved scope from Step 1 and this brief:
 
-Derive an id only when nothing matches:
+> Prepare a revmux review round. Write files; change no source, run no review, commit nothing.
+>
+> The scope is: `<the row resolved in Step 1, with its ref range>`.
+>
+> 1. Measure it. Run the diff and `--stat` for that range, list the files, and note the scale.
+> 2. Match an existing task before minting an id — a second id for one subject runs as a first round
+>    with no history. `revmux config | jq '.paths.tasks'` lists them with `id`, `description`, `url`,
+>    `branch`, `base` and `rounds`. Match on `url` or `branch` exactly, failing that on `description`
+>    against the subject in hand, and reuse the matched `id` verbatim. Derive one only when nothing
+>    matches: `pr-<number>`, `issue-<number>`, a branch name with `/` replaced by `-`,
+>    `since-<short-sha>`, or `wip-<branch>`. No path separators, no `..`, no leading dot, not absolute.
+> 3. Run `<the absolute path this session resolved for scripts/task-state.sh> <task-id>`. It takes the
+>    id as its one argument and exits 1 with a usage line without it. It validates the id and reports the
+>    `task.md` anchors, every round, and each round's `input/` state — `prepared` (never reviewed),
+>    `claimed` (a review started and never finished) or `ran`.
+> 4. Name the round `NN-label` — `01-initial`, `02-after-fix`, `03-final` — with `NN` one past the
+>    highest already there, and do not mix vocabularies across rounds of one task. Then
+>    `revmux new --task <id> --run <NN-label>`, which prints the absolute path of every file to write
+>    plus which of them it created.
+> 5. Write to those paths and no others. Never join a path, never create a directory the output did
+>    not name, and never write over an existing `scope.md` without reading it first.
+>    - `scope` — required. What changed, the commands to see it, its scale, which files to read in
+>      full, what to ignore. Write commands in plainest form: `git diff master...HEAD`, never
+>      `git -c core.pager=cat diff ...` — a leading option defeats the child's permission matching.
+>    - `goal` — optional. What the change is for, plus a "this is correct only if…" list.
+>    - `profile` — optional, reusable across the repo. What the software is, what a real failure looks
+>      like, where the project's rules live, which conventions are deliberate. Copy it into each round
+>      of the task.
+>    - `context` — optional. Ticket text, design notes, commit list. Its path is reported but the
+>      directory is not created.
+>    - `task_file` — when `created` lists it, and also when it is already there but still the unfilled
+>      template with every anchor empty. Read it first either way. `description`, plus `url`, `branch`
+>      and `base` when known: that front matter is what the next session matches on, and a task.md left
+>      as the blank template is what makes the next session mint a duplicate id.
+>
+> Return JSON only: `{"task": "", "run": "", "round_dir": "", "scope_path": "", "wrote": [],
+> "files_changed": 0, "insertions": 0, "deletions": 0, "areas": [], "notes": ""}`. `areas` names the
+> parts of the codebase the diff touches. Put anything that went wrong in `notes` and do not paper
+> over it.
 
-| reviewing | task id |
-|---|---|
-| a pull request | `pr-<number>` |
-| an issue | `issue-<number>` |
-| a branch | branch name with `/` replaced by `-` |
-| a commit range | `since-<short-sha>` |
-| working-tree changes | `wip-<branch>` |
+Read `references/task-dir.md` yourself only if the subagent reports something it could not resolve.
 
-No path separators, no `..`, no leading dot, not absolute — revmux rejects those at load.
+**Nothing else moves into a subagent.** The profile choice, the launch, the report and how it is
+presented all stay in this session — they are the decisions the user is waiting on, and a summary of
+a decision already made is not the same thing.
 
-```bash
-${CLAUDE_SKILL_DIR}/scripts/task-state.sh <task-id>
-```
-
-Validates the id and reports the task's `task.md` anchors, every round, and each round's `input/`
-state. Each round is `prepared` (never reviewed), `claimed` (a review started and never finished) or
-`ran`. `revmux config` lists only the `ran` ones; a `prepared` round is open under its own name, and a
-`claimed` one only while that review left nothing in it — revmux refuses the name and says what it
-found if it did not.
-
-**Name the round `NN-label`:** `01-initial`, `02-after-fix`, `03-final`. `NN` is one past the highest
-round already there. Do not mix vocabularies across rounds of one task.
-
-```bash
-revmux new --task <id> --run <NN-label>
-```
-
-It prints the absolute path of every file to write, plus which of them it created:
-
-```json
-{"task_dir": "…", "task_file": "…/task.md", "round_dir": "…/01-initial",
- "input_dir": "…/01-initial/input", "scope": "…/input/scope.md", "goal": "…/input/goal.md",
- "profile": "…/input/profile.md", "context": "…/input/context",
- "created": ["task_dir", "task_file", "round_dir", "input_dir"]}
-```
-
-**Write to those paths and no others.** Never join a path and never create a directory the output did
-not name.
-
-- **`scope`** — required. What changed, the commands to see it, its scale, which files to read in
-  full, what to ignore. Write commands in plainest form: `git diff master...HEAD`, never
-  `git -c core.pager=cat diff ...` — a leading option defeats the child's permission prefix matching.
-- **`goal`** — optional. What the change is for, plus a "this is correct only if…" list.
-- **`profile`** — optional, reusable across the repo. What the software is, what a real failure
-  looks like, where the project's rules live, which conventions are deliberate. Copy it into each
-  round of the task.
-- **`context`** — optional. Ticket text, design notes, commit list. The path is reported but not
-  created.
-- **`task_file`** — when `created` lists it, write the task's `task.md`: `description`, plus `url`,
-  `branch` and `base` when known. That front matter is what the next session matches on.
-
-Each round holds its own context, so a re-review writes a fresh `scope` in its own round rather than
-editing an earlier one's. When `task-state.sh` reports the round as `scope=present`, read it before
-writing over it.
+**Check what comes back before launching.** A missing `round_dir` or an empty `wrote` means no round
+is ready and the run would fail on a missing scope; fix that here rather than launching into it. The
+scale numbers are what Step 4's one-line announcement is built from.
 
 ### Step 3: Choose profile and flags
 
@@ -375,6 +378,8 @@ review, fix, commit, re-review, until a round comes back with nothing gating. It
 branch, never a fetched PR, and it commits without pushing. `references/loop.md` is the whole procedure —
 read it when he picks it, not before.
 
+Once he answers with anything other than another round, run the archive check below.
+
 ### Step 7: Fix and re-run, if asked
 
 1. Agree which findings to act on. An `immaterial` verdict means revmux already dismissed it — it is in
@@ -382,10 +387,11 @@ read it when he picks it, not before.
    real and dropped it, so only the archive's stage snapshots still hold it.
 2. Make the fixes.
 3. Open the next round on the same task and write its own `scope` — the fixes and the range they land
-   in — then run it:
+   in. **That is Step 2's subagent again**, with the same one-line announcement and the task id it
+   already returned, so a re-review costs the session no more output than the first round did. Then
+   run it:
 
 ```bash
-revmux new --task <id> --run 02-after-fix
 revmux --task <id> --run 02-after-fix --profile <picked> --no-tui \
     > /tmp/revmux-<id>-02-after-fix.json 2> /tmp/revmux-<id>-02-after-fix.log
 ```
@@ -418,6 +424,50 @@ over it produces a finding about that sentence round after round while the code 
 Put it as an AskUserQuestion, the matching row first and marked `(Recommended)`.
 Never narrow the roster silently: a user who does not notice gets a smaller review than the one he
 thinks he asked for. Skip the question when he named a profile himself.
+
+## Archive housekeeping
+
+Every round keeps each agent's verbatim stream, so the archive grows by roughly half a megabyte per
+round and revmux prunes nothing on its own. Check it once a session, after the last round is presented —
+never between rounds, and in loop mode only after the loop exits.
+
+```bash
+revmux stats
+```
+
+`totals.size_mb` is the whole archive. Under **20MB**, say nothing and move on: disk has no place in a
+report about findings. Over it, propose getting back to roughly **10MB**.
+
+The proposal is oldest first by `last_run`, whole tasks, and never the task this session reviewed. Each
+`tasks` entry carries the `id`, `description`, `rounds`, `size_mb` and `last_run` a choice is made from.
+
+**A task with no `last_run` at all is not the oldest — it is undated**, and sorting it first offers up a
+task whose rounds never completed ahead of ones that did. Order those by `id` after the dated ones, and
+say in the option that they carry no completed round.
+
+Put it as one AskUserQuestion before anything is removed:
+
+- the oldest tasks that together get under ~10MB as the first option, marked `(Recommended)`
+- the single largest task as a second option, when the first is not already just that task
+- keeping everything as the last option
+
+Every option names the megabytes it frees and, for each task it removes, that task's `description` and
+`rounds` — an option that says only "clean up old tasks", or names ids without saying what they
+reviewed, is not a choice the user can weigh.
+
+**Say what is lost in the question itself:** a removed task takes its rounds with it, so `revmux stats`
+and self mode's corpus both shrink by that much evidence.
+
+Then remove exactly what he picked, one call per task:
+
+```bash
+revmux cleanup --task <id>
+```
+
+It removes that task and prints what went. It is the only thing in revmux that deletes anything, and it
+deletes only the task it is named: a path, a round name or a typo is an error that removes nothing, and
+a task a running review still holds is refused. Never remove a task directory any other way, and never
+widen the set he chose.
 
 ## Debugging a review that looks wrong
 
@@ -540,11 +590,10 @@ run out. Never batch the edits, and never apply one that was not asked about.
 ```
 User: "revmux this branch"
 → preflight.sh → all present
-→ git: on tui-rework, 7 commits vs master, 22 files, +840/-310
-→ revmux config → .paths.tasks has no url or branch match; derive `tui-rework`
-→ task-state.sh tui-rework → exists: false
-→ revmux new --task tui-rework --run 01-initial → paths, created all four
-→ write task.md, scope, goal, profile at the reported paths
+→ git branch --show-current + git status --short → on tui-rework, clean
+→ "Preparing the round for the branch against master…"
+→ one subagent: measures the diff, matches no existing task, derives `tui-rework`, opens
+  01-initial, writes task.md/scope/goal/profile → returns round_dir, wrote[4], 22 files +840/-310
 → revmux --task tui-rework --run 01-initial --no-tui > /tmp/…json  (background)
 → tell user: ~9 min, tail -f /tmp/…log for live progress
 → Monitor on <round_dir>/events.jsonl, milestone kinds only; one folded line a minute, silence between
@@ -555,15 +604,15 @@ User: "revmux this branch"
 ```
 User: "fix the major one and run it again"
 → fix applied
-→ revmux config → branch matches task `tui-rework`, rounds ["01-initial"]
-→ revmux new --task tui-rework --run 02-after-fix → write its own scope
+→ "Preparing the round for the fixes…" → same subagent, task `tui-rework`, opens 02-after-fix
+  and writes its own scope
 → revmux --task tui-rework --run 02-after-fix --no-tui
 → exit 0, nothing above threshold
 ```
 
 ```
 User: "revmux the branch, I want to watch it"
-→ revmux new --task tui-rework --run 01-initial → write its input
+→ subagent prepares 01-initial and returns its paths
 → launch-revmux.sh --task tui-rework --run 01-initial > /tmp/…json  (background)
 → agterm: split session, so a pane overlay on the agent's own pane, TUI live, self-closes 30s after the report
 → no Monitor and no status lines: he is watching it
@@ -577,7 +626,7 @@ User: "revmux pr 123"
 → revmux config → .paths.tasks has no entry with that url; derive `pr-123`
 → git fetch origin pull/123/head:revmux-pr-123; git worktree add /tmp/revmux-pr-123 revmux-pr-123
 → merge-base origin/master revmux-pr-123 → 4ed3259
-→ revmux new --task pr-123 --run 01-initial → write task.md (url, branch, base), scope, goal, context
+→ subagent opens pr-123/01-initial and writes task.md (url, branch, base), scope, goal, context
 → revmux --task pr-123 --run 01-initial --workdir /tmp/revmux-pr-123 --no-tui > /tmp/…json  (background,
   from the repo root — the archive belongs to it, not to the worktree)
 → exit 1, 4 findings; report them

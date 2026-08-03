@@ -279,9 +279,10 @@ one directory holding two runs, with nothing on disk saying so, which is precise
 `task.CheckReclaim` therefore refuses a round holding anything but `input/` and the marker, naming what it
 found. Both `claimRound` and `task.Scaffold` call it on the entries they read through their own handle on
 the round, so `revmux new` and the review path agree about which rounds are still open.
-**The refusal must never become a delete.** revmux has no destructive primitive anywhere, and removing the
-leftovers would destroy the evidence of the run that wrote them; the caller opens a new round and copies
-his `input/` across. Nor may the check be narrowed to a list of names revmux happens to write today — an
+**The refusal must never become a delete.** Removing the leftovers would destroy the evidence of the run
+that wrote them, and nothing on the review path removes anything — `revmux cleanup` is the one destructive
+command, it is reached only by being asked for by name, and it takes a whole task rather than a round.
+The caller opens a new round and copies his `input/` across. Nor may the check be narrowed to a list of names revmux happens to write today — an
 artifact added later would then be missed, and the two-runs-in-one-round case is exactly what it exists to
 catch.
 
@@ -398,15 +399,19 @@ is still loud — the banner names the source and `degraded` carries it.
 It does **not** route through `Pipeline.fail`, and widening it to do so would break the tested degrade path.
 Every whole-file artifact — manifest, composed prompts, stage snapshots, `events.jsonl`, report — does.
 
-### revmux deletes nothing
+### Nothing deletes as a side effect
 
-There is no pruning, no `--keep-runs` and no destructive primitive anywhere in the tool.
-A round holds the caller's own `input/`, so anything that deleted an old round would delete the record of
-what that round reviewed — the one artifact the archive rule exists to preserve.
-Reclaiming space is `rm -rf <tasks-dir>/<task>/<round>`, run by the user, and it is safe because nothing
-links rounds together: the prior-round inventory is rebuilt from whatever directories are there.
+There is no pruning and no `--keep-runs`. A review, `new`, `init`, `config` and `stats` remove nothing,
+ever, and no `--force`, `--overwrite` or reclaim-on-write is added to any of them.
+A round holds the caller's own `input/`, so anything that deleted a round in the course of doing something
+else would delete the record of what that round reviewed — the one artifact the archive rule exists to
+preserve — and it would do it while the caller was asking for a review.
 
-Do not reintroduce a delete to bound growth. Growth is bounded by the user.
+`revmux cleanup` is the sole destructive path, and keeping it a dedicated command is what makes that rule
+statable at all: growth is still bounded by the user, who now names the task rather than composing an
+`rm -rf` out of a layout he should not have to know.
+
+Do not widen it into a flag on anything else, and do not give a running review a way to reach it.
 
 ### Config-management flags
 
@@ -597,9 +602,24 @@ exactly that, and `Rounds` counts what was read, so it stays the denominator of 
 the way an entry carries `rounds_error`: a corpus that quietly shrank reads as a corpus that is smaller, and
 the numbers that shrank are the ones a reflection agent acts on.
 
+**Three numbers are not read from a round's findings at all, and they are what a caller deciding what to
+reclaim reads.** `size_mb` is summed from file sizes rather than block counts, so the same task measures the
+same on any filesystem; it covers every directory under the task, including rounds `Rounds` does not count
+and the caller's own `input/`, because that is what the disk holds. `last_run` is the `finished_at` of the
+most recent round's manifest rather than an mtime, so a copied or re-read tree keeps its answer.
+`description` is `task.Load`'s, the same one `revmux config` reports — absent or unparseable leaves it empty
+rather than failing the call, since a corpus is not where a caller should learn his `task.md` has a typo.
+They are filled after the round fold rather than accumulated through it: a round skipped for unreadable
+artifacts still occupies the disk it occupies.
+
+**The totals fold exact bytes, never the rounded megabytes each task reports.** Adding tenths across a
+corpus drifts against the threshold the user is comparing them to, so `taskStats` keeps an unexported
+`sizeBytes` and `SizeMB` is derived from it at every level.
+
 **`app/archive` decodes `events.jsonl` with a local partial struct, as `history.record` already does for
 `findings.json`.** The artifact package must not import the orchestrator to read back what it wrote. The
-cost is that `"agent_retried"` is spelled in a second place, and CLAUDE.md's keep-in-sync list carries it.
+cost is that `"agent_retried"` is spelled in a second place — and `"finished_at"` in a third, in `size.go` —
+and CLAUDE.md's keep-in-sync list carries both.
 **Only a name the round already tallied is counted under it** — the roster the snapshot recorded, plus the
 sources its findings were stamped with, which `find` fills with the executing agent's own name.
 The stages retry under that same event kind — synthesis emits one naming itself — so counting every name the
@@ -607,6 +627,49 @@ log carries invents a source no roster contains and reports it beside the agents
 The kind is looked for in the raw line before anything is decoded: every other event is discarded, and a
 findings event carries every finding's body through the decoder to reach a field almost no line matches.
 
-**Those four subcommands are the only carve-outs in "stdout belongs to the report", along with `--init` and
+### `revmux cleanup`
+
+The one destructive path in revmux, and a command rather than a flag so that nothing removes anything as a
+side effect of doing something else. `revmux cleanup --task <id>` removes that task and prints what went as
+JSON: the id, the rounds it held and its size, all measured before the tree goes, plus what the tasks root
+costs afterwards. `total_mb_after` is absent when the tasks root could not be
+measured after the removal: that measurement happens once the tree is already gone, so its failure omits
+the number rather than failing a call that succeeded.
+
+**It removes the whole task, never a round.** A task's rounds are one review's history and a reflection
+agent reads them together, so a task that silently lost its early rounds is worse than one that is gone:
+`revmux stats` would keep reporting the remainder as the whole record, and the numbers that shrank are the
+ones a suggestion is built on.
+
+**It declares no `--task` flag of its own**, for the reason `revmux stats` does not — with two declarations
+the one a caller passed is the one nothing reads, and here that removes nothing while reporting success.
+
+**A name that is not one task under the root is an error, and nothing is removed on any of them.** It runs
+`task.CheckName` and then requires the name to be in `task.List`, the same enumeration `revmux config` and
+`revmux stats` report, so this can only remove what those two name. An empty `--task` names the flag rather
+than meaning every task; a typo is an error rather than an empty removal, which would read as a task already
+gone.
+
+**It refuses a task while any of its rounds is claimed by a live run.** That is the marker lock
+`claimRound` holds for a run's lifetime, tried on every round carrying a marker rather than only the ones
+`HasRun` accepts — a live run's marker is still empty, so the rounds that matter most here are exactly the
+ones the round enumeration leaves out. The kernel drops that lock when the process dies, so an abandoned
+round is removable and one being written right now is not; do not swap it for a pid or a timestamp.
+
+**It is a check, not a lock held across the removal, and that is a deliberate ceiling on this command.**
+The lock is released as the check moves on, and a round `revmux new` prepared has no marker to lock, so a
+review claiming a round mid-removal loses it. Carrying the handles through the removal closes half of that
+and costs the plumbing to do it; a task-level lock across `task.Scaffold`, `archive.New` and `Cleanup`
+closes the rest and is a concurrency contract of its own. Neither is proportionate to deleting old review
+logs, where the cost of the race is one interrupted review.
+For the same reason `os.Root.RemoveAll` being non-atomic is reported rather than engineered around: the
+error says part of the task may remain, never that it did, because nothing at that point can tell the two
+apart. Do not add a quarantine directory, a rename-then-purge commit point, or a preflight walk.
+
+**The removal goes through an `os.Root` on the tasks root**, like every other write in revmux. The name
+having been checked is not containment for an operation that walks a whole tree, and the check-then-remove
+window is the one the roots exist to close.
+
+**Those five subcommands are the only carve-outs in "stdout belongs to the report", along with `--init` and
 `--version`.** None of them runs a pipeline, so there is no report to collide with and no TUI to gate; every
 one of them prints and exits before either exists.

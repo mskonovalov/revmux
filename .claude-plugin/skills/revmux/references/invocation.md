@@ -11,8 +11,9 @@ revmux      --task <id> --run <name> [--profile <name> | --lenses a,b] [--no-tui
 creates the round and reports the paths to fill; the review reads what was written there and creates
 nothing. See `task-dir.md`.
 
-Three more subcommands take no round at all — `revmux config`, `revmux stats` and `revmux init`. Each
-prints JSON on stdout, runs no pipeline and exits before one exists; all three are covered below.
+Four more subcommands take no round at all — `revmux config`, `revmux stats`, `revmux init` and
+`revmux cleanup`. Each prints JSON on stdout, runs no pipeline and exits before one exists; all four are
+covered below.
 
 ## Run it in the background, and do not poll
 
@@ -427,7 +428,8 @@ pipeline, spawns nothing and writes nothing, so it is always safe to call. An em
 valid empty document rather than an error; a `--task` naming no task under the root exits `2`.
 
 ```json
-{"tasks": [{"id": "pr-123", "rounds": 5, "skipped": [],
+{"tasks": [{"id": "pr-123", "description": "the auth refactor", "rounds": 5,
+            "size_mb": 6.6, "last_run": "2026-07-27", "skipped": [],
             "agents": [{"name": "bugs+impl", "raised": 8, "survived": 8, "corroborated": 5,
                         "degraded_rounds": 0, "retries": 0, "tokens": 10441185}],
             "lenses": [{"name": "bugs", "raised": 14, "ambiguous": 3,
@@ -435,7 +437,8 @@ valid empty document rather than an error; a `--task` naming no task under the r
             "stages": [{"name": "synthesis", "in": 62, "out": 46},
                        {"name": "verify", "in": 46, "out": 46},
                        {"name": "report", "in": 46, "out": 46}]}],
- "totals": {"rounds": 5, "skipped": [], "agents": [], "lenses": [], "stages": []}}
+ "totals": {"rounds": 5, "size_mb": 6.6, "last_run": "2026-07-27",
+            "skipped": [], "agents": [], "lenses": [], "stages": []}}
 ```
 
 `totals` is every task folded together and carries no `id`. The sample is abbreviated: a real run
@@ -470,6 +473,44 @@ beside it.
 
 `degraded_rounds` and `retries` come out zero on a healthy corpus, and zero means supervision never had
 to intervene. It is an absence, not a finding, and nothing should be inferred from it.
+
+`size_mb`, `last_run` and `description` are the three a cleanup decision reads rather than a review one:
+the disk the task occupies — every round plus the caller's own `input/`, summed from file sizes, so it
+reads a little under `du` — the `finished_at` of its newest round, and its `task.md` one-liner. A task
+with no `task.md`, or one that will not parse, simply reports no description.
+
+## `revmux cleanup` — remove a task once it is no longer worth keeping
+
+```bash
+revmux cleanup --task pr-123
+```
+
+Removes that task and everything under it, and prints what went as JSON. It is the only thing in revmux
+that deletes anything: a review, `new`, `init`, `config` and `stats` remove nothing, so nothing is ever
+removed as a side effect of doing something else.
+
+```json
+{"tasks_dir": "/repo/.revmux/tasks",
+ "removed": [{"id": "pr-123", "rounds": 5, "size_mb": 6.6}],
+ "total_mb_after": 6.4}
+```
+
+`total_mb_after` is absent when the tasks root could not be measured after the removal — it is taken once
+the tree is gone, so its failure omits the number rather than failing a call that succeeded. `removed` is
+always there.
+
+It removes a **whole task**, never a round inside one: a task's rounds are one review's history and are
+read together, so a task that lost its early rounds would keep being reported by `revmux stats` as the
+whole record.
+
+It refuses more than it removes, and nothing is removed on any refusal. A name that is not one task
+directly under the tasks root — a path, a `..`, a round name, a typo — exits `2`. An absent `--task`
+names the flag rather than meaning every task. A task a running review holds is refused — but that is a
+check taken as it goes, not a lock held across the removal, so a review that claims a round after the
+check has passed it loses that round. Don't run cleanup against a task a review is working on.
+
+What to remove is decided from `revmux stats`. There is no age threshold, no size cap and no all-tasks
+form: the decision is the user's, one task per call.
 
 ## Environment
 
@@ -525,11 +566,12 @@ command review different context in different directories.
 
 ## Cleaning up
 
-revmux deletes nothing and rounds accumulate. Reclaim space by removing round directories:
+Rounds accumulate and nothing removes them as a side effect. Reclaiming is `revmux cleanup`, above:
 
 ```bash
-rm -rf <tasks-dir>/<task>/<round>
+revmux cleanup --task <id>
 ```
 
-Safe at any time. Nothing links rounds together — the prior-round inventory is rebuilt from whichever
-round directories are present.
+Whole tasks rather than rounds, and refused while a running review holds one — safe at any other time.
+Nothing links tasks together, and the prior-round inventory is rebuilt from whichever round directories
+are present.

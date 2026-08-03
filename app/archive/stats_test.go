@@ -15,8 +15,11 @@ import (
 func TestCorpus_JSON(t *testing.T) {
 	c := Corpus{
 		Tasks: []taskStats{{
-			ID:     "pr-123",
-			Rounds: 2,
+			ID:          "pr-123",
+			Description: "the round-layout rework",
+			SizeMB:      6.6,
+			LastRun:     "2026-07-27",
+			Rounds:      2,
 			Agents: []agentStats{{
 				Name: "bugs+impl", Raised: 5, Survived: 4, Corroborated: 3,
 				DegradedRounds: 1, Retries: 2, Tokens: 4986379,
@@ -27,7 +30,7 @@ func TestCorpus_JSON(t *testing.T) {
 			}},
 			Stages: []stageFlow{{Name: "synthesis", In: 26, Out: 17}},
 		}},
-		Totals: taskStats{Rounds: 2},
+		Totals: taskStats{Rounds: 2, SizeMB: 6.6, LastRun: "2026-07-27"},
 	}
 
 	data, err := json.Marshal(c)
@@ -38,8 +41,12 @@ func TestCorpus_JSON(t *testing.T) {
 	task := got["tasks"].([]any)[0].(map[string]any)
 
 	t.Run("every field a caller reads is named in snake case", func(t *testing.T) {
-		assert.Equal(t, []string{"agents", "id", "lenses", "rounds", "skipped", "stages"}, keys(task))
+		assert.Equal(t, []string{"agents", "description", "id", "last_run", "lenses", "rounds", "size_mb",
+			"skipped", "stages"}, keys(task))
 		assert.Equal(t, "pr-123", task["id"])
+		assert.Equal(t, "the round-layout rework", task["description"], "what a caller weighs before removing it")
+		assert.InDelta(t, 6.6, task["size_mb"], 0.01)
+		assert.Equal(t, "2026-07-27", task["last_run"])
 
 		assert.Equal(t, []string{"corroborated", "degraded_rounds", "name", "raised", "retries", "survived", "tokens"},
 			keys(task["agents"].([]any)[0].(map[string]any)))
@@ -53,9 +60,14 @@ func TestCorpus_JSON(t *testing.T) {
 		assert.Equal(t, map[string]any{"confirmed": 1.0, "unverified": 2.0}, lens["verdicts"])
 	})
 
-	t.Run("totals carry no id, since they are every task at once", func(t *testing.T) {
-		assert.Equal(t, []string{"agents", "lenses", "rounds", "skipped", "stages"},
-			keys(got["totals"].(map[string]any)))
+	// the totals fold both size and date across tasks — only the id and the description are per-task,
+	// since no one description covers a corpus
+	t.Run("totals carry size and date but no id or description", func(t *testing.T) {
+		totals := got["totals"].(map[string]any)
+		assert.Equal(t, []string{"agents", "last_run", "lenses", "rounds", "size_mb", "skipped", "stages"},
+			keys(totals))
+		assert.InDelta(t, 6.6, totals["size_mb"], 0.01)
+		assert.Equal(t, "2026-07-27", totals["last_run"], "the corpus's own last review")
 	})
 }
 

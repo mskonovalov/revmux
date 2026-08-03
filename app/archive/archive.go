@@ -2,8 +2,10 @@
 //
 // A round holds the caller's own input/ beside them, which is what makes the review auditable from the
 // round alone: the composed prompt each process actually received, the findings after each stage,
-// revmux's own decisions, and every agent's verbatim stream. Nothing above the round is written, and
-// nothing anywhere is deleted.
+// revmux's own decisions, and every agent's verbatim stream. Nothing above the round is written.
+//
+// Cleanup is the one thing here that removes anything, and it is a whole task at a time, reached only by
+// `revmux cleanup` naming that task. Nothing on the review path deletes.
 package archive
 
 import (

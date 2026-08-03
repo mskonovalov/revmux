@@ -47,6 +47,7 @@ If a note would be equally true of any Go project, it does not belong here.
 - `app/initcmd.go` — the `revmux init` subcommand, and the `--init` flag routed into it, which materialize
   `./.revmux/` and print what is in it
 - `app/statscmd.go` — the `revmux stats` subcommand, which prints the corpus `app/archive` aggregates
+- `app/cleanupcmd.go` — the `revmux cleanup` subcommand, the one thing in revmux that removes anything
 - `app/treewriter.go` — the one materializer `revmux init` and `--dump-defaults` both write prompt files
   through, contained by an `os.Root` on its destination
 - `app/artifacts.go` — the artifacts `package main` owns: `manifest.json`, `report.md`, `findings.json`
@@ -70,8 +71,18 @@ If a note would be equally true of any Go project, it does not belong here.
 They contain no Go and are not built; they are documentation plus four shell scripts.
 The two trees carry duplicate copies of `references/` and `scripts/` on purpose — a plugin has to be
 self-contained once installed, so a shared directory is not available to them.
-**A change to one must be made to the other**, and the only intended divergence is in `SKILL.md`:
-script-path resolution and the harness's own way of asking a question.
+**A change to one must be made to the other**, and every intended divergence is in `SKILL.md` and is a
+capability one harness has and the other does not: script-path resolution, the harness's own way of
+asking a question, and whether round preparation is delegated.
+Both hand the git measuring, the task match and the context writing to one subagent, so a dozen tool
+calls the user has no use for stay out of the session that reports the review — Claude Code through the
+Agent tool, codex through its own built-in `spawn_agent` subagents, which are on by default in 0.146.0 and
+work under `codex exec`.
+The codex text names no tool: which backend is live there is chosen by model metadata rather than by the
+`multi_agent_v2` feature flag, so it authorizes the workflow in words — "spawn one subagent", "wait", "use
+only its final summary" — and a hardcoded `collaboration.spawn_agent` would be wrong for half the models.
+Anything **not** rooted in such a capability is drift rather than divergence, and the review procedure —
+what gates, which profile a re-review picks, how a finding is presented — is the same text in both.
 
 ## Hard rules
 
@@ -115,13 +126,36 @@ A loop re-runs one task under successive run names and accumulates rounds.
 There are no `--goal`, `--goal-file`, `--profile-file` or `--context-file` flags —
 one mechanism, no precedence rules, nothing for revmux to author.
 
-**revmux writes only inside a round, and deletes nothing at all.**
+**revmux writes only inside a round, and nothing it does in the course of a review deletes anything.**
 `revmux new --task <id> --run <name>` is the one thing that creates any of this, and it prints the absolute
 paths the caller writes to, so no caller composes a path out of the diagram above.
 Every other path opens and never creates: a typo'd `--task` is an error rather than an empty task nobody
 filled.
-There is no pruning and no `--keep-runs` — reclaiming space is `rm -rf <tasks-dir>/<task>/<round>`, and it is
-the user's to run.
+There is no pruning and no `--keep-runs`: nothing revmux does in the course of a review, or in `new`,
+`init`, `config` or `stats`, removes anything.
+
+**`revmux cleanup` is the sole exception, and it is dedicated to being one.**
+It takes one `--task` and removes that task, so nothing removes anything as a side effect of doing
+something else — which is the property the rule above is really about, and it survives having a command
+whose entire purpose is stated in its name.
+It removes the whole task rather than a round inside it, because a task's rounds are one review's history
+and a reflection agent reads them together: a history that silently lost its early rounds is worse than
+one that is gone, and it is `revmux stats` reading those rounds that would go quietly wrong.
+**A failure measuring the root afterwards is not a failed removal**, so `total_mb_after` is simply omitted
+rather than turning a completed removal into an error.
+That holds inside `archive.Cleanup` and not above it: a payload that cannot be written to stdout still
+exits `2`, and the task is gone. This is a command that removes old review logs — the state is visible in
+the next `revmux stats`, and it is not worth a second reporting channel to say so.
+It refuses a task any round of which is claimed by a live run — the marker lock `archive.claimRound`
+takes, which the kernel drops when the holder dies, so a review running right now is distinguishable from
+one that was killed.
+**It is a check and not a guarantee**, and deliberately: the lock is released as the check moves on, and a
+round with no marker yet carries nothing to lock at all, so a review that claims a round while the removal
+runs loses it. Closing that needs handles carried through the removal, or a task-level lock across
+`task.Scaffold`, `archive.New` and `Cleanup`. Neither is worth it here — what is lost is one run of a
+review the user can start again, and this is a command for deleting old review logs.
+`RemoveAll` is not atomic either, so a failed removal may leave part of the task behind; the error says it
+may, never that it did, because from there the two are indistinguishable.
 
 **`task.md` is stored and reported, never resolved.**
 Its `description`, `url`, `branch` and `base` let a caller match an existing task instead of guessing at an id
@@ -283,8 +317,9 @@ The TUI renders to the tty, progress lines go to stderr, and only the report is 
 That is what makes `revmux > findings.json` work with the TUI running at the same time.
 Never print a status message, warning or banner to stdout.
 Gate the TUI on the tty being openable — never on stdout being a TTY, which is false whenever the report is redirected.
-The only exceptions are the four subcommands — `revmux config`, `revmux new`, `revmux init` and
-`revmux stats` — plus `--init`, which is the flag spelling of one of them, and `--version`.
+The only exceptions are the five subcommands — `revmux config`, `revmux new`, `revmux init`,
+`revmux stats` and `revmux cleanup` — plus `--init`, which is the flag spelling of one of them, and
+`--version`.
 All of them print on stdout and exit before any pipeline, archive or TUI exists, so there is no report for
 any of them to collide with.
 Each writes it from `runOpts` through the injected writer rather than from its own `Execute`, which go-flags
@@ -386,10 +421,14 @@ Stamping happens in `find`, not synthesis, or `--no-synthesis` runs carry invent
   `verify` and `report` itself, and `stageFlow.Name` puts them in the JSON beside the ones `app/pipeline`
   fills `finding.Report.Stats.Stages[].Name` with. A rename on one side compiles and passes, and leaves one
   archive's two arrays calling the same stage different things.
+  `manifest.json`'s `finished_at` is a third instance of it: `app/archive/size.go` decodes the marker
+  through its own partial struct to date a task, rather than importing `package main`'s manifest type,
+  so renaming that field in `app/artifacts.go` compiles and passes and leaves every task reporting no
+  `last_run` — which reads as a corpus of reviews that never completed.
 - A new subcommand needs: the `options` field with its `command:` tag, the `show*` selection field, the
   back-pointer in `parseArgs`, and the case in `run()`. Then five places enumerate the set literally and go
   stale silently — the stdout carve-out above, the same list in `.claude/rules/config.md`, the
-  "four subcommands" sentence plus the section in README, the project-structure list in this file, and the
+  "five subcommands" sentence plus the section in README, the project-structure list in this file, and the
   subcommand sections in **both** skill trees.
 - A new lens file needs an entry in at least one shipped profile, or nothing will ever run it.
 - **The severity bar is duplicated in every profile body** and nothing composes it from one place:

@@ -70,10 +70,11 @@ type options struct {
 	DumpDefaults string `long:"dump-defaults" no-ini:"true" description:"extract the embedded prompt tree into a directory"`
 	Version      bool   `long:"version" no-ini:"true" description:"show version and exit"`
 
-	Config  configCmd `command:"config" description:"print the resolved configuration as JSON"`
-	New     newCmd    `command:"new" description:"create a task round and print the paths its context goes in"`
-	InitCmd initCmd   `command:"init" description:"materialize the resolved config and prompt tree into ./.revmux/"`
-	Stats   statsCmd  `command:"stats" description:"print what past rounds produced, per agent and per lens, as JSON"`
+	Config  configCmd  `command:"config" description:"print the resolved configuration as JSON"`
+	New     newCmd     `command:"new" description:"create a task round and print the paths its context goes in"`
+	InitCmd initCmd    `command:"init" description:"materialize the resolved config and prompt tree into ./.revmux/"`
+	Stats   statsCmd   `command:"stats" description:"print what past rounds produced, per agent and per lens, as JSON"`
+	Cleanup cleanupCmd `command:"cleanup" description:"remove the task named by --task, with every round it holds"`
 
 	layers      configLayers
 	knobOrigins map[string]string
@@ -81,6 +82,7 @@ type options struct {
 	showNew     bool
 	showInit    bool
 	showStats   bool
+	showCleanup bool
 }
 
 // configLayers are the two on-disk roots searched ahead of the embedded defaults, resolved once during
@@ -110,7 +112,7 @@ func parseArgs(args []string) (options, error) {
 	p := flags.NewParser(&o, flags.HelpFlag|flags.PassDoubleDash)
 	p.SubcommandsOptional = true // a plain `revmux --task pr-123` carries no command word
 	// the back-pointers are only how each Execute records the selection during this parse
-	o.Config.opts, o.New.opts, o.InitCmd.opts, o.Stats.opts = &o, &o, &o, &o
+	o.Config.opts, o.New.opts, o.InitCmd.opts, o.Stats.opts, o.Cleanup.opts = &o, &o, &o, &o, &o
 	if _, err := p.ParseArgs(args); err != nil {
 		return o, fmt.Errorf("parse arguments: %w", err)
 	}

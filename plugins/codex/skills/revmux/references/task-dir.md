@@ -236,11 +236,13 @@ instruction.
 
 Round 2's `scope.md` describes what round 2 reviews: the fixes, and the range they land in.
 
-## Removing a round
+## Removing a task
 
 ```bash
-rm -rf <round_dir>
+revmux cleanup --task <id>
 ```
 
-revmux deletes nothing itself, so rounds accumulate until removed by hand. Nothing links rounds
-together: removing one loses that round's own record and affects nothing else.
+Rounds accumulate and nothing removes them as a side effect of a review. `revmux cleanup` is the one
+command that does, and it takes a whole task: a task's rounds are one review's history and are read
+together, so removing part of one leaves `revmux stats` reporting the remainder as the whole record.
+Nothing links tasks together, so removing one loses that task's own record and affects nothing else.

@@ -182,12 +182,15 @@ type statsDoc struct {
 }
 
 type statsTask struct {
-	ID      string       `json:"id"`
-	Rounds  int          `json:"rounds"`
-	Skipped []string     `json:"skipped"`
-	Agents  []statsAgent `json:"agents"`
-	Lenses  []statsLens  `json:"lenses"`
-	Stages  []statsStage `json:"stages"`
+	ID          string       `json:"id"`
+	Description string       `json:"description"`
+	SizeMB      float64      `json:"size_mb"`
+	LastRun     string       `json:"last_run"`
+	Rounds      int          `json:"rounds"`
+	Skipped     []string     `json:"skipped"`
+	Agents      []statsAgent `json:"agents"`
+	Lenses      []statsLens  `json:"lenses"`
+	Stages      []statsStage `json:"stages"`
 }
 
 type statsAgent struct {

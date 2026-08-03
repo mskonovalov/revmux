@@ -173,8 +173,9 @@ func Rounds(taskDir string) ([]string, error) {
 // archive.New's claim and Scaffold both read them the same way, so `revmux new` and the review path agree
 // about which rounds are still open.
 //
-// Nothing is deleted to make such a round usable: revmux has no destructive primitive, and the caller's
-// own input/ copies across to a new round.
+// Nothing is deleted to make such a round usable: no path that reviews, scaffolds or reports removes
+// anything — `revmux cleanup` is the one command that does, it is asked for by name, and it takes a whole
+// task rather than a round. The caller's own input/ copies across to a new round.
 func CheckReclaim(dir string, entries []os.DirEntry) error {
 	leftovers := []string{}
 	for _, e := range entries {
@@ -188,7 +189,7 @@ func CheckReclaim(dir string, entries []os.DirEntry) error {
 	}
 	return fmt.Errorf("round %s was claimed by a run that never came back and still holds what it wrote (%s): "+
 		"re-using it would put two runs' artifacts under one %s, so open a new round instead — the %s/ you "+
-		"wrote copies across, and revmux deletes nothing", dir, strings.Join(leftovers, ", "), ManifestFile, InputDir)
+		"wrote copies across, and nothing here deletes it", dir, strings.Join(leftovers, ", "), ManifestFile, InputDir)
 }
 
 // Round addresses one round: the tasks root, the task under it, and the round's own name. Scaffold

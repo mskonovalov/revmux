@@ -90,6 +90,27 @@ func (q StatsQuery) collect(id string) (taskStats, error) {
 		st := r.stats()
 		out.add(taskStats{Rounds: 1, Agents: st.agents, Lenses: st.lenses, Stages: st.stages})
 	}
+
+	// what this task costs and when it was last reviewed are not read from a round's findings, so they are
+	// filled after the fold rather than accumulated through it: a round skipped for unreadable artifacts
+	// still occupies the disk it occupies, and leaving it out would understate exactly the task a caller
+	// deciding what to reclaim is looking at
+	size, unread, err := dirSize(dir)
+	if err != nil {
+		return taskStats{}, err
+	}
+	out.sizeBytes, out.SizeMB, out.LastRun = size, mb(size), lastRun(dir, rounds)
+	// an entry the walk could not read leaves the size a floor, and that is said rather than left to be
+	// read as the task's real cost — one unreadable round under one task must not discard the corpus
+	for _, path := range unread {
+		out.Skipped = append(out.Skipped, path+": unreadable, so size_mb is a floor")
+	}
+
+	// a task.md that is absent or will not parse leaves the description empty rather than failing the
+	// call: `revmux config` is where a parse failure is named, and a corpus is not the place to learn of one
+	if meta, metaErr := task.Load(dir); metaErr == nil {
+		out.Description = meta.Description
+	}
 	return out, nil
 }
 
@@ -107,6 +128,14 @@ func newTaskStats(id string) taskStats {
 // parameters the argument order silently decides which ID and Rounds survive, and both readings compile.
 func (t *taskStats) add(o taskStats) {
 	t.Rounds += o.Rounds
+	// bytes rather than the reported megabytes: folding rounded values would drift by a tenth per task,
+	// and the totals are what a caller compares against the threshold he set
+	t.sizeBytes += o.sizeBytes
+	t.SizeMB = mb(t.sizeBytes)
+	// dates are ISO, so the later one is the greater one; the totals' date is the corpus's own last review
+	if o.LastRun > t.LastRun {
+		t.LastRun = o.LastRun
+	}
 	t.Skipped = append(t.Skipped, o.Skipped...)
 	t.addAgents(o.Agents)
 	t.addLenses(o.Lenses)

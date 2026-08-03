@@ -17,6 +17,27 @@ type Corpus struct {
 type taskStats struct {
 	ID string `json:"id,omitempty"`
 
+	// Description is what this task's task.md says it covers, from the same task.Load `revmux config`
+	// reports it with. It is here so one call answers what a caller deciding between tasks needs — an id
+	// alone says nothing about what would be given up by removing it. Empty on Corpus.Totals, and empty
+	// for a task with no task.md or one that would not parse: this command reports the record, and
+	// `revmux config` is where a parse failure is named.
+	Description string `json:"description,omitempty"`
+
+	// SizeMB is what this task occupies on disk, every round and the caller's own input/ alike, summed
+	// from the file sizes rather than from block counts so two filesystems report the same task the same.
+	// It is the only number here that is not read back out of an artifact's content.
+	SizeMB float64 `json:"size_mb"`
+
+	// sizeBytes is what SizeMB is rounded from, kept so the totals fold exact byte counts: adding the
+	// rounded megabytes of every task drifts by up to a tenth each, against a threshold the user set.
+	sizeBytes int64
+
+	// LastRun is the finished_at of the most recent round's manifest, as a date. The manifest is written
+	// when the run completes, so this is when the task was last reviewed rather than when anything last
+	// touched the directory. Empty when no round carries one.
+	LastRun string `json:"last_run,omitempty"`
+
 	// Rounds is the rounds these numbers were read from: task.HasRun accepts it, so a prepared round nobody
 	// ran is not one, and its artifacts decoded, so a round left half-written by an interrupted run is not
 	// one either. It is the denominator of everything beside it.
@@ -102,4 +123,26 @@ type stageFlow struct {
 type StatsQuery struct {
 	TasksDir string
 	Task     string // empty means every task under TasksDir
+}
+
+// CleanupResult is what Cleanup removed and what the tasks root costs afterwards. Removed is an array
+// holding the one task this call took, so a caller reading it need not special-case the single-task shape
+// against the numbers `revmux stats` reports as arrays.
+type CleanupResult struct {
+	TasksDir string    `json:"tasks_dir"`
+	Removed  []Removal `json:"removed"`
+
+	// TotalMB is absent when the root could not be measured after the removal. That measurement happens
+	// after the tree is gone, so its failure may not fail the call — the removal succeeded, and a caller
+	// told otherwise reports a task that is in fact removed. An omitted number says only that: what went
+	// is still in Removed, measured before it went.
+	TotalMB *float64 `json:"total_mb_after,omitempty"`
+}
+
+// Removal is one task that is gone, measured before it went: after the tree is removed there is nothing
+// left to read these back from, and they are the caller's only record of what he gave up.
+type Removal struct {
+	ID     string  `json:"id"`
+	Rounds int     `json:"rounds"`
+	SizeMB float64 `json:"size_mb"`
 }
