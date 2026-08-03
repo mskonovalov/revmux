@@ -379,12 +379,12 @@ while its lenses define the job independently of the runner.
 
 ```yaml
 ---
-description: all six lenses across three claude agents plus an adversarial codex peer
+description: all seven lenses across three claude agents plus an adversarial codex peer
 model: claude/opus:high
 agents:
   - {name: bugs+impl,    lenses: [bugs, impl],            color: cyan}
   - {name: arch+quality, lenses: [architecture, quality], color: magenta}
-  - {name: docs+tests,   lenses: [docs, tests],           color: green}
+  - {name: docs+tests,   lenses: [docs, tests, comments], color: green}
   - {name: codex, lenses: [adversarial], model: codex/gpt-5.6-sol:high, color: yellow}
 ---
 ```
@@ -440,7 +440,7 @@ Shipped profiles:
 
 | profile | roster |
 |---|---|
-| `comprehensive` | `bugs+impl`, `arch+quality`, `docs+tests` on claude, plus an adversarial codex peer |
+| `comprehensive` | `bugs+impl`, `arch+quality`, `docs+tests` on claude, the last carrying `comments` too, plus an adversarial codex peer |
 | `focused` | one `bugs` agent plus the codex peer, for a small or time-boxed change |
 | `final` | `bugs+impl` plus the codex peer, nothing below major reported |
 | `claude-only` | the same four lens splits on claude, no codex peer — for a machine with no codex |
@@ -462,6 +462,7 @@ codex the same way. Lens text stays executor-agnostic: the output-contract diffe
 | `quality` | style, over-engineering, error handling and accidental duplication in code that already works |
 | `docs` | documentation accuracy — doc comments against the code, and the project docs the change leaves stale |
 | `tests` | whether tests exist where a defect can hide, actually exercise the code, and survive concurrency |
+| `comments` | the code's own stated rules — doc comments and inline notes the change was supposed to obey |
 | `adversarial` | attacks the change looking for what a sympathetic reader would accept |
 
 `--lenses bugs,impl` replaces a profile's roster while keeping its body. It produces **one** agent carrying
@@ -854,8 +855,16 @@ counted.
 
 **Per stage.** `in` and `out` for `synthesis`, `verify` and `report`, each the union of that report's four
 finding arrays. `report` carries the `--min-confidence` attrition. There is no `find` entry, since nothing
-goes into it. A run with `--no-synthesis` or `--no-verify` has no entry for the stage it skipped, and one
-that skipped both reports `survived` equal to `raised` for every agent — nothing filtered anything.
+goes into it.
+
+`reclassified` and `refined` are there because `in` and `out` understate verification badly. The counts are
+that union, so a finding moved into `immaterial` or `pre_existing` leaves the total unchanged and shows as
+no attrition at all — over one corpus verify dropped 2 findings of the 150 that reached it while lowering
+the severity of 28. Judged on `in` and `out` alone the stage looks inert, and it is not: it is the only
+stage that lowers a severity. Both fields are each stage's own contribution rather than a running total, so
+`report`, which only filters, reports neither. A run with `--no-synthesis` or `--no-verify` has no entry
+for the stage it skipped, and one that skipped both reports `survived` equal to `raised` for every
+agent — nothing filtered anything.
 
 Every survivor and every per-lens number comes from the per-stage snapshots under `stages/`, never from the
 round's `findings.json` — that one is the filtered report, and counting survivors there undercounts them.
@@ -937,7 +946,11 @@ scripts:
   kitty, wezterm, cmux, ghostty, iTerm2, Emacs vterm), returning the report on stdout and revmux's own
   exit code
 
-That last one exists because an agent's shell has no tty, so the TUI never appears there. The overlay
+- `analyze-corpus.py` — read the run archive and report what it says about the review itself: which stage
+  is filtering, which lens rates hardest, whether the gating count converges. It is what self mode runs
+  instead of deriving those by hand, since several of them are easy to read backwards
+
+The launcher exists because an agent's shell has no tty, so the TUI never appears there. The overlay
 is how a user watches a review happen; everything else about the run is identical. Under agterm it
 opens as a floating panel at 80% of the pane — except in a visible split, where it takes the pane the
 agent runs in and leaves the sibling pane live, tinted toward blue so a full-pane overlay is

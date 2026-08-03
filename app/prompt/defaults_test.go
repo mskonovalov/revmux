@@ -164,8 +164,11 @@ func TestDefaults_ComprehensiveRoster(t *testing.T) {
 		Model: "opus", Effort: "high", Color: "6", ColorName: "cyan"}, specs[0])
 	assert.Equal(t, AgentSpec{Name: "arch+quality", Lenses: []string{"architecture", "quality"}, Executor: "claude",
 		Model: "opus", Effort: "high", Color: "5", ColorName: "magenta"}, specs[1])
-	assert.Equal(t, AgentSpec{Name: "docs+tests", Lenses: []string{"docs", "tests"}, Executor: "claude",
-		Model: "opus", Effort: "high", Color: "2", ColorName: "green"}, specs[2])
+	assert.Equal(t, AgentSpec{Name: "docs+tests", Lenses: []string{"docs", "tests", "comments"},
+		Executor: "claude", Model: "opus", Effort: "high", Color: "2", ColorName: "green"}, specs[2],
+		"comments rides with docs rather than taking a slot of its own: the two overlap on a stale doc "+
+			"comment, so one process settles that where two would both report it, and a fifth agent "+
+			"would queue behind the default --max-parallel of 4")
 	assert.Equal(t, AgentSpec{Name: "codex", Lenses: []string{"adversarial"}, Executor: "codex",
 		Model: "gpt-5.6-sol", Effort: "high", Color: "3", ColorName: "yellow"}, specs[3],
 		"codex is a peer source in the default roster, not a second pass over the others")
@@ -174,7 +177,8 @@ func TestDefaults_ComprehensiveRoster(t *testing.T) {
 	for _, spec := range specs {
 		carried = append(carried, spec.Lenses...)
 	}
-	assert.ElementsMatch(t, []string{"bugs", "impl", "architecture", "quality", "docs", "tests", "adversarial"}, carried,
+	assert.ElementsMatch(t,
+		[]string{"bugs", "impl", "architecture", "quality", "docs", "tests", "comments", "adversarial"}, carried,
 		"the flagship profile carries every shipped lens exactly once")
 }
 
@@ -229,7 +233,8 @@ func TestDefaults_LensesAreSelfContained(t *testing.T) {
 	set, err := Load(LoadOpts{})
 	require.NoError(t, err)
 	lenses := set.Lenses()
-	require.Len(t, lenses, 7, "the shipped set is bugs, impl, architecture, quality, docs, tests and adversarial")
+	require.Len(t, lenses, 8,
+		"the shipped set is bugs, impl, architecture, quality, docs, tests, comments and adversarial")
 
 	for _, l := range lenses {
 		body, err := set.lens(l.Name)
@@ -312,4 +317,31 @@ func TestDefaults_ComposeEveryAgentOfEveryProfile(t *testing.T) {
 		require.NoError(t, err, name)
 		assert.NotEmpty(t, out)
 	}
+}
+
+func TestDefaults_WhatNotToReportContract(t *testing.T) {
+	// the second block duplicated byte-identically across every profile, and the one a finder consults
+	// before writing anything down: a rule added to one and not the others makes the same finding
+	// reportable under one review shape and suppressed under another. The severity bar has been pinned
+	// since it shipped and has never drifted; this one was unpinned and drifted twice
+	set, err := Load(LoadOpts{})
+	require.NoError(t, err)
+
+	var expected string
+	for _, name := range set.ProfileNames() {
+		p, profileErr := set.Profile(name)
+		require.NoError(t, profileErr)
+		start := strings.Index(p.Body, "## What not to report")
+		require.NotEqual(t, -1, start, "profile %s has no what-not-to-report section", name)
+		section := strings.TrimSpace(p.Body[start:])
+		if expected == "" {
+			expected = section
+			continue
+		}
+		assert.Equal(t, expected, section,
+			"profile %s suppresses a different set than the others do", name)
+	}
+	assert.Contains(t, expected, "a defect on a line this change did not touch")
+	assert.Contains(t, expected, "anything a linter, compiler or type checker catches")
+	assert.Contains(t, expected, "Pre-existing problems are the one exception")
 }

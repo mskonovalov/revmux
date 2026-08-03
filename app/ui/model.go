@@ -419,6 +419,10 @@ func (a *agentState) track(ev pipeline.Event) string {
 		// logging both prints the number twice in consecutive lines
 		a.last = strconv.Itoa(len(ev.Findings)) + " findings emitted"
 		return ""
+	case pipeline.EventDropped:
+		// a log line rather than the status cell, which the done event overwrites a moment later. What
+		// synthesis removed is the one thing about the stage the final report cannot be asked
+		return ev.Text
 	case pipeline.EventRateLimit:
 		a.state, a.last = stateLimited, "rate limited: "+ev.Text
 	default:

@@ -214,7 +214,7 @@ func (v *verifier) runOne(ctx context.Context, g verifyGroup) ([]finding.Finding
 		return nil, err
 	}
 	v.emit(Event{Kind: EventAgentDone, Agent: agent, Text: strconv.Itoa(len(out)) + " of " +
-		strconv.Itoa(len(g.findings)) + " kept"})
+		strconv.Itoa(len(g.findings)) + " kept" + v.adjusted(g.findings, out)})
 	return out, nil
 }
 
@@ -259,6 +259,64 @@ func (v *verifier) apply(g verifyGroup, raw json.RawMessage) ([]finding.Finding,
 		kept = append(kept, d.applyTo(f))
 	}
 	return kept, nil
+}
+
+// rank orders the severity vocabulary so a change between two of them can be read as a direction rather
+// than as a pair. An unrecognized value ranks with minor: the codex path has no schema enforcing the
+// vocabulary, and inventing a rank for whatever arrives would report a direction nothing established.
+func (v *verifier) rank(s finding.Severity) int {
+	switch s {
+	case finding.Critical:
+		return 3
+	case finding.Major:
+		return 2
+	default:
+		return 1
+	}
+}
+
+// adjusted says what verification changed about a group beyond keeping or rejecting it.
+//
+// "2 of 2 kept" is the whole story only if verification is a filter, and it is not: measured over one
+// archived corpus it rejected 2 findings of the 150 that reached it while lowering the severity of 21
+// and rewriting many more. A group whose count did not move looks like a verifier that did nothing, and
+// that reading is what makes the stage look worth removing.
+func (v *verifier) adjusted(before, after []finding.Finding) string {
+	was := make(map[string]finding.Severity, len(before))
+	for _, f := range before {
+		was[f.ID] = f.Severity
+	}
+
+	lowered, raised, refined := 0, 0, 0
+	for _, f := range after {
+		// ranked rather than tested against minor at one end: critical -> major is a lowering the
+		// verifier really produces, and comparing only to minor counted it as neither direction
+		if old, ok := was[f.ID]; ok {
+			switch was, now := v.rank(old), v.rank(f.Severity); {
+			case now < was:
+				lowered++
+			case now > was:
+				raised++
+			}
+		}
+		if f.Verdict == finding.Refined {
+			refined++
+		}
+	}
+
+	parts := make([]string, 0, 3)
+	for _, p := range []struct {
+		n    int
+		what string
+	}{{lowered, "lowered"}, {raised, "raised"}, {refined, "refined"}} {
+		if p.n > 0 {
+			parts = append(parts, strconv.Itoa(p.n)+" "+p.what)
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return ", " + strings.Join(parts, ", ")
 }
 
 // vars adds this group's findings to the run's own. A verifier sees only its own group, so nothing

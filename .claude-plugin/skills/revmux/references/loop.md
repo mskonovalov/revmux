@@ -32,7 +32,16 @@ zero gating findings. After fixing, always run the confirming round.
 
 1. Fix every gating finding, plus any minor co-discovered alongside them. A minor alone never starts an
    iteration.
-2. Run the project's tests and linter before committing. A fix that breaks the build is not committed.
+2. **Enumerate what you touched before committing**: every value of an enum you branched on **and
+   every transition between them where direction matters**, every field of a struct you folded or
+   copied, every platform or error class the code distinguishes, and that a ratio's two sides come
+   from one population. **A test has to tell the cases apart** — one pinning only the case that
+   prompted the fix cannot catch what was left out, which is how the same enum defect shipped twice
+   in one commit. Then re-read the finding and check the fix
+   answers the mechanism it named rather than the example it used. This is where the loop's own
+   convergence is won or lost — measured across four tasks, each round's fixes produced about two
+   thirds of what the next round found. Run the tests and the linter after. A fix that breaks the
+   build is not committed.
 3. Commit locally. **Never push** — that stays the user's decision, and it is what makes the whole loop
    revertible.
 4. Open the next round and run it. Its `scope` is the cumulative diff from the starting commit, not just
@@ -53,9 +62,35 @@ Stop on the first of these:
 | condition | what to report |
 |---|---|
 | a review returns zero gating findings | clean, plus whatever minors are left |
-| the gating count is not **strictly lower** than the previous round's | not converging — identify a repeated finding, or say the count stalled on different findings, and stop |
+| the **code** gating count is not **strictly lower** than the previous round's | not converging — identify a repeated finding, or say the count stalled on different findings, and stop |
 | five rounds | cap reached, with what is still open |
 | a run exits `2`, or `sources.degraded` is non-empty | the failure, not a verdict — `1` is findings and is the normal case |
+
+
+**Count only findings in executable code toward that rule.** A gating finding in the skill text, a
+prompt file or a schema description is real and worth fixing, but it must not drive
+another round, because **fixing it writes new prose that the next round then reviews.** Measured over
+one archived task: the production Go was clean of gating findings from round 2 onward while every
+later major sat in the review system's own text — a rewritten rubric produced a new true major on each
+of three rewrites. The severity bar is what makes this bite: prose caps at minor *except* a document a
+machine executes against as a contract, which is exactly what those files are. So a branch editing the
+reviewer's own contract text cannot produce a doc fix that is not itself gating material, and iterating
+on it does not terminate.
+
+**A shipped script is code, and a defect in its arithmetic counts.** The rule above turns on what the
+fix writes, not on which directory the file sits in: correcting a computation deletes or replaces
+logic and leaves no new prose behind, so it terminates the way a Go fix does. That is also how Step 6
+tags it — `code` is executable logic, and a `.py` aggregation bug is that. Only the sentences such a
+script *prints* are prose, and a finding about their wording batches with the rest.
+
+Collect those instead: fix them in one batch at the end of the branch, then one confirming round under
+`final` — whose roster carries no `docs` lens and reports nothing below major. If a round's gating
+findings are *all* in that category, the loop is done even though the count did not fall.
+
+That confirming round is the merge gate, so its `goal.md` says so and states the bar, the way Step 2
+requires of any last-round goal. Without it the round runs as round N+1 of the same loop and returns
+the same prose findings the batch just created — the roster narrows what is looked at, and only the
+goal narrows what is worth reporting.
 
 **Count the gating findings every round and write the number down before fixing anything.** The
 non-converging row is a comparison against that recorded number, and it fires on equal counts as well as

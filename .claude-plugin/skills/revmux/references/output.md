@@ -155,7 +155,7 @@ the recovery path when a run's stdout was lost.
 |---|---|
 | why did this agent report nothing? | `agents/<name>.jsonl` |
 | did an agent stall or get retried? | `events.jsonl`, plus a `<name>.retry.jsonl` |
-| did synthesis drop something real? | `stages/1-found.json` vs `2-synthesized.json` |
+| did synthesis drop something real? | the `dropped` event in `events.jsonl` — it carries the findings themselves |
 | did verify reject wrongly? | `stages/2-synthesized.json` vs `3-verified.json` |
 | what was this agent asked? | `prompts/agents/<name>.md` |
 | which lens text, from which layer? | `manifest.json` |

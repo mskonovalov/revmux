@@ -52,11 +52,11 @@ down to the milestones exactly rather than by matching words in prose.
 
 ```bash
 tail -n +1 -F <round_dir>/events.jsonl \
-  | grep -E --line-buffered '"kind":"(stage|agent_started|agent_done|agent_retried|agent_degraded|rate_limit)"'
+  | grep -E --line-buffered '"kind":"(stage|agent_started|agent_done|agent_retried|agent_degraded|dropped|rate_limit)"'
 ```
 
-Those six kinds are the whole vocabulary worth passing on — a stage boundary, an agent starting or
-finishing, a retry, a degrade, a rate limit. `agent_activity` and `agent_progress` are the model's own
+Those seven kinds are the whole vocabulary worth passing on — a stage boundary, an agent starting or
+finishing, a retry, a degrade, what synthesis dropped, a rate limit. `agent_activity` and `agent_progress` are the model's own
 prose and tool calls; they arrive continuously, and relaying them turns the feed into a firehose the
 user has to read to find the two lines that mattered.
 
@@ -227,6 +227,7 @@ will not read, and an unwritable `./.revmux/` under `revmux init`.
 | `quality` | style, over-engineering, error handling and accidental duplication in code that already works |
 | `docs` | documentation accuracy — doc comments against the code, and project docs the change leaves stale |
 | `tests` | whether tests exist where a defect can hide, actually exercise the code, and survive concurrency |
+| `comments` | the code's own stated rules — doc comments and inline notes the change was supposed to obey |
 | `adversarial` | attacks the change looking for what a sympathetic reader would accept |
 
 `--lenses bugs,impl` replaces the profile's roster while keeping its body. Two things about it are
@@ -460,7 +461,10 @@ tells them apart, so read the gap as attrition rather than as a count of rejecti
 map is the separate "real, not worth fixing" signal.
 
 **Per stage** — `in` and `out` for `synthesis`, `verify` and `report`, each the union of that report's
-four finding arrays. `report` carries the `--min-confidence` attrition. There is no `find` entry:
+four finding arrays, plus `reclassified` and `refined` where a stage did either. Those two exist because
+`in` and `out` cannot show verification: moving a finding into `immaterial` or `pre_existing` leaves the
+total unchanged, so a stage that lowers a great many severities and rejects almost nothing reads as inert.
+They are each stage's own contribution, so `report`, which only filters, carries neither. `report` carries the `--min-confidence` attrition. There is no `find` entry:
 nothing goes into it. A run that skipped a stage has no entry for it, and one run with both
 `--no-synthesis` and `--no-verify` reports `survived` equal to `raised` for every agent — nothing
 filtered anything.

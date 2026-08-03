@@ -439,6 +439,9 @@ Stamping happens in `find`, not synthesis, or `--no-synthesis` runs carry invent
   another, which reads as the model being inconsistent rather than the prompts being out of step.
   `.claude/rules/prompts.md` calls the body "the shared preamble and severity bar"; shared across the
   agents of one run, not across profiles.
+  **`## What not to report` is the second such block**, byte-identical in all five, and it is the one a
+  finder consults before writing anything down — so a rule added to one profile and not the others makes
+  the same finding reportable under one review shape and suppressed under another.
 - A change to the task-directory layout starts at the constants in `app/task`, which `app/archive`,
   `app/pipeline` and `package main` join every path from — the run's own artifacts included, so a stage
   snapshot is named once and read back by that name.
@@ -464,6 +467,12 @@ Stamping happens in `find`, not synthesis, or `--no-synthesis` runs carry invent
   A **new** reference file additionally needs the `references/` line in `plugins/codex/README.md`, which
   enumerates them by name and goes stale silently — the `SKILL.md` pointer to it is what an agent
   follows, so nothing fails when that listing drops one.
+  A **new script** needs the same listing, the script list in README's skill section, and a line under
+  `plugins/codex/README.md`'s requirements when it needs anything the other scripts do not.
+  **A script exists so the knowledge in it is not re-derived per session.** `analyze-corpus.py` is the
+  case that made the rule: the readings it encodes were each got wrong by hand first, and ad-hoc `jq`
+  over the archive reproduces those mistakes. Anything the skill would otherwise work out from the
+  archive every time belongs in a script with tests, not in prose telling an agent how to work it out.
 - **The skill is documentation of this binary, so a change to the binary updates it in the same commit.**
   It states revmux's flags, profiles, JSON field names, exit codes and archive layout as fact, and an
   agent executes what it says without checking. A skill describing a flag that no longer behaves that way

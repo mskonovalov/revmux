@@ -509,9 +509,10 @@ listing it advertises a review that cannot run.
 Aliasing is supported, in other words, and every path that reads a task agrees on it; `archive.History`
 already followed the link, and this is what brings the catalog in line.
 That decision is `task.List`, and it is the **only** enumerator: `revmux stats` aggregates the ids it
-returns rather than walking the root itself, so the two commands cannot name different task sets — and
-`/revmux self` reads both, where a task present in one and absent from the other is a disagreement with
-nothing on stdout to explain it.
+returns rather than walking the root itself, so the two commands cannot name different task sets. The
+skill's `analyze-corpus.py` applies the same test rather than counting directories — a round whose marker
+is empty was claimed and never finished, and counting it would put a round nobody reviewed into the
+denominator of every rate the analysis reports.
 
 **The same rule applies to every other failure this command can hit: an empty list must mean empty.**
 An unreadable tasks root reported as `"tasks": []` is the identical wrong advice one level up — it reads as
@@ -581,6 +582,20 @@ running.
 declaration on the subcommand parses both spellings and lands them in different fields, so
 `revmux --task pr-1 stats` and `revmux stats --task pr-1` would disagree about which task was asked for and
 nothing else in the suite would notice.
+
+**`stageFlow` carries `reclassified` and `refined` because `in` and `out` cannot show what verification
+does.** Both counts are the union of a report's four arrays, so moving a finding into `immaterial` or
+`pre_existing` changes neither — measured over one corpus, verify dropped 2 of the 150 that reached it
+while demoting 21
+severities, which reads as a stage doing nothing. They are each stage's own contribution, taken as growth
+over the stage before it rather than as a total, so the `report` entry reports neither: `findings.json`
+still carries every verdict verification wrote, and counting them there would credit the `--min-confidence`
+filter with work it only passed through.
+
+**`SourceStat.Tokens` is not one quantity.** claude sums input, output and both cache counters; codex
+scrapes the number after its own `tokens used` footer. The field is honest per agent and over time, and
+does not support ranking agents of different executors against each other. Its godoc says so, because the
+comparison is the natural thing to reach for and it is wrong.
 
 **Every survivor and every per-lens number comes from the per-stage snapshots, never from `findings.json`.**
 That file is the `--min-confidence`-filtered report and its survivors are split across four arrays; counting

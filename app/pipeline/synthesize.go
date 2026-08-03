@@ -66,11 +66,12 @@ func (s *synthesizer) run(ctx context.Context, sources []sourceResult) (finding.
 		return finding.Report{}, err
 	}
 
-	rep, err := s.parse(res.StructuredOutput, s.inputs(sources))
+	rep, dropped, err := s.parse(res.StructuredOutput, s.inputs(sources))
 	if err != nil {
 		return finding.Report{}, err
 	}
 	rep.Stats.Tokens = res.Tokens
+	s.reportDropped(dropped)
 	s.emit(Event{Kind: EventFindings, Agent: stageSynthesis, Findings: rep.Findings})
 	s.emit(Event{Kind: EventAgentDone, Agent: stageSynthesis,
 		Text: strconv.Itoa(len(rep.Findings)) + " findings"})
@@ -212,9 +213,10 @@ func (s *synthesizer) inputs(sources []sourceResult) map[string]finding.Finding 
 	return out
 }
 
-func (s *synthesizer) parse(raw json.RawMessage, inputs map[string]finding.Finding) (finding.Report, error) {
+func (s *synthesizer) parse(raw json.RawMessage,
+	inputs map[string]finding.Finding) (rep finding.Report, dropped []finding.Finding, err error) {
 	if len(raw) == 0 {
-		return finding.Report{}, errors.New("synthesis returned no structured output")
+		return finding.Report{}, nil, errors.New("synthesis returned no structured output")
 	}
 
 	var out struct {
@@ -222,32 +224,77 @@ func (s *synthesizer) parse(raw json.RawMessage, inputs map[string]finding.Findi
 		OpenQuestions []synthesized `json:"open_questions"`
 		PreExisting   []synthesized `json:"pre_existing"`
 	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return finding.Report{}, fmt.Errorf("decode synthesis output: %w", err)
+	if decErr := json.Unmarshal(raw, &out); decErr != nil {
+		return finding.Report{}, nil, fmt.Errorf("decode synthesis output: %w", decErr)
 	}
 	// the merged list is what the whole find stage funnels into, so its key must be present rather than
 	// merely decodable: an object of another shape leaves all three lists nil without error, and the run
 	// would report no findings and exit 0 having discarded every source's work
 	if !answered(raw, keyFindings) {
-		return finding.Report{}, errors.New("synthesis returned no findings object")
+		return finding.Report{}, nil, errors.New("synthesis returned no findings object")
 	}
 
 	// one claimed set across all three lists: the schema binds each input to at most one output, and the
 	// lists are three halves of one merge — an input reported as both a finding and a pre-existing issue
 	// is the same contract violation as one reported twice in either
-	rep, claimed := finding.Report{}, map[string]bool{}
+	claimed := map[string]bool{}
 	findings, err := s.attribute(out.Findings, inputs, claimed)
 	if err != nil {
-		return finding.Report{}, err
+		return finding.Report{}, nil, err
 	}
 	rep.Findings = findings
 	if rep.OpenQuestions, err = s.attribute(out.OpenQuestions, inputs, claimed); err != nil {
-		return finding.Report{}, err
+		return finding.Report{}, nil, err
 	}
 	if rep.PreExisting, err = s.attribute(out.PreExisting, inputs, claimed); err != nil {
-		return finding.Report{}, err
+		return finding.Report{}, nil, err
 	}
-	return rep, nil
+	return rep, s.unclaimed(inputs, claimed), nil
+}
+
+// unclaimed is every input finding no output took: what synthesis dropped rather than merged.
+//
+// attribute binds each input to at most one output and errors on a second claim, so claimed is exact
+// and this needs no comparison of its own. It is returned rather than emitted from here because parse
+// is otherwise pure, and a parse that reaches the event channel cannot be unit-tested without one.
+func (s *synthesizer) unclaimed(inputs map[string]finding.Finding, claimed map[string]bool) []finding.Finding {
+	out := make([]finding.Finding, 0, len(inputs))
+	for id, f := range inputs {
+		if !claimed[id] {
+			out = append(out, f)
+		}
+	}
+	// ordered by id: the map is not, and an archived event that reorders between two runs of the same
+	// round is a diff that reads as a change
+	slices.SortFunc(out, func(a, b finding.Finding) int { return strings.Compare(a.ID, b.ID) })
+	return out
+}
+
+// reportDropped announces what synthesis removed rather than merged.
+//
+// It is the pipeline's largest filter by a wide margin and was the only one silent about it: across one
+// archived corpus it removed 58 findings where verify removed 2, and three of the 58 were critical. The
+// drop rule is deliberate — a weak singleton nobody corroborated is meant to go — but a critical leaving
+// the run unremarked is indistinguishable from one no agent ever raised, and only a hand-diff of two
+// stage snapshots could tell them apart.
+//
+// The event carries the findings themselves, so events.jsonl answers which ones without reference to any
+// other artifact.
+func (s *synthesizer) reportDropped(dropped []finding.Finding) {
+	if len(dropped) == 0 {
+		return
+	}
+	gating := 0
+	for _, f := range dropped {
+		if f.Severity == finding.Critical || f.Severity == finding.Major {
+			gating++
+		}
+	}
+	text := strconv.Itoa(len(dropped)) + " findings dropped"
+	if gating > 0 {
+		text += ", " + strconv.Itoa(gating) + " of them critical or major"
+	}
+	s.emit(Event{Kind: EventDropped, Agent: stageSynthesis, Text: text, Findings: dropped})
 }
 
 // attribute derives sources and lenses from the merged input ids, discarding whatever the model put

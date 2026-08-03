@@ -20,3 +20,6 @@ coverage_no_mocks.out
 .claude/settings.local.json
 .claude/worktrees/
 .DS_Store
+
+# python bytecode from the shipped skill scripts
+__pycache__/

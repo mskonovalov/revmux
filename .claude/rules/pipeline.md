@@ -110,6 +110,13 @@ and matching on file and line in Go would both merge unrelated findings and spli
 - drop: single-source, confidence below 80, no corroboration — **never a critical or a major**
 - open questions and pre-existing issues are split out **first** and are never boosted, dropped, or verified for fixing
 
+**What the drop rule removes is announced, because nothing else can see it.** `synthesizer.unclaimed`
+returns every input id no output claimed — `attribute` already errors on a second claim, so the set is
+exact — and `run` emits it as `EventDropped` carrying the findings themselves. Measured over one archived
+corpus synthesis removed 58 findings where verify removed 2, three of them critical, and the only way to
+learn that was to hand-diff two stage snapshots. `parse` returns the list rather than emitting it, so the
+stage's parsing stays testable without an event channel.
+
 **Severity exempts a finding from the drop rule, and only the drop rule.**
 A single source is not evidence against a serious defect: one reviewer looking in the right place is
 the normal case for the worst bugs, and corroboration is a boost rather than a gate.

@@ -45,8 +45,21 @@ type SourceStat struct {
 	RequestedModel string   `json:"requested_model"`
 	ActualModel    string   `json:"actual_model"`
 	Effort         string   `json:"effort"`
-	Tokens         int      `json:"tokens"`
-	Degraded       bool     `json:"degraded"`
+
+	// Tokens is what the agent's own CLI reported, and **it is not the same quantity across executors —
+	// never compare one executor's number with another's.**
+	//
+	// claude sums input, output, cache reads and cache creation, so it is the run's whole footprint and it
+	// grows with every re-read of a cached prefix. codex is the single number it prints after its
+	// "tokens used" footer, which does not account for cache the same way. In one measured corpus the
+	// claude agents ranged from 0.11M to 7.0M per round on the same roster while the codex peer sat flat
+	// at 0.12-0.17M in every task — that gap is mostly the two definitions, not two costs.
+	//
+	// It is honest per agent and over time for that agent. Ranking agents of different executors by it is
+	// what it does not support, and a reflection agent that does it concludes the codex peer is nearly
+	// free.
+	Tokens   int  `json:"tokens"`
+	Degraded bool `json:"degraded"`
 }
 
 // Stats is the run's timing and token accounting.

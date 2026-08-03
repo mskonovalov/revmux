@@ -203,6 +203,10 @@ func (t *taskStats) addStages(stages []stageFlow) {
 		st := &t.Stages[i]
 		st.In += s.In
 		st.Out += s.Out
+		// every field of stageFlow folds, or the number is right per round and zero everywhere it is
+		// read: `revmux stats` reports the task entry and the totals, never one round's own tally
+		st.Reclassified += s.Reclassified
+		st.Refined += s.Refined
 	}
 }
 
@@ -399,12 +403,45 @@ func (r *roundReader) addSurvived(survived []finding.Finding) {
 // that really happened rather than one inferred from a file nothing ever wrote.
 func (r *roundReader) addFlow(reps []namedReport) {
 	for i := 1; i < len(reps); i++ {
-		r.stages = append(r.stages, stageFlow{
+		flow := stageFlow{
 			Name: reps[i].stage,
 			In:   r.count(reps[i-1].rep),
 			Out:  r.count(reps[i].rep),
-		})
+		}
+		flow.Reclassified, flow.Refined = r.judged(reps[i-1].rep, reps[i].rep)
+		r.stages = append(r.stages, flow)
 	}
+}
+
+// judged counts what a stage did that its In and Out cannot show: findings it moved out of the actionable
+// list into immaterial or pre-existing, and findings it kept but rewrote.
+//
+// It is each stage's own contribution, measured as the growth over the stage before it, so a stage that
+// only carries earlier verdicts forward reports nothing. That is what keeps the `report` entry honest:
+// findings.json still holds every verdict and pre-existing issue verification wrote, and counting them
+// there would report the min-confidence filter as having reclassified what it merely passed through.
+// Growth cannot go negative for the same reason — the filter removes, and removal is In and Out's job.
+//
+// Both stages that judge are covered: synthesis splits out pre-existing issues, verification adds the
+// rest and writes every verdict.
+func (r *roundReader) judged(prev, rep finding.Report) (reclassified, refined int) {
+	grew := func(before, after int) int {
+		if after > before {
+			return after - before
+		}
+		return 0
+	}
+	class := func(rp finding.Report) int { return len(rp.Immaterial) + len(rp.PreExisting) }
+	refine := func(rp finding.Report) int {
+		n := 0
+		for _, f := range r.all(rp) {
+			if f.Verdict == finding.Refined {
+				n++
+			}
+		}
+		return n
+	}
+	return grew(class(prev), class(rep)), grew(refine(prev), refine(rep))
 }
 
 // count is how many findings a report carries across its four arrays. The flow needs the number alone, and

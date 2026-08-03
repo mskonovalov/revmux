@@ -1,6 +1,6 @@
 ---
 name: revmux
-description: Run a supervised multi-agent code review by composing a task directory and driving the revmux CLI, then report or act on the findings it returns. revmux spawns and watches parallel claude and codex subprocesses with stall detection, retry, per-agent progress and a full run archive; this skill is the caller that writes the review context, launches it, reads the JSON back, and re-runs it after fixes. It also has a self mode that reads what past rounds produced and proposes tuning changes to the local profiles, lenses and knobs, one suggestion at a time with the numbers behind it. It fetches a pull request into a throwaway worktree, reviews it there and cleans up after. Also answers questions about revmux itself — profiles, lenses, task directories, flags, the JSON shape, exit codes and the run archive. Activates on "revmux", "run revmux", "multi-agent review", "supervised review", "review with revmux", "revmux this branch", "revmux the last commit", "revmux pr 123", "revmux this PR", "review PR 123 with revmux", "run a revmux round", "re-review after fixes", "revmux it and show me", "revmux this, I want to watch", "run it visible", "show me the review", "revmux self", "self-improve revmux", "tune revmux", "revmux profiles", "revmux lenses", "what does revmux return", "revmux exit codes", "revmux task directory".
+description: Run a supervised multi-agent code review by composing a task directory and driving the revmux CLI, then report or act on the findings it returns. revmux spawns and watches parallel claude and codex subprocesses with stall detection, retry, per-agent progress and a full run archive; this skill is the caller that writes the review context, launches it, reads the JSON back, and re-runs it after fixes. It also has a self mode that reads what past rounds produced and tells the user what the record says about the review itself — which stage is filtering, which lens rates hardest, whether rounds converge — then proposes one change to the local prompt text at a time, with the number behind it. It fetches a pull request into a throwaway worktree, reviews it there and cleans up after. Also answers questions about revmux itself — profiles, lenses, task directories, flags, the JSON shape, exit codes and the run archive. Activates on "revmux", "run revmux", "multi-agent review", "supervised review", "review with revmux", "revmux this branch", "revmux the last commit", "revmux pr 123", "revmux this PR", "review PR 123 with revmux", "run a revmux round", "re-review after fixes", "revmux it and show me", "revmux this, I want to watch", "run it visible", "show me the review", "revmux self", "self-improve revmux", "tune revmux", "revmux profiles", "revmux lenses", "what does revmux return", "revmux exit codes", "revmux task directory".
 argument-hint: 'optional: what to review ("pr 123", a ref, a path), plus "show me" / "focused" / "final" / "loop" / "lenses a,b"'
 allowed-tools: [Bash, Read, Edit, Write, Grep, Glob]
 ---
@@ -207,7 +207,12 @@ The brief:
 >    - `scope` — required. What changed, the commands to see it, its scale, which files to read in
 >      full, what to ignore. Write commands in plainest form: `git diff master...HEAD`, never
 >      `git -c core.pager=cat diff ...` — a leading option defeats the child's permission matching.
->    - `goal` — optional. What the change is for, plus a "this is correct only if…" list.
+>    - `goal` — optional. What the change is for, plus a "this is correct only if…" list. **When the
+>      round is the last one before the branch merges, make it the gate**: say the round exists to
+>      answer whether anything in this diff should not ship, and name what qualifies — a defect in
+>      executable code, a change to a prompt, schema or shipped script that would make a later run
+>      wrong, or a contradiction that would mislead an agent executing the document. Say that finding
+>      nothing is a valid answer, or the round reads as owing findings and manufactures them.
 >    - `profile` — optional, reusable across the repo. What the software is, what a real failure looks
 >      like, where the project's rules live, which conventions are deliberate. Copy it into each round
 >      of the task.
@@ -302,7 +307,7 @@ revmux --task <id> --run <name> --no-tui \
        > /tmp/revmux-<id>-<run>.json 2> /tmp/revmux-<id>-<run>.log &
 rev=$!
 tail -n +1 -F <round_dir>/events.jsonl 2>/dev/null \
-  | grep -E --line-buffered '"kind":"(stage|agent_started|agent_done|agent_retried|agent_degraded|rate_limit)"' &
+  | grep -E --line-buffered '"kind":"(stage|agent_started|agent_done|agent_retried|agent_degraded|dropped|rate_limit)"' &
 feed=$!
 wait "$rev"; status=$?
 kill "$feed" 2>/dev/null
@@ -319,7 +324,7 @@ Poll it with empty `write_stdin`, a minute a call, and answer each poll by what 
 - **`revmux exit N`** — the run is over. Stop polling and read the report.
 
 Updates land at the poll boundary rather than the instant the event does, which is what having no
-watch costs. `references/invocation.md` says why those six kinds and not the stderr log.
+watch costs. `references/invocation.md` says why those seven kinds and not the stderr log.
 
 **The feed belongs to this form alone.** It exists because a headless run says nothing for ten minutes
 and the user has no other signal. An overlay run is that signal, on screen, live.
@@ -432,6 +437,39 @@ Once he answers with anything other than another round, run the archive check be
    its own list, not in `findings`. A `rejected` one appears nowhere at all: the verifier judged it not
    real and dropped it, so only the archive's stage snapshots still hold it.
 2. Make the fixes.
+
+**Before committing a fix, do these three checks, in this order.**
+
+**1. Sweep for the shape, not the site.** Name the defect the finding demonstrates as a *construct* —
+"a switch over a three-value enum that only tests one end", "a sentence asserting a shape regardless of
+the counts", "a phrase that must match a list beside it" — then grep the repo for that construct and fix
+every occurrence in the same commit. Grep for the pattern rather than the literal string: a phrase
+wrapped across a line break survives a search for the phrase.
+
+This check exists because the other two cannot catch what it catches. Three times in one archived task
+a fix landed at the site the finding quoted and left the identical defect elsewhere — once in a file
+the same commit was already editing, once in the file beside it, and once **four lines below, inside
+the same diff hunk**, in a commit whose own message stated the general rule. Knowing the rule does not
+substitute for running the search.
+
+**2. Enumerate what you touched.** Name the input space of the thing you changed and confirm every
+member is handled *and* that a test tells them apart:
+
+- an enum or a set of string constants — every value, and every transition between them if direction
+  matters
+- a struct being folded, copied or serialized — every field, not the ones the change was about
+- a platform, a filesystem or an executor the code branches on — each branch
+- an error class the code distinguishes — absent, unreadable, malformed, present-but-empty
+- a ratio — that the numerator and the denominator are drawn from the same population
+
+The recurring failure is not carelessness on many fronts. It is writing the fix for the case that
+prompted it and a test pinning that same case, so the test cannot catch what was left out.
+
+**3. Re-read the finding, then read your fix against it.** Fix the mechanism the finding names, not the
+example it happens to use to illustrate it. A finding that says "the switch cannot express a change that
+skips `minor`" is not answered by adding one more case to the switch.
+
+Then run the tests and the linter. A fix that breaks the build is not committed.
 3. Open the next round on the same task and write its own `scope` — the fixes and the range they land
    in. **That is Step 2's subagent again**, with the same one-line announcement and the task id it
    already returned, so a re-review costs the session no more output than the first round did. Then
@@ -455,9 +493,16 @@ cannot catch a regression in an area its lenses do not cover.
 | the fixes were | profile |
 |---|---|
 | contained edits inside what round 1 flagged | `final` — `bugs+impl` is the fix-confirmation shape, and it reports nothing below major |
-| spilled into tests or structure | `comprehensive` — that surface has not been reviewed yet |
+| spilled into tests or structure **the review has not seen** | `comprehensive` — that surface is genuinely new |
 | documentation only | `final` — a doc fix is new prose, and `comprehensive` would review it |
 | time-boxed, correctness only | `focused` |
+
+**Default to `final` and make `comprehensive` argue for itself.** Across the archived rounds, roughly three quarters of
+everything found is `minor` and minors never converge — they arrive at roughly three a round whatever
+the gating count is doing, including on rounds where gating had already been zero twice over. `final`
+reports nothing below major, and the re-review rounds run under it produced the shortest actionable
+lists in the corpus. A fix that touched a test file is not by itself a new surface; the row above wants
+a surface the review genuinely has not looked at.
 
 The round-2 failure worth spending a roster on is a fix that does not address the finding, or addresses
 it in the wrong place. That is the `impl` lens, which `focused` does not carry — so a re-review narrows
@@ -534,102 +579,80 @@ Triggered by "revmux self", "self-improve revmux", "tune revmux". **It reviews n
 opened, no agent is spawned, and the code in the working directory is never read. It reads what past
 rounds produced and proposes changes to the review configuration itself.
 
-### Step S1: Read the two sources
+**Your job is to hand him conclusions and one concrete change. Not a dashboard.**
+
+### Step S1: Run the analysis
 
 ```bash
-revmux stats  > /tmp/revmux-stats.json     # the evidence: what each agent and lens actually produced
-revmux config > /tmp/revmux-config.json    # what resolved, so a proposal edits the file in force
+$SCRIPT_DIR/analyze-corpus.py
 ```
 
-Both are read-only, run no pipeline and return immediately. `references/invocation.md` has each shape.
+It walks the archive and prints numbered conclusions with the numbers behind each, then the tables they
+rest on. Read-only, runs no model, safe during a review. `--tasks-dir` points it elsewhere; `--json`
+gives the full measurements if you need to reason past what it printed.
 
-**Propose against `revmux config`, never against the shipped defaults.** A user with his own
-`comprehensive.md` runs a roster this skill has never seen, and a suggestion phrased against the
-embedded one edits a profile that is not the one running.
+**Do not re-derive any of this by hand.** The script encodes readings that were got wrong the first
+time — verification looking inert because reclassification is invisible in stage in/out, `tokens`
+meaning different things per executor, per-agent rounds being over-counted. Ad-hoc `jq` over the
+archive reproduces those mistakes.
 
-`revmux stats --task <id>` narrows to a single task. Use the whole corpus unless the user named one —
-narrowing a thin sample makes it thinner.
+Then, for what a proposal would edit rather than what the review did:
 
-### Step S2: Decide where a change would be written
+```bash
+revmux config > /tmp/revmux-config.json
+```
 
-**`./.revmux/` and nowhere else.** Never `~/.config/revmux/`, which is the user's cross-project layer
-and not this project's to edit. Never the embedded tree, which is inside the binary.
+**Propose against that, never against the shipped defaults.** A user with his own `comprehensive.md`
+runs a roster this skill has never seen.
 
-Materialize the local tree first, every time — it is idempotent, and it is what prints the paths:
+### Step S2: Decide where the change would be written
+
+**`./.revmux/` and nowhere else.** Never `~/.config/revmux/`, which is the user's cross-project layer.
+Never the embedded tree, which is inside the binary — unless the working directory *is* the revmux
+repo, where the lens and profile text ships from `app/prompt/defaults/` and a local override would fork
+it from what ships.
+
+Materialize the local tree first — idempotent, and it is what prints the paths:
 
 ```bash
 revmux init
 ```
 
-It writes `./.revmux/` with every prompt file as it currently **resolves**, so a user-layer override is
-what gets copied down and editing the result changes what already runs rather than reverting it to the
-shipped text. A file already local is reported and left byte-identical, so running it over a tree that is
-already there changes nothing. **Edit only the paths it printed** — never compose one.
+It writes every prompt file as it currently **resolves**, so a user-layer override is what gets copied
+down. **Edit only the paths it printed.** When `.revmux/` is tracked in git, say so if he hesitates:
+`git checkout` reverts anything he regrets.
 
-When `.revmux/` is tracked in git, which is the usual arrangement since only `.revmux/tasks/` needs
-ignoring, `git checkout` reverts an edit the user regrets. Say so if he hesitates over one.
+### Step S3: Say what it found, briefly
 
-### Step S3: Read the numbers honestly
+Lead with the conclusions the script printed, in your own words, **two or three sentences each**. Cut
+any the user cannot act on. Do not paste the tables — they are there for you, and he asked what to do,
+not what the numbers are.
 
-**A counter that is zero across the whole corpus is nothing to say, not a finding.** `degraded_rounds`
-and `retries` at zero everywhere means supervision never had to intervene — the timeouts are working,
-not unvalidated. Do not manufacture advice from an empty set: on a healthy corpus those two are
-uniformly zero and the knob candidate simply does not fire.
+State the sample size once: "24 rounds over 7 tasks, all on this codebase" is a caveat he can weigh.
 
-**Per-agent numbers are structurally sound; per-lens numbers are not.** revmux stamps `sources` from
-the process that emitted the finding, so `raised`, `survived` and `corroborated` per agent are exact.
-A finding's `lenses` is model-supplied and falls back to the agent's whole lens set when the model
-named none — which is what `ambiguous` counts. **Quote `ambiguous` beside every per-lens number, in
-the suggestion itself**: "bugs raised 14, 3 of them ambiguous". A lens whose `ambiguous` share is a
-large fraction of its `raised` cannot carry a suggestion on its own; report the number and propose
-nothing.
+**Quote a per-lens number only with the ambiguity beside it**, which the script's own last table shows
+and `revmux stats` reports as `ambiguous`: a
+finding's lenses are model-supplied, and an agent carrying two lenses often names both. A lens whose
+ambiguous share is most of its raised count cannot carry a suggestion on its own — report it and propose
+nothing. The script's own per-lens demotion column is already narrowed to findings naming a single lens,
+for the same reason.
 
-**`raised` is stage 1, the verdict map is survivors.** A rejected finding is counted in `raised` and
-under no verdict, so it widens the gap between the two — but so does synthesis merging two findings that
-carry the same lens, and nothing in the output tells them apart. Check the `synthesis` stage's own `in`
-and `out` before reading a per-lens gap as rejections: a corpus that loses a quarter of its findings at
-synthesis explains most of those gaps by itself. `immaterial` in that map is the separate signal — real,
-and judged not worth fixing.
+**If the script says the corpus is too thin, stop there.** That is a real answer. Inventing a
+suggestion from four rounds is worse than saying there is nothing yet.
 
-**`rounds` is the denominator and `skipped` is what is missing from it.** A task reporting rounds beside a
-non-empty `skipped` was read from fewer rounds than it ran; quote both, and treat the sample as that much
-thinner.
+### Step S4: Propose one change
 
-**Say the sample size.** Five rounds of one task on one codebase is a sample, not a trend, and the
-user weighs it.
+One. The most supported, with:
 
-### Step S4: Build the candidates
+1. **what to change** — the file at the path `revmux init` printed, and the edit in concrete terms
+2. **the number behind it** — the one the script printed, quoted
+3. **how you would know it worked** — the measurement that moves if it did, on the next round
 
-| candidate | evidence | the change |
-|---|---|---|
-| drop or keep an agent | `raised` high, `survived` near zero, `corroborated` zero — it produces nothing that lasts | remove the entry from the `agents:` list in `.revmux/prompts/profiles/<name>.md`, or keep it and say why |
-| split a lens pair | one agent carrying two lenses, both raising, its `corroborated` near zero | one agent per lens in that roster — two processes can corroborate, one cannot |
-| create a profile | the roster or `--lenses` set actually used matches nothing in `.profiles[]` | a new `.revmux/prompts/profiles/<name>.md` with that roster and its own `description:` |
-| retune a knob | `degraded_rounds` non-zero, or `retries` non-zero and the retry's own log says it stalled | `idle-timeout` or `hard-timeout` in `.revmux/config`, with the counter as the reason |
-| rewrite a lens | `immaterial` dominating that lens's verdict map | an edit to `.revmux/lenses/<name>.md`, shown as a diff before it is applied |
+Then ask as a numbered list — apply it, skip it, or stop — and wait for the pick. Act on the answer, then offer the next one the same
+way. Stop when he says stop or the conclusions run out. Never batch edits, never apply one unasked.
 
-**`retries` names a retry, not a timeout.** The find stage retries an agent on a stall, a rate limit, a
-dead process, a transport error, **or a clean exit carrying no JSON** — the codex path's own failure mode,
-since it has no `--json-schema` to enforce one. Only the first two are what a timeout knob moves. Read
-`<round>/agents/<name>.retry.jsonl` for the reason before proposing one, and propose nothing when the
-reason is not a stall.
-
-**A candidate with no number behind it is not a candidate.** If nothing fires, say the corpus supports
-no change and stop. That is a real answer, and inventing one from an empty set is worse than silence.
-
-### Step S5: Present one at a time
-
-**One suggestion, not a list and not a ranked table of five.** Each one is three things:
-
-1. **what to change** — the file, at the path `revmux init` printed, and the edit in concrete terms
-2. **the evidence** — the actual numbers from `revmux stats`, `ambiguous` beside any per-lens one
-3. **why it follows** — the step from the number to the change, stated so the user can reject the step
-   rather than only the conclusion
-
-Put the choice as a numbered list — 1. apply it, 2. skip it, 3. stop here — and wait for the number.
-
-Then act on the answer and move to the next candidate. Stop when the user says stop or the candidates
-run out. Never batch the edits, and never apply one that was not asked about.
+**A conclusion is not automatically a change.** Several are worth knowing and not worth acting on —
+say so and move on rather than manufacturing an edit to go with each.
 
 ## Example sessions
 
@@ -686,11 +709,11 @@ User: "what lenses does revmux have?"
 
 ```
 User: "revmux self"
-→ revmux stats → 1 task, 5 rounds; revmux config → comprehensive, roster of 4
-→ degraded_rounds 0 and retries 0 on every agent → no knob candidate; say so, invent nothing
-→ candidate: quality raised 4, 2 of them ambiguous, verdicts 1 confirmed / 1 refined / 1 immaterial
-   → half the attribution is a fallback; report the numbers, propose no rewrite
-→ candidate: arch+quality raised 10, survived 9, corroborated 4 across 5 rounds → it earns its slot
-→ revmux init first (idempotent), then edit only the paths it printed
-→ one numbered list per candidate, apply / skip / stop
+→ analyze-corpus.py → 24 rounds over 7 tasks, five numbered conclusions
+→ say three of them in a sentence each: verification demotes 21 and rejects 2, so it is a severity
+  corrector; adversarial rates 61% major+ and holds most of the attributable demotions; three quarters is minor
+→ revmux config → the roster actually running; revmux init → the paths an edit would go to
+→ propose one: the adversarial lens's severity text, quoting the 61%, measurable by whether the
+  demotion count falls next round
+→ numbered list: apply / skip / stop. Then the next one, or stop.
 ```

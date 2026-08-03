@@ -112,10 +112,25 @@ type lensStats struct {
 // stageFlow is how many findings went into one stage and how many came out. Name is the stage that produced
 // Out; the find stage has no entry, since nothing goes into it. Each count is the union of a report's four
 // finding arrays, so the chain is comparable end to end.
+//
+// **In and Out alone understate verification, and Reclassified and Refined are here because of it.** The
+// counts are that union, so a finding verification moved out of the actionable list — into immaterial or
+// pre-existing — leaves the total unchanged and shows as no attrition at all. Measured over one corpus,
+// verify dropped 2 findings of the 150 that reached it while lowering the severity of 21: read on In and
+// Out alone it looks like a stage doing nothing, which is the case for removing it, and the case is wrong.
 type stageFlow struct {
 	Name string `json:"name"`
 	In   int    `json:"in"`
 	Out  int    `json:"out"`
+
+	// Reclassified is findings this stage moved into the immaterial or pre-existing arrays: real, and
+	// judged either not worth fixing or not this change's. They leave the actionable list without leaving
+	// the report, so they are invisible in Out.
+	Reclassified int `json:"reclassified,omitempty"`
+
+	// Refined is findings this stage kept and rewrote — the verdict verification gives a finding whose
+	// substance held but whose framing, location or severity did not.
+	Refined int `json:"refined,omitempty"`
 }
 
 // StatsQuery selects what CollectStats reads. Two adjacent string parameters would be a swap hazard, and

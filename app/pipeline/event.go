@@ -32,6 +32,7 @@ const (
 	EventAgentRetried  EventKind = "agent_retried"
 	EventAgentDegraded EventKind = "agent_degraded"
 	EventFindings      EventKind = "findings"
+	EventDropped       EventKind = "dropped"
 	EventStage         EventKind = "stage"
 	EventRateLimit     EventKind = "rate_limit"
 )

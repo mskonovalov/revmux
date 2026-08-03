@@ -26,11 +26,22 @@ func TestRoundReader_readFullRound(t *testing.T) {
 		seen[f.ID] = true
 	}
 	writeArtifact(t, dir, foundFile, finding.Report{Sources: roster(), Findings: found})
-	// verification reclassified one of the ten synthesized findings as pre-existing rather than rejecting it
+	// verification reclassified one of the ten synthesized findings as pre-existing rather than rejecting
+	// it. The synthesis snapshot carries no verdicts, because synthesis writes none — giving it any would
+	// credit this stage with refinements verification made, which is the attribution `judged` exists to
+	// get right
+	synthesized := make([]finding.Finding, 0, len(verifiedFindings())+1)
+	for _, f := range append(verifiedFindings(), preExisting()[7]) {
+		f.Verdict = ""
+		synthesized = append(synthesized, f)
+	}
+	unverified := make([]finding.Finding, 0, 7)
+	for _, f := range preExisting()[:7] {
+		f.Verdict = ""
+		unverified = append(unverified, f)
+	}
 	writeArtifact(t, dir, synthesizedFile, finding.Report{
-		Sources:     roster(),
-		Findings:    append(verifiedFindings(), preExisting()[7]),
-		PreExisting: preExisting()[:7],
+		Sources: roster(), Findings: synthesized, PreExisting: unverified,
 	})
 	writeArtifact(t, dir, verifiedFile, finding.Report{
 		Sources: roster(), Findings: verifiedFindings(), PreExisting: preExisting(),
@@ -78,10 +89,13 @@ func TestRoundReader_readFullRound(t *testing.T) {
 
 	t.Run("stage attrition chains the artifacts the round carries", func(t *testing.T) {
 		assert.Equal(t, []stageFlow{
-			{Name: "synthesis", In: 26, Out: 17},
-			{Name: "verify", In: 17, Out: 17},
+			{Name: "synthesis", In: 26, Out: 17, Reclassified: 7},
+			{Name: "verify", In: 17, Out: 17, Reclassified: 1, Refined: 4},
 			{Name: "report", In: 17, Out: 13},
-		}, got.stages, "the report flow is what --min-confidence removed")
+		}, got.stages, "the refinements belong to verify, which writes verdicts, and not to synthesis, "+
+			"which writes none; verify also moved one finding out of the actionable list without changing "+
+			"the total, which is the work In and Out cannot show; report judges nothing, since counting "+
+			"the verdicts findings.json still carries would credit the filter with what it passed through")
 	})
 }
 
@@ -399,7 +413,8 @@ func TestCollectStats(t *testing.T) {
 			{Name: "adversarial", Raised: 3, Verdicts: map[finding.Verdict]int{
 				finding.Confirmed: 1, finding.Refined: 1}},
 		}, got.Tasks[0].Lenses, "a lens the roster carries but nothing raised is still reported, at zero")
-		assert.Equal(t, []stageFlow{{Name: "verify", In: 7, Out: 2}}, got.Tasks[0].Stages)
+		assert.Equal(t, []stageFlow{{Name: "verify", In: 7, Out: 2, Refined: 1}}, got.Tasks[0].Stages,
+			"the refinement folds across the task's rounds, which is where revmux stats reads it")
 	})
 
 	t.Run("a task keeps its own roster", func(t *testing.T) {
@@ -436,7 +451,7 @@ func TestCollectStats(t *testing.T) {
 				{Name: "docs", Raised: 2, Verdicts: map[finding.Verdict]int{finding.Confirmed: 1}},
 				{Name: "tests", Verdicts: map[finding.Verdict]int{}},
 			},
-			Stages: []stageFlow{{Name: "verify", In: 10, Out: 4}},
+			Stages: []stageFlow{{Name: "verify", In: 10, Out: 4, Refined: 2}},
 		}, totals, "the totals carry no id: they are every task at once")
 	})
 
@@ -904,5 +919,29 @@ func TestCollectStats_unreadableEntry(t *testing.T) {
 		// and the shortfall is named rather than left to read as alpha's real cost
 		require.NotEmpty(t, got.Tasks[0].Skipped)
 		assert.Contains(t, strings.Join(got.Tasks[0].Skipped, " "), "unreadable")
+	})
+}
+
+func TestTaskStats_addStages(t *testing.T) {
+	// the fold is what `revmux stats` prints: it reports the task entry and the totals, never one
+	// round's own tally, so a field computed per round and not folded here is zero everywhere it is read
+	t.Run("every field folds, not only in and out", func(t *testing.T) {
+		var got taskStats
+		got.addStages([]stageFlow{{Name: "verify", In: 10, Out: 9, Reclassified: 2, Refined: 4}})
+		got.addStages([]stageFlow{{Name: "verify", In: 6, Out: 6, Reclassified: 1, Refined: 3}})
+
+		assert.Equal(t, []stageFlow{{Name: "verify", In: 16, Out: 15, Reclassified: 3, Refined: 7}},
+			got.Stages)
+	})
+
+	t.Run("a stage the tally has not seen is appended whole", func(t *testing.T) {
+		var got taskStats
+		got.addStages([]stageFlow{{Name: "synthesis", In: 20, Out: 12, Reclassified: 5}})
+		got.addStages([]stageFlow{{Name: "verify", In: 12, Out: 12, Refined: 3}})
+
+		assert.Equal(t, []stageFlow{
+			{Name: "synthesis", In: 20, Out: 12, Reclassified: 5},
+			{Name: "verify", In: 12, Out: 12, Refined: 3},
+		}, got.Stages)
 	})
 }

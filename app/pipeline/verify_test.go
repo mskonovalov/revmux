@@ -844,3 +844,61 @@ func TestVerifier_name_displayedNamesAreDistinct(t *testing.T) {
 		assert.NotEqual(t, groups[0].shown, groups[0].name)
 	})
 }
+
+func TestVerifier_adjusted(t *testing.T) {
+	// "2 of 2 kept" is the whole story only if verification is a filter, and it is not: it rejects
+	// almost nothing and moves severity a great deal, so a group whose count did not change still has
+	// something to report
+	v := &verifier{}
+	sev := func(id string, s finding.Severity, verdict finding.Verdict) finding.Finding {
+		return finding.Finding{ID: id, Severity: s, Verdict: verdict}
+	}
+
+	t.Run("a lowered severity is reported even when nothing was rejected", func(t *testing.T) {
+		before := []finding.Finding{sev("a-1", finding.Major, "")}
+		after := []finding.Finding{sev("a-1", finding.Minor, finding.Refined)}
+		assert.Equal(t, ", 1 lowered, 1 refined", v.adjusted(before, after))
+	})
+
+	t.Run("a raised severity reads differently from a lowered one", func(t *testing.T) {
+		before := []finding.Finding{sev("a-1", finding.Minor, "")}
+		after := []finding.Finding{sev("a-1", finding.Critical, finding.Confirmed)}
+		assert.Equal(t, ", 1 raised", v.adjusted(before, after))
+	})
+
+	t.Run("a group verification left alone says nothing extra", func(t *testing.T) {
+		before := []finding.Finding{sev("a-1", finding.Major, "")}
+		after := []finding.Finding{sev("a-1", finding.Major, finding.Confirmed)}
+		assert.Empty(t, v.adjusted(before, after))
+	})
+
+	t.Run("a rejected finding is absent from after and counts as neither", func(t *testing.T) {
+		before := []finding.Finding{sev("a-1", finding.Major, ""), sev("a-2", finding.Major, "")}
+		after := []finding.Finding{sev("a-1", finding.Minor, finding.Refined)}
+		assert.Equal(t, ", 1 lowered, 1 refined", v.adjusted(before, after))
+	})
+}
+
+func TestVerifier_adjustedRanksSeverity(t *testing.T) {
+	// finding.Severity has three values, so a move can skip minor entirely — comparing only against
+	// minor at one end counted critical -> major as no change in either direction
+	v := &verifier{}
+	tbl := []struct {
+		name     string
+		from, to finding.Severity
+		want     string
+	}{
+		{"critical down to major", finding.Critical, finding.Major, ", 1 lowered"},
+		{"major up to critical", finding.Major, finding.Critical, ", 1 raised"},
+		{"critical down to minor", finding.Critical, finding.Minor, ", 1 lowered"},
+		{"minor up to major", finding.Minor, finding.Major, ", 1 raised"},
+		{"unchanged", finding.Major, finding.Major, ""},
+	}
+	for _, tt := range tbl {
+		t.Run(tt.name, func(t *testing.T) {
+			before := []finding.Finding{{ID: "a-1", Severity: tt.from}}
+			after := []finding.Finding{{ID: "a-1", Severity: tt.to}}
+			assert.Equal(t, tt.want, v.adjusted(before, after))
+		})
+	}
+}

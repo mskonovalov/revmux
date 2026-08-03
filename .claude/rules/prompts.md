@@ -14,7 +14,7 @@ and get the same review, and change a timeout without touching a prompt.
 ```
 prompts/profiles/comprehensive.md   focused.md   final.md   claude-only.md   codex-only.md
 prompts/synthesis.md   prompts/verify.md
-lenses/bugs.md  impl.md  architecture.md  quality.md  docs.md  tests.md  adversarial.md
+lenses/bugs.md  impl.md  architecture.md  quality.md  docs.md  tests.md  comments.md  adversarial.md
 ```
 
 Precedence, per file: `./.revmux/` > `~/.config/revmux/` > `go:embed` defaults.
@@ -36,7 +36,7 @@ model: claude/opus:high
 agents:
   - {name: bugs+impl,    lenses: [bugs, impl],            color: cyan}
   - {name: arch+quality, lenses: [architecture, quality], color: magenta}
-  - {name: docs+tests,   lenses: [docs, tests],           color: green}
+  - {name: docs+tests,   lenses: [docs, tests, comments], color: green}
   - {name: codex, lenses: [adversarial], model: codex/gpt-5.6-sol:high, color: yellow}
 ---
 ```
