@@ -36,14 +36,10 @@ const (
 )
 
 // answered reports whether a decoded payload is the shape the stage asked for. Decoding alone does not
-// say so: an object carrying some other key unmarshals into the stage's struct leaving its list nil and
-// returning no error, so a process that answered something else entirely reads as one that found
-// nothing — a dead source counted as reporting, or, on a codex synthesis, every finder's work replaced
-// by an empty report on a run that exits 0.
-//
-// The gap is codex's alone. It has no --json-schema to enforce a shape, and extraction takes the first
-// decodable object anywhere in its stdout, so an illustrative object in its prose becomes the answer.
-// An empty list is still an answer: {"findings": []} carries the key and passes.
+// say so: an object carrying some other key unmarshals leaving the list nil and no error, so a process
+// that answered something else reads as one that found nothing. The gap is codex's alone — it has no
+// --json-schema, and extraction takes the first decodable object anywhere in its stdout. An empty list
+// is still an answer: {"findings": []} carries the key and passes.
 func answered(raw json.RawMessage, key string) bool {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
@@ -51,6 +47,16 @@ func answered(raw json.RawMessage, key string) bool {
 	}
 	_, ok := obj[key]
 	return ok
+}
+
+// archivedPrompt is the prompt the process actually receives, which is the only version worth storing.
+// Each executor appends something of its own — codex its output contract, claude its narration contract
+// — so a prompt archived as composed describes a review that did not happen.
+func archivedPrompt(exec, text string, schema json.RawMessage) string {
+	if exec != executorCodex {
+		return text + executor.ClaudeNarrationContract(schema)
+	}
+	return text + executor.CodexOutputContract(schema)
 }
 
 // Runner runs one supervised process. It is declared here, by the consumer, and exported only so
@@ -111,11 +117,9 @@ type Pipeline struct {
 	err error // first archive failure, sticky: a half-written archive fails the run
 }
 
-// New builds a pipeline over cfg. The event channel is buffered and lossy by design.
-//
-// The stagger is built here and handed to each stage rather than owned by one: its gate latches open
-// on the first release and never re-arms, so a later stage runs through the same instance instead of
-// paying a second stagger delay to re-prove auth the first stage already proved.
+// New builds a pipeline over cfg. The event channel is buffered and lossy by design. The stagger is
+// built here and handed to each stage rather than owned by one: its gate latches open on the first
+// release, so a later stage does not pay a second delay to re-prove what the first already proved.
 func New(cfg Config) *Pipeline {
 	return &Pipeline{
 		cfg: cfg, events: make(chan Event, eventBuffer),
@@ -160,11 +164,9 @@ func (p *Pipeline) Run(ctx context.Context) (rep finding.Report, err error) {
 	return rep, nil
 }
 
-// runFind runs the find stage and appends its own timing to the report it returns. Each stage
-// records its own, since manifest.json reads them back and nothing can recompute one afterwards.
-//
-// The per-source results travel out alongside the report because synthesis needs the true roster —
-// which process emitted which finding, and which degraded — as data rather than as an inference.
+// runFind runs the find stage and appends its own timing to the report it returns. The per-source
+// results travel out alongside it because synthesis needs the true roster — which process emitted which
+// finding, and which degraded — as data rather than as an inference.
 func (p *Pipeline) runFind(ctx context.Context) (finding.Report, []sourceResult, error) {
 	p.emit(Event{Kind: EventStage, Stage: stageFind})
 	at := p.cfg.Clock.Now()
@@ -231,12 +233,9 @@ func (p *Pipeline) runVerify(ctx context.Context, rep finding.Report) (finding.R
 }
 
 // stageRun records what a stage took and which runner it resolved to. The runner is recorded because a
-// profile can override it, so nothing in a finished round would otherwise say which binary produced
-// that stage — and an archived prompt names the path it was composed from, not the model that read it.
-//
-// A nil stage is a stage that dispatched nothing and resolved no runner: verify returns early when
-// synthesis left no findings to check. The entry stays, since the stage did run and took time, and the
-// omitted runner is honest about there being no process to attribute it to.
+// profile can override it, and nothing else in a finished round says which binary produced that stage.
+// A nil stage dispatched nothing and resolved no runner — verify returns early when synthesis left
+// nothing to check — and the entry stays, since the stage did run and took time.
 func (p *Pipeline) stageRun(name string, st *prompt.Stage, took time.Duration) finding.StageRun {
 	out := finding.StageRun{Name: name, DurationMS: took.Milliseconds()}
 	if st != nil {

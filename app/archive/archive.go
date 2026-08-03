@@ -1,11 +1,7 @@
-// Package archive writes the artifacts of one review run into the round directory the caller prepared.
-//
-// A round holds the caller's own input/ beside them, which is what makes the review auditable from the
-// round alone: the composed prompt each process actually received, the findings after each stage,
-// revmux's own decisions, and every agent's verbatim stream. Nothing above the round is written.
-//
-// Cleanup is the one thing here that removes anything, and it is a whole task at a time, reached only by
-// `revmux cleanup` naming that task. Nothing on the review path deletes.
+// Package archive writes the artifacts of one review run into the round directory the caller prepared:
+// the composed prompts, the per-stage findings, revmux's own decisions and every agent's verbatim
+// stream, beside the caller's own input/. Nothing above the round is written, and Cleanup is the one
+// thing here that removes anything.
 package archive
 
 import (
@@ -20,14 +16,9 @@ import (
 	"github.com/umputun/revmux/app/task"
 )
 
-// Archive is one round's artifact directory.
-//
-// The round is held as an open handle rather than re-opened by name on every write, and the chain down
-// to it starts at the tasks root. A path validated once and then reopened is a path another process can
-// swap for a symlink in between, and every artifact of this round would follow it. A handle keeps
-// pointing at the directory it was opened on, and refuses any name that leaves it.
-//
-// The marker is held open and locked for the same duration, which is what says this round is one run's.
+// Archive is one round's artifact directory. The round is held as an open handle rather than reopened by
+// name on every write, since a path validated once and then reopened can be swapped for a symlink in
+// between. The marker is held open and locked for the same duration, which says the round is this run's.
 type Archive struct {
 	dir    string   // this round's directory, for error messages
 	root   *os.Root // handle on dir, every artifact is written through it
@@ -35,13 +26,8 @@ type Archive struct {
 }
 
 // New opens the round <TasksDir>/<Task>/<Run> and claims it by creating manifest.json exclusively, so a
-// round that has already run is refused rather than overwritten: a round that went badly is exactly the
-// one a later reflection agent wants to read.
-//
-// It walks down from the tasks root as nested os.Roots rather than opening the joined path, so every hop
-// is contained by the one above it however a symlink got there. Nothing on the way is created — the
-// tasks root, the task directory and the round with the input/ the caller filled are all his, and revmux
-// authors no part of the context it reviews.
+// round that has already run is refused rather than overwritten. It walks down from the tasks root as
+// nested os.Roots, so every hop is contained by the one above it. Nothing on the way is created.
 func New(opts task.Round) (*Archive, error) {
 	if opts.TasksDir == "" {
 		return nil, errors.New("tasks directory is empty")
@@ -61,17 +47,16 @@ func New(opts task.Round) (*Archive, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open tasks directory %s: %w", tasks, err)
 	}
-	defer tasksRoot.Close() // nothing was written through it, only the round's own handle outlives New
+	defer tasksRoot.Close() // only the round's own handle outlives New
 
-	// opened, never created: the caller writes the task directory, so a missing one is his error to fix and
-	// not a directory for revmux to author. Opening also resolves a task legitimately reached through a
-	// relative symlink inside the tasks root, which a MkdirAll on the same name would refuse outright.
+	// opened, never created. Opening also resolves a task legitimately reached through a relative symlink
+	// inside the tasks root, which a MkdirAll on the same name would refuse outright.
 	taskPath := filepath.Join(tasks, opts.Task)
 	taskRoot, err := tasksRoot.OpenRoot(opts.Task)
 	if err != nil {
 		return nil, fmt.Errorf("open task directory %s inside the tasks root %s: %w", taskPath, tasks, err)
 	}
-	defer taskRoot.Close() // same, it only carries the walk down to the round
+	defer taskRoot.Close() // same, it only carries the walk down
 
 	dir := filepath.Join(taskPath, opts.Run)
 	if entryErr := checkRoundEntry(taskRoot, opts.Run, dir); entryErr != nil {
@@ -97,9 +82,8 @@ func New(opts task.Round) (*Archive, error) {
 	return &Archive{dir: dir, root: root, marker: marker}, nil
 }
 
-// Close releases the round's directory handle and the claim on its marker. The artifacts are already on
-// disk by then; this only drops the descriptors that kept the round pinned for the duration of the run,
-// and dropping the marker is what lets a later run re-claim a round this one never finished.
+// Close releases the round's directory handle and the claim on its marker. Dropping the marker is what
+// lets a later run re-claim a round this one never finished.
 func (a *Archive) Close() error {
 	if a.marker != nil {
 		if err := a.marker.Close(); err != nil {
@@ -113,14 +97,9 @@ func (a *Archive) Close() error {
 	return nil
 }
 
-// Writer opens one artifact for writing, creating parent directories as needed. name is a path
-// relative to the round directory, so one method serves the per-agent tees, the composed prompts, the
-// per-stage findings, the manifest and the rendered report without the archive knowing what any of
-// them mean.
-//
-// A separator is legal — prompts/agents/, stages/ and agents/ all need one — and only a path leaving
-// the round directory is rejected. The handle settles that: a symlink inside the round pointing anywhere
-// else is refused when it is traversed, not when it was last looked at.
+// Writer opens one artifact for writing, creating parent directories as needed. name is relative to the
+// round directory. A separator is legal — prompts/agents/, stages/ and agents/ all need one — and only a
+// path leaving the round is rejected; the handle refuses a symlink when it is traversed.
 func (a *Archive) Writer(name string) (io.WriteCloser, error) {
 	clean, err := a.resolve(name)
 	if err != nil {
@@ -155,13 +134,9 @@ func (a *Archive) resolve(name string) (string, error) {
 	return clean, nil
 }
 
-// checkRoundEntry reads the round entry under the task directory and refuses a symlink: every artifact
-// of this round would be written wherever it points. Containment alone does not settle that — os.Root
-// follows a link landing back inside the root, so a round linked to a sibling round passes every
-// containment check and still truncates that round's artifacts.
-//
-// A missing entry is the caller's to fix rather than revmux's to create, since the round carries the
-// input/ this review reads.
+// checkRoundEntry reads the round entry under the task directory and refuses a symlink. Containment
+// alone does not settle it: os.Root follows a link landing back inside the root, so a round linked to a
+// sibling passes every containment check and still truncates that round's artifacts.
 func checkRoundEntry(taskRoot *os.Root, name, path string) error {
 	fi, err := taskRoot.Lstat(name)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -182,13 +157,7 @@ func checkRoundEntry(taskRoot *os.Root, name, path string) error {
 
 // checkHandle proves an open handle is the entry it was opened by name from, rather than whatever a
 // symlink resolved to. Looking at an entry and opening it are two operations, so it can be swapped in
-// between and the handle would pin the link's target for the rest of the run — the one thing
-// checkRoundEntry exists to refuse, reached by racing it. Reading the entry again and matching it against
-// the directory actually opened closes that window: a swap after this point leaves the handle on what
-// this check accepted.
-//
-// A round swapped for a link to an earlier one pins that round, and every artifact this run writes
-// truncates one of its own — destroying exactly the bad round a reflection agent wants to read.
+// between; a swap after this check leaves the handle on what the check accepted.
 func checkHandle(parent, opened *os.Root, name, path string) error {
 	entry, err := parent.Lstat(name)
 	if err != nil {
@@ -207,13 +176,9 @@ func checkHandle(parent, opened *os.Root, name, path string) error {
 	return nil
 }
 
-// requireInput refuses a round the caller has not filled. input/ is the only channel review context
-// travels through, so a round without one carries no scope and there is nothing to review.
-//
-// The entry is read with Lstat, and a symlink is refused rather than followed: os.Root resolves a link
-// landing back inside the round, so an input/ aliased onto another directory passes containment and makes
-// this round's archived context a pointer at somebody else's. `revmux new` refuses the same shape, and the
-// two have to agree about which rounds are usable.
+// requireInput refuses a round the caller has not filled. The entry is read with Lstat and a symlink is
+// refused rather than followed: os.Root resolves a link landing back inside the round, so an aliased
+// input/ passes containment and makes this round's archived context a pointer at somebody else's.
 func requireInput(round *os.Root, dir string) error {
 	path := filepath.Join(dir, task.InputDir)
 	fi, err := round.Lstat(task.InputDir)
@@ -233,14 +198,9 @@ func requireInput(round *os.Root, dir string) error {
 }
 
 // claimRound takes the round for this run and returns the marker it holds it by, open and locked until
-// Close. The exclusive create is what detects a round that has already run — atomic where a look followed
-// by a write is not, and it leaves every artifact of the earlier round exactly as it was.
-//
-// The lock is taken on the marker this run just created as well, because creating it and locking it are
-// two operations: a racer reading the fresh marker in between finds it empty and would otherwise reclaim
-// it. Both callers lock, so whichever gets there first owns the round and the other is refused.
-//
-// A marker already there is reclaim's question.
+// Close. The exclusive create is what detects a round that has already run. The lock is taken on a marker
+// this run just created too: creating and locking are two operations, and a racer in between finds it
+// empty. A marker already there is reclaim's question.
 func claimRound(round *os.Root, dir string) (*os.File, error) {
 	path := filepath.Join(dir, task.ManifestFile)
 	f, err := round.OpenFile(task.ManifestFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
@@ -258,8 +218,7 @@ func claimRound(round *os.Root, dir string) (*os.File, error) {
 }
 
 // hold takes this run's claim on an open marker and keeps it for as long as the descriptor lives. A lock
-// already held means another run is writing this round right now, and sharing it would have both runs
-// truncate the same artifacts until the last manifest won.
+// already held means another run is writing this round right now.
 func hold(f *os.File, dir, path string) error {
 	ok, err := tryLock(f)
 	if err != nil {
@@ -272,19 +231,10 @@ func hold(f *os.File, dir, path string) error {
 	return nil
 }
 
-// reclaim decides whether a round already carrying a marker may be taken over by this run.
-//
-// The marker is classified by task.CheckMarker, the one definition `revmux new` gates on too. A filled one
-// is a round that ran and is refused. An empty one means the round was claimed and says nothing about
-// whether that run is still going, so the lock settles it: taken means a live run owns the round, free
-// means the run that claimed it never came back and the round is re-claimed rather than burnt — the
-// caller's own input/ lives in it. Only while that run left nothing else behind, which task.CheckReclaim
-// decides, and it is asked under the lock so two racers cannot both pass it.
-//
-// The entry is read with Lstat: os.Root.Stat follows a link that lands back inside the round, so a
-// manifest.json pointing at the caller's own goal.md would read as its size here and be truncated by the
-// write that fills the marker in. The same read is repeated once the lock is held, against the descriptor
-// as well as the entry, since everything looked at before it could be swapped in between.
+// reclaim decides whether a round already carrying a marker may be taken over by this run. A filled
+// marker is a round that ran and is refused; an empty one says nothing about whether that run is still
+// going, so the lock settles it. The entry is read with Lstat: os.Root.Stat follows a link landing back
+// inside the round, so a manifest.json aliasing the caller's goal.md would read as its size.
 func reclaim(round *os.Root, dir, path string) (*os.File, error) {
 	ran, err := readMarker(round, path)
 	if err != nil {
@@ -306,14 +256,12 @@ func reclaim(round *os.Root, dir, path string) (*os.File, error) {
 }
 
 // takeOver holds the claim on an open marker and re-establishes under the lock everything the decision to
-// reclaim rested on. Each of those was read before the lock was held, so each could have changed while it
-// was being waited for: the run that claimed the round may have finished, the marker may have been
-// swapped, and another reclaimer may have started writing into the round.
+// reclaim rested on, each of which was read before the lock was held and could have changed since.
 func takeOver(round *os.Root, f *os.File, dir, path string) error {
 	if err := hold(f, dir, path); err != nil {
 		return err
 	}
-	if err := checkMarkerHandle(round, f, path, dir); err != nil {
+	if err := checkMarkerHandle(round, f, dir, path); err != nil {
 		return err
 	}
 	entries, err := fs.ReadDir(round.FS(), ".")
@@ -339,11 +287,10 @@ func readMarker(round *os.Root, path string) (ran bool, err error) {
 	return ran, nil
 }
 
-// checkMarkerHandle re-reads the marker once the lock is held and proves the descriptor is still the entry
-// it was opened by name from. The run that claimed the round may have finished between the read above and
-// the lock, which makes this a round that ran; and the entry may have been swapped for a link, which the
-// write filling the marker in would follow.
-func checkMarkerHandle(round *os.Root, f *os.File, path, dir string) error {
+// checkMarkerHandle re-reads the marker once the lock is held and proves the descriptor is still the
+// entry it was opened by name from. The claiming run may have finished between the read above and the
+// lock, and the entry may have been swapped for a link the marker write would follow.
+func checkMarkerHandle(round *os.Root, f *os.File, dir, path string) error {
 	ran, err := readMarker(round, path)
 	if err != nil {
 		return err
