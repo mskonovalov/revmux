@@ -405,7 +405,7 @@ Stamping happens in `find`, not synthesis, or `--no-synthesis` runs carry invent
   One that changes what a stage resolves to needs `revmux config` as a fifth site: `profileInfo.Stages`
   reports the resolution rather than the override, so a key it does not carry is invisible to the caller
   choosing the profile.
-- A change to the `model:` grammar is `app/prompt/runner.go` plus every authored file that uses it: five
+- A change to the `model:` grammar is `app/prompt/runner.go` plus every authored file that uses it: six
   shipped profiles, both stage files, the README front-matter section, `.claude/rules/prompts.md`, and the
   fixtures in `app/prompt` and `app/pipeline` tests. The parsed form reaches `AgentSpec`, `Stage` and
   `RunnerSpec` as three separate fields, so nothing downstream of the parser changes — which is what keeps
@@ -431,17 +431,45 @@ Stamping happens in `find`, not synthesis, or `--no-synthesis` runs carry invent
   "five subcommands" sentence plus the section in README, the project-structure list in this file, and the
   subcommand sections in **both** skill trees.
 - A new lens file needs an entry in at least one shipped profile, or nothing will ever run it.
+- A new **profile** needs: the file under `app/prompt/defaults/prompts/profiles/`, the shipped-profile
+  table in README and the CLI-requirements bullet above it, the prompt-tree diagram in README, and the
+  layout block in `.claude/rules/prompts.md`.
+  Then four sites in **each** skill tree, two per file: `SKILL.md`'s profile table and its "the user
+  says" mapping, and `references/invocation.md`'s profile table and the executor count in its
+  `Environment` bullet.
+  That last one is the one this list exists for. It is a *count* rather than a row, so nothing about
+  adding a profile draws attention to it, and `SKILL.md` points an executing agent at
+  `references/invocation.md` as the authority on profiles — so a stale count there has the skill
+  contradicting the binary.
+  The `diff -r` rule below does not cover it: that governs mirroring an edit between the two trees,
+  which is a different question from finding the file in the first place.
+  Then the counts in this section, which name the set literally and go stale silently — the
+  three bullets below and the `model:` grammar bullet above.
+  Four tests enumerate the set: `prompt_test.go` twice, `initcmd_test.go` and `main_test.go` assert the
+  exact names, and `defaults_test.go` asserts how many there are. Those are inventories and are meant to
+  be literal. `TestDefaults_SeverityContract` is **not** — it derives the full profiles from
+  `ProfileNames()` so a new one is guarded without being listed, which is what a contract check has to do
+  and what a literal list there silently stopped doing.
 - **The severity bar is duplicated in every profile body** and nothing composes it from one place:
-  `comprehensive`, `codex-only`, `claude-only` and `focused` carry a byte-identical `## Severity bar`
-  section, and `final` carries a two-severity variant of the same text.
-  A change to what a severity means is five edits, and the four identical copies must stay identical —
+  `comprehensive`, `codex-only`, `claude-only`, `focused` and `grill-me` carry a byte-identical
+  `## Severity bar` section, and `final` carries a two-severity variant of the same text.
+  A change to what a severity means is six edits, and the five identical copies must stay identical —
   two profiles disagreeing about what `major` is means the same defect gates one review shape and not
   another, which reads as the model being inconsistent rather than the prompts being out of step.
   `.claude/rules/prompts.md` calls the body "the shared preamble and severity bar"; shared across the
   agents of one run, not across profiles.
-  **`## What not to report` is the second such block**, byte-identical in all five, and it is the one a
+  **`## What not to report` is the second such block**, byte-identical in all six, and it is the one a
   finder consults before writing anything down — so a rule added to one profile and not the others makes
   the same finding reportable under one review shape and suppressed under another.
+  **`grill-me`'s `## Stance` section is the third**, and it duplicates a *lens* rather than another
+  profile: roughly half of `lenses/adversarial.md` is copied into it verbatim, including the "Work the
+  seams" bullets and the two paragraphs on titling the mechanism.
+  The copy exists because that profile puts the adversarial stance on all four agents, where it is
+  preamble rather than a lens — but the five other profiles still compose `adversarial.md` itself, so an
+  edit there leaves `grill-me` stale and the two shapes then instruct agents differently about severity
+  inflation in the profile whose whole premise is pushing against that bar.
+  What is deliberately **not** copied stays not copied: `adversarial.md` tells its agent not to repeat
+  what a careful first read surfaces, which is the opposite of what `grill-me` needs from four agents.
 - A change to the task-directory layout starts at the constants in `app/task`, which `app/archive`,
   `app/pipeline` and `package main` join every path from — the run's own artifacts included, so a stage
   snapshot is named once and read back by that name.

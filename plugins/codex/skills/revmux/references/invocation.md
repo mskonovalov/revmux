@@ -217,6 +217,7 @@ will not read, and an unwritable `./.revmux/` under `revmux init`.
 | `final` | `bugs+impl` plus the codex peer, nothing below major reported | last look before merging |
 | `claude-only` | `bugs+impl`, `arch+quality`, `docs+tests`, `adversarial` — all on claude | codex is unavailable or unwanted |
 | `codex-only` | the same four splits on codex, synthesis and verify included — no claude anywhere | claude is unavailable or unwanted |
+| `grill-me` | `bugs+impl` and `architecture+quality`, each run once on claude and once on codex, every agent reading against the change | the user asked to be grilled; corroboration between two vendors on one lens pair is the point |
 
 `--profile <name>`. The default is `comprehensive` and is itself a config knob.
 
@@ -525,8 +526,8 @@ revmux drives the model CLIs as subprocesses, so both must already be installed 
 
 - `claude` — every lens agent and both model stages run on it by default
 - `codex` — needed when a profile, a roster entry or a stage names it in its `model:`. `claude-only`
-  needs claude alone and `codex-only` needs codex alone; the other three shipped profiles need both
-  profile does
+  needs claude alone and `codex-only` needs codex alone; the other four shipped profiles need both.
+  `preflight.sh <profile>` answers it for the profile that will actually run
 
 `ANTHROPIC_API_KEY` is stripped from the child environment by default so `claude` uses interactive
 subscription auth; `--preserve-anthropic-api-key` passes it through for key-based auth. `CLAUDECODE`

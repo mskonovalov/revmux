@@ -65,7 +65,8 @@ func TestDefaults_EveryProfileResolvesItsRoster(t *testing.T) {
 	set, err := Load(LoadOpts{})
 	require.NoError(t, err)
 	known := set.LensNames()
-	require.Len(t, set.ProfileNames(), 5, "the shipped set is comprehensive, focused, final, claude-only and codex-only")
+	require.Len(t, set.ProfileNames(), 6,
+		"the shipped set is comprehensive, focused, final, claude-only, codex-only and grill-me")
 
 	for _, name := range set.ProfileNames() {
 		p, err := set.Profile(name)
@@ -203,8 +204,14 @@ func TestDefaults_SeverityContract(t *testing.T) {
 	set, err := Load(LoadOpts{})
 	require.NoError(t, err)
 
+	// derived from the shipped set rather than listed, so a new full profile is guarded without being
+	// named here. final is the one deliberate variant and is asserted separately below.
 	var expected string
-	for _, name := range []string{"comprehensive", "codex-only", "claude-only", "focused"} {
+	compared := 0
+	for _, name := range set.ProfileNames() {
+		if name == "final" {
+			continue
+		}
 		p, profileErr := set.Profile(name)
 		require.NoError(t, profileErr)
 		start := strings.Index(p.Body, "## Severity bar")
@@ -212,12 +219,14 @@ func TestDefaults_SeverityContract(t *testing.T) {
 		end := strings.Index(p.Body[start:], "\n## Reporting")
 		require.NotEqual(t, -1, end, "profile %s has no reporting section after severity", name)
 		section := p.Body[start : start+end]
+		compared++
 		if expected == "" {
 			expected = section
-		} else {
-			assert.Equal(t, expected, section, "full profiles must gate the same finding at the same severity")
+			continue
 		}
+		assert.Equal(t, expected, section, "full profiles must gate the same finding at the same severity")
 	}
+	require.Greater(t, compared, 1, "a contract over one profile compares nothing")
 	assert.Contains(t, expected, "Severity is what goes wrong when the code runs")
 	assert.Contains(t, expected, "broken contract a caller executes against")
 	assert.Contains(t, expected, "Human-facing prose is never that")

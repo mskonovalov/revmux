@@ -237,6 +237,7 @@ Also useful: `--min-confidence=70` for actionable-only, `--no-verify` when a hum
 Both return the same report on stdout and the same exit code.
 
 **Headless — the default:**
+| `grill-me` | `bugs+impl` and `architecture+quality`, each once on claude and once on codex, all reading against the change | the user wants it torn apart |
 
 ```bash
 revmux --task <id> --run <name> --no-tui > /tmp/revmux-<id>-<run>.json 2> /tmp/revmux-<id>-<run>.log
@@ -250,6 +251,7 @@ the cleanup deletes. `references/pr.md` has the reasoning.
 
 **Before yielding, tell the user three things** — otherwise they sit for 10+ minutes with no signal:
 
+| grill me, tear it apart, be brutal, no mercy, adversarial | `grill-me` |
 1. what is running (task, profile, roster size) and the rough duration
 2. the stderr log path, and that `tail -f <path>` shows live per-agent progress
 3. that they can ask for status any time

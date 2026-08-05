@@ -70,7 +70,7 @@ Override the location with `BINDIR` when `/usr/local/bin` is not writable — `m
 revmux drives the model CLIs as subprocesses, so whichever ones your profile names must already be
 installed and authenticated. Which those are is a property of the profile, not a fixed pair:
 
-- `comprehensive`, `focused`, `final` — both, a claude roster plus a codex peer
+- `comprehensive`, `focused`, `final`, `grill-me` — both, a claude roster plus codex
 - `claude-only` — claude alone
 - `codex-only` — codex alone
 
@@ -347,7 +347,8 @@ so an invocation that stays outside never picks up the reviewed repository's own
 │   │   ├── focused.md
 │   │   ├── final.md
 │   │   ├── claude-only.md
-│   │   └── codex-only.md
+│   │   ├── codex-only.md
+│   │   └── grill-me.md
 │   ├── synthesis.md
 │   └── verify.md
 └── lenses/
@@ -445,6 +446,7 @@ Shipped profiles:
 | `final` | `bugs+impl` plus the codex peer, nothing below major reported |
 | `claude-only` | the same four lens splits on claude, no codex peer — for a machine with no codex |
 | `codex-only` | the same four lens splits on codex, and synthesis and verify with them — no claude anywhere |
+| `grill-me` | `bugs+impl` and `architecture+quality`, each run once on claude and once on codex, every agent reading against the change |
 
 ### Lenses
 
