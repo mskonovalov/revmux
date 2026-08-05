@@ -35,7 +35,9 @@ of what round 1 reviewed.
 
 `{{SCOPE}}` is the absolute path of `scope.md`. The agent reads the file itself; revmux only stats it.
 
-- a large `scope.md` costs nothing at launch — length is bounded by what is worth reading
+- a large `scope.md` costs nothing at launch, and that is the only place it costs nothing: every agent
+  reads it in full, and whoever composed the round paid for the prose in wall-clock before the review
+  started. Keep it under ~1500 characters, bullets and command blocks rather than paragraphs
 - prefer text in `context/`; an agent still has to read it
 - an absent optional file expands to the literal `none provided`, not a broken path
 
@@ -125,10 +127,13 @@ internal consistency only; with it they can review for fitness. The `impl` lens 
    they give a verifier something falsifiable.
 3. **The severity bar for this change** — what is serious here versus noise
 
+Under ~1000 characters, and the criteria are what the budget is for: an agent that has read the diff
+learns nothing from a retelling of it, and every falsifiable line is one it can check.
+
 ```markdown
 # Goal
 
-<two or three paragraphs on what the change is for and why it was made this way>
+<two or three sentences on what the change is for and why it was made this way>
 
 So this change is correct only if:
 
