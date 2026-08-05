@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -61,7 +62,10 @@ func TestNew(t *testing.T) {
 	t.Run("an empty roster still renders", func(t *testing.T) {
 		empty := New(ModelConfig{})
 		assert.Empty(t, empty.agents)
-		assert.Contains(t, empty.View(), "revmux", "and the header carries the identity with nothing else to say")
+		head := xansi.Strip(empty.header())
+		assert.Contains(t, head, "revmux", "the header carries the identity")
+		assert.NotContains(t, head, "·  ·",
+			"and an unset profile is omitted rather than rendered as a gap between two separators")
 	})
 }
 

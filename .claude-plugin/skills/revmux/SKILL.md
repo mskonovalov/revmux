@@ -122,6 +122,13 @@ the subagent, which otherwise spends three to five git calls arriving at the sam
 they are the numbers Step 4's announcement is built from either way. Everything past the scale is still
 the subagent's: the full diff, the file list, what is worth reading.
 
+**Two rows in the table above are not a single range, so the one command does not cover them.**
+Uncommitted work on master is `git diff --shortstat` *plus* `git diff --staged --shortstat`, and the
+scale handed over is the two added together — a bare `git diff --shortstat` reports nothing at all when
+the work is fully staged. A path scope has no range: hand over the file count instead, or hand over
+nothing and say so. Do not hand a number the commands in `scope.md` contradict, since the brief makes it
+binding — "take the scale as given rather than measuring it again".
+
 **A pull request is a different shape, not a harder ref range.** revmux fetches nothing and checks
 nothing out, so a PR has to be on disk before there is anything to review, and the checkout has to be
 removed afterwards. Read `references/pr.md` and follow it — it covers steps 1 through 4 for that case
@@ -200,6 +207,9 @@ Spawn **one** `general-purpose` agent. Hand it the resolved scope from Step 1 an
 >      like, where the project's rules live, which conventions are deliberate. **On any round after the
 >      first, `cp` the previous round's file to this round's path** rather than writing one: it is about
 >      the project rather than the round, so a fresh one is the same document generated again.
+>      Copy from the most recent round `task-state.sh` reported `profile=present` for — the file is
+>      optional, so an earlier round may not have one, and `cp` from a round that lacks it just fails.
+>      Write one when no round has it.
 >    - `context` — optional. Ticket text, design notes, commit list. Its path is reported but the
 >      directory is not created.
 >    - `task_file` — when `created` lists it, and also when it is already there but still the unfilled
