@@ -302,10 +302,10 @@ agterm_theme_name() {
     esac
 }
 
-# the overlay's own background: what the pane shows now, shifted toward blue. A pane overlay is
-# full-pane and otherwise inherits the session's colors exactly, so the review would render as the
-# shell it covered and the user could not tell one from the other. $1 is the session's own color when
-# it carries one; failing that the resolved theme's `background`, failing that ghostty's default.
+# the overlay's own background: what the pane shows now, shifted toward blue. Without it an overlay
+# inherits the session's colors exactly, so a full-pane one renders as the shell it covered and the
+# user cannot tell one from the other. $1 is the session's own color when it carries one; failing
+# that the resolved theme's `background`, failing that ghostty's default.
 agterm_overlay_tint() {
     local hex="${1#\#}" theme file r g b
     if [ -z "$hex" ]; then
@@ -353,18 +353,19 @@ if [ -n "${AGTERM_SESSION_ID:-}" ] && [ -n "$AGTERMCTL" ]; then
     # In a VISIBLE split that panel is centered over BOTH panes: it covers the sibling pane's work and
     # leaves the review in a frame narrower than the pane the agent runs in. A pane overlay covers this
     # pane alone and leaves the sibling live, so a split takes it instead. It is always full-pane -
-    # agterm refuses --size-percent with --pane - which is what the tint above exists for.
+    # agterm refuses --size-percent with --pane.
     # An explicit REVMUX_AGTERM_PERCENT asks for the floating panel by name, so it opts back out.
-    AGTERM_GEOMETRY=(--size-percent "${REVMUX_AGTERM_PERCENT:-80}")
+    # The tint goes on both shapes. A full-pane overlay needs it to be distinguishable from the shell
+    # it covered at all; the framed panel is already distinguishable, and carries it so that one
+    # review does not look like two different tools depending on whether the session was split.
+    AGTERM_STATE=$(agterm_session_state)
+    AGTERM_TINT=$(agterm_overlay_tint "${AGTERM_STATE#*:}")
+    AGTERM_GEOMETRY=(--size-percent "${REVMUX_AGTERM_PERCENT:-80}" --background-color "$AGTERM_TINT")
     if [ -z "${REVMUX_AGTERM_PERCENT:-}" ]; then
         case "${AGTERM_PANE:-}" in
             left|right)
-                if agterm_supports_pane_overlay; then
-                    AGTERM_STATE=$(agterm_session_state)
-                    if [ "${AGTERM_STATE%%:*}" = "1" ]; then
-                        AGTERM_GEOMETRY=(--pane "$AGTERM_PANE"
-                                         --background-color "$(agterm_overlay_tint "${AGTERM_STATE#*:}")")
-                    fi
+                if [ "${AGTERM_STATE%%:*}" = "1" ] && agterm_supports_pane_overlay; then
+                    AGTERM_GEOMETRY=(--pane "$AGTERM_PANE" --background-color "$AGTERM_TINT")
                 fi
                 ;;
         esac
@@ -388,7 +389,8 @@ if [ -n "${AGTERM_SESSION_ID:-}" ] && [ -n "$AGTERMCTL" ]; then
         printf '%s' "$AGTERM_ERR" | grep -qE 'pane overlay already open|pane not visible'; then
         rc=0
         agt session overlay open "$REVMUX_CMD" --target "$AGTERM_SESSION_ID" \
-            --cwd "$CWD" --size-percent "${REVMUX_AGTERM_PERCENT:-80}" --block || rc=$?
+            --cwd "$CWD" --size-percent "${REVMUX_AGTERM_PERCENT:-80}" \
+            --background-color "$AGTERM_TINT" --block || rc=$?
     fi
     print_report_and_exit "$rc"
 fi

@@ -117,12 +117,15 @@ Order matters where environments overlap: herdr is checked before kitty because 
 
 Under agterm the floating panel is centered over the whole session, so in a **visible split** it covers
 the sibling pane's work and frames the review inside something narrower than the pane it runs in.
-There the launcher opens a pane-scoped overlay on `$AGTERM_PANE` instead, leaving the sibling live. A
-pane overlay is always full-pane, so it is given a background tinted 3% toward blue — derived from the
-session's own color, else the resolved theme's `background` — or it renders as the shell it replaced.
+There the launcher opens a pane-scoped overlay on `$AGTERM_PANE` instead, leaving the sibling live.
 Both conditions are checked, never assumed: `--pane` reached `agtermctl` after v0.9.0, and reading the
 split state needs `jq`. Without either, the floating panel stands — and so it does when agterm refuses
 the pane open outright, since the split can go away between the check and the call.
+
+Either shape gets a background tinted 3% toward blue — derived from the session's own color, else the
+resolved theme's `background`. A pane overlay is always full-pane and would otherwise render as the
+shell it replaced; the framed panel carries the same tint so a review looks like one tool whether or
+not the session happened to be split.
 
 ### Environment overrides
 

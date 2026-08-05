@@ -953,8 +953,9 @@ scripts:
 The launcher exists because an agent's shell has no tty, so the TUI never appears there. The overlay
 is how a user watches a review happen; everything else about the run is identical. Under agterm it
 opens as a floating panel at 80% of the pane — except in a visible split, where it takes the pane the
-agent runs in and leaves the sibling pane live, tinted toward blue so a full-pane overlay is
-distinguishable from the shell it covered.
+agent runs in and leaves the sibling pane live. Both shapes are tinted toward blue, which a full-pane
+overlay needs to be distinguishable from the shell it covered and the panel carries so that one
+review does not look like two tools.
 
 The launcher forwards `PATH` into the overlay deliberately: revmux spawns `claude` and `codex` itself,
 and an overlay shell inherits a server-process environment that predates the user's shell rc files, so

@@ -290,8 +290,8 @@ ${CLAUDE_SKILL_DIR}/scripts/launch-revmux.sh --task <id> --run <name> [any revmu
 
 Detects the terminal (agterm, tmux, zellij, herdr, kitty, wezterm/kaku, cmux, ghostty, iTerm2, Emacs
 vterm), runs revmux with its TUI in an overlay, returns the report on stdout. Under agterm: floating
-panel at 80% of the pane, or a blue-tinted pane overlay when the session is split, which leaves the
-sibling pane live. Do not pass `--no-tui`; the script rejects it.
+panel at 80% of the pane, or a pane overlay when the session is split, which leaves the sibling pane
+live. Either shape is tinted blue. Do not pass `--no-tui`; the script rejects it.
 
 - it blocks for the whole review, so background it and wait for the completion notification
 - **no progress feed, and none of the three-things announcement.** The TUI is the progress feed: a
