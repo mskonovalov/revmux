@@ -47,11 +47,12 @@ const (
 // ModelConfig is what package main hands the model. Roster is the same resolved slice the plain renderer
 // takes, and is where agent colors come from — a color picked here would exist in one renderer only.
 type ModelConfig struct {
-	Roster []prompt.AgentSpec
-	Events <-chan pipeline.Event
-	Task   string
-	Run    string
-	Inputs []InputDocument
+	Roster  []prompt.AgentSpec
+	Events  <-chan pipeline.Event
+	Task    string
+	Run     string
+	Profile string
+	Inputs  []InputDocument
 
 	// AutoExit closes the browser on its own that long after the report arrives, counting down in the
 	// header, and any key cancels it. Zero waits for the reader instead, which is the default: a run

@@ -30,13 +30,13 @@ func filled(t *testing.T, n int) Model {
 }
 
 func TestModel_View(t *testing.T) {
-	m := feed(t, New(ModelConfig{Roster: roster()}),
+	m := feed(t, New(ModelConfig{Roster: roster(), Profile: "comprehensive"}),
 		pipeline.Event{Kind: pipeline.EventStage, Stage: "find", At: at},
 		event(pipeline.EventAgentActivity, "bugs+impl", "tool: Read"),
 	)
 
 	out := m.View()
-	assert.Contains(t, out, "revmux · 2 agents · find", "the status table is on top")
+	assert.Contains(t, out, "revmux · comprehensive · find", "the status table is on top")
 	assert.Contains(t, out, "AGENT", "under a column heading")
 	assert.Contains(t, out, "▸ 1 all", "tabs are numbered from one, and the combined view is focused by default")
 	assert.Contains(t, out, "2 bugs+impl")

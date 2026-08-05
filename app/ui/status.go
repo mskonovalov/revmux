@@ -64,15 +64,15 @@ func (m Model) header() string {
 // already fits. The hint rungs are built only for a live run rather than dropped later by headerLine —
 // a rung whose distinguishing part its renderer discards is the rung below it spelled differently.
 func (m Model) headerLevels() []headerParts {
-	top := headerParts{identity: true, agents: true, stage: true, count: countFull}
+	top := headerParts{identity: true, profile: true, stage: true, count: countFull}
 	levels := []headerParts{top}
 	if !m.done {
 		levels[0].hint = true
-		levels = append(levels, headerParts{identity: true, agents: true, stage: true, hint: true, count: countTotal})
+		levels = append(levels, headerParts{identity: true, profile: true, stage: true, hint: true, count: countTotal})
 	}
 	return append(levels,
-		headerParts{identity: true, agents: true, stage: true, count: countTotal},
-		headerParts{agents: true, stage: true, count: countTotal},
+		headerParts{identity: true, profile: true, stage: true, count: countTotal},
+		headerParts{profile: true, stage: true, count: countTotal},
 		headerParts{stage: true, count: countTotal},
 		headerParts{count: countTotal},
 		headerParts{count: countNone},
@@ -88,8 +88,8 @@ const (
 
 // headerParts is one level of header detail.
 type headerParts struct {
-	identity, agents, stage, hint bool
-	count                         int
+	identity, profile, stage, hint bool
+	count                          int
 }
 
 // headerLine builds the header at one level of detail.
@@ -101,8 +101,8 @@ func (m Model) headerLine(p headerParts) string {
 			head += m.style.muted.Render(" · " + m.visibleMetadata(m.cfg.Task) + "/" + m.visibleMetadata(m.cfg.Run))
 		}
 	}
-	if p.agents {
-		head += m.style.muted.Render(" · " + strconv.Itoa(len(m.agents)) + " agents")
+	if p.profile && m.cfg.Profile != "" {
+		head += m.style.muted.Render(" · " + m.visibleMetadata(m.cfg.Profile))
 	}
 	if p.stage && m.stage != "" {
 		head += m.style.muted.Render(" · ") + m.stage

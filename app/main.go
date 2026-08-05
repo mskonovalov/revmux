@@ -220,7 +220,7 @@ func (o runOpts) review(ctx context.Context, review configuredReview) (finding.R
 	p := pipeline.New(cfg)
 	r := o.render(renderConfig{
 		roster: cfg.Roster, events: p.Events(), context: review.context,
-		task: cfg.Task, run: cfg.Run,
+		task: cfg.Task, run: cfg.Run, profile: cfg.Profile.Name,
 	})
 
 	rep, err := p.Run(ctx)
@@ -259,6 +259,7 @@ type renderConfig struct {
 	context reviewContext
 	task    string
 	run     string
+	profile string
 }
 
 // render subscribes the active renderer to the run's events — the TUI when the tty opens, the plain
@@ -282,7 +283,7 @@ func (o runOpts) render(cfg renderConfig) *renderer {
 	documents := o.inputDocuments(cfg.context)
 	m := ui.New(ui.ModelConfig{
 		Roster: cfg.roster, Events: cfg.events, Output: tty, AutoExit: o.opts.AutoExit,
-		Task: cfg.task, Run: cfg.run, Inputs: documents,
+		Task: cfg.task, Run: cfg.run, Profile: cfg.profile, Inputs: documents,
 	})
 	r.prog = tea.NewProgram(m, tea.WithInput(tty), tea.WithOutput(tty), tea.WithAltScreen())
 	go func() {

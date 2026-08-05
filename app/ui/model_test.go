@@ -61,7 +61,7 @@ func TestNew(t *testing.T) {
 	t.Run("an empty roster still renders", func(t *testing.T) {
 		empty := New(ModelConfig{})
 		assert.Empty(t, empty.agents)
-		assert.Contains(t, empty.View(), "0 agents")
+		assert.Contains(t, empty.View(), "revmux", "and the header carries the identity with nothing else to say")
 	})
 }
 

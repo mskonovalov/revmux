@@ -17,7 +17,7 @@ import (
 )
 
 func TestModel_statusTable(t *testing.T) {
-	m := feed(t, New(ModelConfig{Roster: roster()}),
+	m := feed(t, New(ModelConfig{Roster: roster(), Profile: "comprehensive"}),
 		pipeline.Event{Kind: pipeline.EventStage, Stage: "find", At: at},
 		event(pipeline.EventAgentStarted, "bugs+impl", "bugs, impl"),
 		pipeline.Event{Kind: pipeline.EventAgentActivity, Agent: "bugs+impl", Text: "tool: Read", At: at.Add(9 * time.Second)},
@@ -27,7 +27,7 @@ func TestModel_statusTable(t *testing.T) {
 	require.Len(t, rows, 6,
 		"a header, the rule under it, a column heading, one row per agent, and the closing rule")
 	assert.Equal(t, m.rule(), rows[1], "the header is separated from the table rather than reading as its first row")
-	assert.Equal(t, "revmux · 2 agents · find · ctrl+c to quit", rows[0])
+	assert.Equal(t, "revmux · comprehensive · find · ctrl+c to quit", rows[0])
 	assert.Contains(t, rows[2], "AGENT", "the column heading names what each column holds")
 	assert.Contains(t, rows[2], "ACTIVITY")
 	assert.Contains(t, rows[3], "running")
@@ -60,11 +60,11 @@ func TestModel_statusTable_header(t *testing.T) {
 		msgs []tea.Msg
 		want string
 	}{
-		{"nothing has happened yet", nil, "revmux · 2 agents · ctrl+c to quit"},
+		{"nothing has happened yet", nil, "revmux · comprehensive · ctrl+c to quit"},
 		{
 			"a stage is named once it opens",
 			[]tea.Msg{pipeline.Event{Kind: pipeline.EventStage, Stage: "synthesis", At: at}},
-			"revmux · 2 agents · synthesis · ctrl+c to quit",
+			"revmux · comprehensive · synthesis · ctrl+c to quit",
 		},
 		{
 			"findings are counted across agents, and broken down by severity",
@@ -74,7 +74,7 @@ func TestModel_statusTable_header(t *testing.T) {
 				pipeline.Event{Kind: pipeline.EventFindings, Agent: "codex", At: at, Findings: []finding.Finding{
 					{Severity: finding.Major}}},
 			},
-			"revmux · 2 agents · 3 findings (1 critical, 1 major, 1 minor) · ctrl+c to quit",
+			"revmux · comprehensive · 3 findings (1 critical, 1 major, 1 minor) · ctrl+c to quit",
 		},
 		{
 			"a severity the model invented counts toward the total and is named nowhere",
@@ -82,23 +82,23 @@ func TestModel_statusTable_header(t *testing.T) {
 				pipeline.Event{Kind: pipeline.EventFindings, Agent: "bugs+impl", At: at, Findings: []finding.Finding{
 					{Severity: finding.Major}, {Severity: "invented"}}},
 			},
-			"revmux · 2 agents · 2 findings (0 critical, 1 major, 0 minor) · ctrl+c to quit",
+			"revmux · comprehensive · 2 findings (0 critical, 1 major, 0 minor) · ctrl+c to quit",
 		},
 		{
-			"a synthesis row does not inflate the agent count's own findings total",
+			"a synthesis row replaces the finders' total rather than adding to it",
 			[]tea.Msg{
 				pipeline.Event{Kind: pipeline.EventFindings, Agent: "bugs+impl", At: at, Findings: []finding.Finding{
 					{Severity: finding.Major}, {Severity: finding.Major}}},
 				pipeline.Event{Kind: pipeline.EventFindings, Agent: "synthesis", At: at, Findings: []finding.Finding{
 					{Severity: finding.Minor}}},
 			},
-			"revmux · 3 agents · 1 findings (0 critical, 0 major, 1 minor) · ctrl+c to quit",
+			"revmux · comprehensive · 1 findings (0 critical, 0 major, 1 minor) · ctrl+c to quit",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := feed(t, New(ModelConfig{Roster: roster()}), tt.msgs...)
+			m := feed(t, New(ModelConfig{Roster: roster(), Profile: "comprehensive"}), tt.msgs...)
 			assert.Equal(t, tt.want, m.header())
 		})
 	}
@@ -107,7 +107,7 @@ func TestModel_statusTable_header(t *testing.T) {
 func TestModel_header_quitHint(t *testing.T) {
 	// q and esc are inert while a review runs, so a reader who tries them sees a frame that does not
 	// change. The header is the only thing on screen that can say which key does work
-	m := feed(t, New(ModelConfig{Roster: roster()}),
+	m := feed(t, New(ModelConfig{Roster: roster(), Profile: "comprehensive"}),
 		pipeline.Event{Kind: pipeline.EventStage, Stage: "verify", At: at},
 		pipeline.Event{Kind: pipeline.EventFindings, Agent: "bugs+impl", At: at, Findings: []finding.Finding{
 			{Severity: finding.Critical}, {Severity: finding.Major}, {Severity: finding.Minor}}},
@@ -155,11 +155,11 @@ func TestModel_header_quitHint(t *testing.T) {
 }
 
 func TestModel_header_quitHintOnARealRun(t *testing.T) {
-	// the band the hint has to survive is the shipped comprehensive roster in a normal pane: four agents
-	// and a severity breakdown put the full line at 86 columns, so anything ordered below the breakdown
+	// the band the hint has to survive is the shipped comprehensive profile in a normal pane: its name
+	// and a severity breakdown put the full line at 90 columns, so anything ordered below the breakdown
 	// is gone from the first EventFindings on — which is the run this hint exists for
 	big := []prompt.AgentSpec{{Name: "bugs+impl"}, {Name: "architecture"}, {Name: "quality+docs"}, {Name: "codex"}}
-	m := feed(t, New(ModelConfig{Roster: big, Task: "pr-123", Run: "after-fix", Inputs: []InputDocument{
+	m := feed(t, New(ModelConfig{Roster: big, Task: "pr-123", Run: "after-fix", Profile: "comprehensive", Inputs: []InputDocument{
 		{Label: "scope", Path: "/tmp/scope.md", Content: "# scope", Markdown: true}}}),
 		pipeline.Event{Kind: pipeline.EventStage, Stage: "find", At: at},
 		pipeline.Event{Kind: pipeline.EventFindings, Agent: "bugs+impl", At: at, Findings: []finding.Finding{
@@ -194,7 +194,7 @@ func TestModel_header_quitHintOnARealRun(t *testing.T) {
 func TestModel_header_degradesInsteadOfClipping(t *testing.T) {
 	// the completion notice is the rightmost thing on the line, so clipping takes it first — and it is
 	// the one part a reader needs at exactly the moment the line is longest
-	full := feed(t, New(ModelConfig{Roster: roster()}),
+	full := feed(t, New(ModelConfig{Roster: roster(), Profile: "comprehensive"}),
 		pipeline.Event{Kind: pipeline.EventStage, Stage: "verify", At: at},
 		pipeline.Event{Kind: pipeline.EventFindings, Agent: "bugs+impl", At: at, Findings: []finding.Finding{
 			{Severity: finding.Critical}, {Severity: finding.Major}, {Severity: finding.Minor}}},
@@ -232,7 +232,7 @@ func TestModel_header_ladderOrder(t *testing.T) {
 	// because a reader who has lost the stage still learns whether anything was found, while a stage
 	// name with no count says only that something is happening. Reverting that rung left every other
 	// test green, so this is what holds it.
-	m := feed(t, New(ModelConfig{Roster: roster()}),
+	m := feed(t, New(ModelConfig{Roster: roster(), Profile: "comprehensive"}),
 		pipeline.Event{Kind: pipeline.EventStage, Stage: "verify", At: at},
 		pipeline.Event{Kind: pipeline.EventFindings, Agent: "bugs+impl", At: at, Findings: []finding.Finding{
 			{Severity: finding.Critical}, {Severity: finding.Major}, {Severity: finding.Minor}}},
@@ -240,7 +240,7 @@ func TestModel_header_ladderOrder(t *testing.T) {
 
 	// widths chosen to land on each rung in turn
 	at120 := feed(t, m, tea.WindowSizeMsg{Width: 120, Height: 24}).header()
-	assert.Contains(t, at120, "2 agents")
+	assert.Contains(t, at120, "comprehensive")
 	assert.Contains(t, at120, "verify")
 	assert.Contains(t, at120, "(1 critical, 1 major, 1 minor)", "everything fits")
 
@@ -250,7 +250,7 @@ func TestModel_header_ladderOrder(t *testing.T) {
 	assert.Contains(t, at40, "3 findings", "the total is still here")
 
 	at28 := feed(t, m, tea.WindowSizeMsg{Width: 28, Height: 24}).header()
-	assert.NotContains(t, at28, "agents", "then the agent count")
+	assert.NotContains(t, at28, "comprehensive", "then the profile")
 	assert.Contains(t, at28, "3 findings")
 
 	at20 := feed(t, m, tea.WindowSizeMsg{Width: 20, Height: 24}).header()

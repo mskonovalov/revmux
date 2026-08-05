@@ -180,8 +180,11 @@ cover both.
 - **The header degrades rather than being clipped, longest part first.** `statusTable` clips it, and
   the completion notice is the rightmost thing on the line — so the severity breakdown, the longest
   thing on it, would push "complete, closing in 5s" off the edge exactly when it matters. It gives up
-  the breakdown, then the quit hint, then the agent count, then the stage, then the total, and clips only
+  the breakdown, then the quit hint, then the profile name, then the stage, then the total, and clips only
   under all of that.
+  **It names the profile rather than counting the agents.** The roster is on screen directly below, one
+  row per agent, so a count is the one thing the header can say that the reader can already see; the
+  profile is what chose that roster and appears nowhere else in the frame.
   The total outlives the stage: a reader who has lost the stage still learns whether anything was found,
   while a stage name with no count says only that something is happening.
   **While the run is live and the width allows, the header ends in `ctrl+c to quit`.** That is the only key
@@ -191,9 +194,9 @@ cover both.
   that replaces the breakdown keeps the worst severity in its color and the report restates the split at the
   end, while the hint has no shorter form and nothing else on screen carries it. On the shipped
   `comprehensive` roster that is the difference between a hint that survives a normal 80-column pane and one
-  that disappears the moment the first finding lands — the full line is 86 columns, the same line with the
-  total alone plus the hint is 55, and the input viewer adds 28 more to both.
-  The hint goes at the third rung, so below roughly 55 columns in review mode the header carries run state
+  that disappears the moment the first finding lands — the full line is 90 columns, the same line with the
+  total alone plus the hint is 59, and the input viewer adds 28 more to both.
+  The hint goes at the third rung, so below roughly 59 columns in review mode the header carries run state
   only. The completion notice that replaces it sits outside the ladder entirely.
   **The count is rebuilt from the final report, not left as the last event's.** Verify moves rejected
   findings into `Immaterial` and `PreExisting` and `--min-confidence` filters, both without emitting a
