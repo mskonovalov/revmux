@@ -119,15 +119,9 @@ still hold it.
 
 ## Reporting to a human
 
-1. **Whether the run was complete** — lead with `sources.degraded` if non-empty
-2. **Counts by severity**
-3. **Each finding**: `file:line`, severity, title, then the body's argument and the fix. Group by
-   severity, not by file.
-4. **Cross-source corroboration** where `len(sources) > 1`
-5. **Open questions**, separately
-6. **Pre-existing issues**, separately and flagged out of scope
-
-Do not paraphrase a body down to its title — the body carries the trigger and consequence.
+`references/present.md` is the whole of it — the order of the turn, how much of a body to show, the
+decision block and the question. This file says what the fields mean; that one says what to do with
+them, and it is the only place the shape of the turn is defined.
 
 ## A triage report reads differently
 
@@ -142,9 +136,9 @@ in a diff. Four things change in how it is read, and `references/triage.md` is t
   all is a hunch, whatever its confidence says.
 - **Never branch on the exit code.** `1` means findings were reported and `0` means none survived, but a
   triage run reaches `0` by routes a code review does not. Read `findings` and report what is in it.
-- **Group by agent, not by severity.** Use the `sources` name — `facts`, `thesis`, `antithesis`, `cost`.
-  Cross-source corroboration means little here: four agents given four different parts of one argument
-  are not expected to overlap.
+- **Cross-source corroboration means little here.** Four agents given four different parts of one
+  argument are not expected to overlap, so two names in `sources` is a curiosity rather than the
+  strongest signal in the report.
 
 **A triage run needs `--no-synthesis`, and its absence is silent.** Every argument a panel raises is
 single-source by construction, so the drop rule eats the minor-weight ones wholesale and the confidence

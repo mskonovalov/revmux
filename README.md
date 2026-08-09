@@ -961,8 +961,8 @@ puts the maintainer's six answers to him with the arguments behind each — `ref
 | Codex CLI | `plugins/codex/skills/revmux/` | `cp -r plugins/codex/skills/revmux ~/.codex/skills/revmux` |
 
 Both carry the same reference material — how to compose `scope.md`, `goal.md`, `profile.md` and
-`context/`, the full flag and lens tables, the JSON shape and the run archive layout — and the same
-scripts:
+`context/`, the full flag and lens tables, the JSON shape, the run archive layout and the shape of the
+turn the review comes back as — and the same scripts:
 
 - `preflight.sh` — check revmux plus the binaries a given profile and invocation need, `--lenses` included
 - `task-state.sh` — resolve the tasks root from `revmux config` and report what a task holds: its

@@ -6,8 +6,8 @@ conventions.
 ## Contents
 
 - `skills/revmux/SKILL.md` — the review skill
-- `skills/revmux/references/` — `task-dir.md`, `invocation.md`, `output.md`, `pr.md`, `triage.md`,
-  `loop.md`
+- `skills/revmux/references/` — `task-dir.md`, `invocation.md`, `output.md`, `present.md`, `pr.md`,
+  `triage.md`, `loop.md`
 - `skills/revmux/scripts/` — `preflight.sh`, `task-state.sh`, `launch-revmux.sh`, `analyze-corpus.py`,
   `agentdeck-window.sh`
 

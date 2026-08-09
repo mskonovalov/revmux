@@ -123,15 +123,17 @@ that matter more here than anywhere else:
   contradicting `antithesis`. That contradiction is the product: it is what tells the maintainer the
   question is close. Presenting one side as settled hides the thing he is being asked to decide.
 
-Present **grouped by agent**, not by severity — `facts`, `thesis`, `antithesis`, `cost` — using the
-`sources` array, which carries the agent name. Within a group, order by severity.
+**Read `references/present.md` and write the turn to its triage skeleton.** The panel is grouped by agent
+rather than by severity — `facts`, `thesis`, `antithesis`, `cost`, taken from the `sources` array — and
+one line per argument, because the reader acts once, on the verdict, and the full arguments are in the
+round's `report.md`.
 
 Severity here is **weight on the decision**, not damage: `critical` is decisive on its own, `major` bears
 strongly, `minor` is worth knowing and does not move the answer. Say so once, in a half-sentence, or the
 counts read as a defect report.
 
-Each argument gets its title, the body's reasoning, and what it cites — a comment and its author, a
-comparable item and how it was answered, a file and line where the point is about code. An argument that
+An argument's line names what it cites — a comment and its author, a comparable item and how it was
+answered, a file and line where the point is about code. An argument that
 cites nothing is a hunch and should be presented as one. `open_questions` is always empty here — only
 synthesis fills it, and every triage run passes `--no-synthesis`, so a point the panel could not settle
 arrives as a low-confidence argument instead. `immaterial` is what verification judged does not bear on
@@ -143,9 +145,10 @@ curiosity rather than the strongest signal in the report.
 
 ## 5. Put the six to the user
 
-**Say what it adds up to first, in two sentences.** Which way the arguments lean, and the one point that
-decides it. A summary of where the panel split is not a verdict — the maintainer is answering a question,
-and an observation does not put one to him.
+The decision block comes first, exactly as `references/present.md` specifies it: what was filed, what the
+panel came back with, the at-most-three arguments that decide it in full, then the verdict. A summary of
+where the panel split is not a verdict — the maintainer is answering a question, and an observation does
+not put one to him.
 
 Then the six. The one the arguments point at goes first and is marked as recommended, **with its reason
 in the option itself** rather than only in the text above it:
@@ -159,8 +162,9 @@ in the option itself** rather than only in the text above it:
 | decline it | `antithesis` or `precedent` carries a critical, and nothing rebuts it |
 | decide nothing yet | the panel split, or `facts` reports it could not check the thing the case rests on |
 
-Ask with the harness's own question tool, not in prose. Do not follow SKILL.md Step 6 here: that step
-belongs to the code review and keys on severity counts a triage does not have.
+Ask with the harness's own question tool, not in prose. Present by `references/present.md` and recommend
+by the table above — SKILL.md Step 6's outcome table belongs to the code review and keys on severity
+counts a triage does not have.
 
 **Never act on the answer before it is given, and never post because the arguments look one-sided.** The
 panel was built to argue; the maintainer decides, and this question is where he does it.

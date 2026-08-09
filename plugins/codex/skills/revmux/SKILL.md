@@ -72,6 +72,7 @@ If asked **about** revmux rather than for a review, answer from the references a
 - `references/task-dir.md` — the round's context files, task and run naming
 - `references/invocation.md` — flags, profiles, lenses, overlay backends, config precedence
 - `references/output.md` — JSON shape, verdicts, exit codes, run archive
+- `references/present.md` — the shape of the turn the user answers: order, detail, decision block
 - `references/pr.md` — fetching a pull request into a worktree, `--workdir`, cleanup
 - `references/triage.md` — the panel over a filed item: what it fetches, its flags, the six answers
 - `references/loop.md` — the autonomous review-fix loop, entered from Step 6
@@ -83,6 +84,8 @@ resolved including user overrides, runs no pipeline, and is always safe to call.
 
 **0. Every run ends on an answer the user can give.** Presenting findings or arguments is the middle of
 the job, never the end of it. A turn that stops after the report has not finished.
+**`references/present.md` is the shape of that turn — read it before writing one**, whichever review
+shape ran.
 **An option names what it acts on, never counts it.** "covering the two majors" is unanswerable and
 "covering the `uv` gate in `make test` and the `request_user_input` gap" is not. Anything the reader must
 know to choose goes inside the option, since the choices are what he reads.
@@ -443,12 +446,10 @@ lens names and is informational. One agent flagging under two lenses is still on
 
 ### Step 6: Present, then propose
 
-**Say what is under review before you say what is wrong with it.** One line: what the change sets out to
-do, and for a pull request whose title and body you fetched, whose it is. A reader handed nine findings
-about PR 418 without being told what 418 claims to do has to reconstruct the subject from the complaints.
-
-Then completeness, then severity counts, then each finding with location, argument and fix. Call
-out findings with more than one entry in `sources`.
+**Read `references/present.md` now, and write the turn to its code-review skeleton.** It carries the
+order of the turn, the one law of detail, the decision block and the rules for the question itself.
+The shape of the turn is defined there and nowhere else; what follows here is only what a code review
+adds to it.
 
 **Tag every finding with its surface and severity in one bracket before the title:** `[code, minor]`.
 The first value is the surface: `code` for executable logic, `comments` for a comment or doc comment
@@ -460,16 +461,6 @@ tags. Format the heading `[surface, severity] Title — file:line, conf N`.
 
 Carry the same combined tags into the counts. "3 findings" says nothing about where the risk is;
 "2 [code, major], 1 [docs, minor]" does.
-
-Do not compress a finding to its title — the body carries the trigger and consequence.
-
-**The last thing before the question is the conclusion, and it is two or three sentences.** What this
-change amounts to, what happens next, and **why — the one or two findings that decide it, named.** Counts
-at the top are not that: they say how much there is, not what it means. A reader who has just read nine
-findings should not have to work out which two of them matter.
-
-Nothing goes after it. A finding still looking for a home belongs in the list, not trailing the verdict —
-and a review that ends on a loose thread reads as one that ran out rather than concluded.
 
 Actionable is `findings` alone — what revmux kept. Report the other three, and keep them out of the
 count: `immaterial` is real and judged not worth the fix, `pre_existing` is real and not this change's,
