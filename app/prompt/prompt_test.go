@@ -25,7 +25,7 @@ func TestLoad_EmbeddedDefaults(t *testing.T) {
 	set, err := Load(LoadOpts{})
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"claude-only", "codex-only", "comprehensive", "final", "focused", "grill-me"}, set.ProfileNames())
+	assert.Equal(t, []string{"claude-only", "codex-only", "comprehensive", "final", "focused", "grill-me", "triage"}, set.ProfileNames())
 	for _, l := range set.Lenses() {
 		assert.NotEmpty(t, l.Description, "lens %s", l.Name)
 	}
@@ -37,14 +37,15 @@ func TestLoad_EmbeddedDefaults(t *testing.T) {
 		assert.NotEmpty(t, st.Body, name)
 	}
 
-	assert.Equal(t, map[string]struct{}{"adversarial": {}, "architecture": {}, "bugs": {}, "comments": {},
-		"docs": {}, "impl": {}, "quality": {}, "tests": {}}, set.LensNames())
+	assert.Equal(t, map[string]struct{}{"adversarial": {}, "antithesis": {}, "architecture": {}, "bugs": {},
+		"comments": {}, "cost": {}, "docs": {}, "grounding": {}, "impl": {}, "precedent": {}, "quality": {},
+		"tests": {}, "thesis": {}}, set.LensNames())
 }
 
 func TestLoad_MissingDirsAreAbsentLayers(t *testing.T) {
 	set, err := Load(LoadOpts{ProjectDir: filepath.Join(t.TempDir(), "nope"), UserDir: filepath.Join(t.TempDir(), "also-nope")})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"claude-only", "codex-only", "comprehensive", "final", "focused", "grill-me"}, set.ProfileNames())
+	assert.Equal(t, []string{"claude-only", "codex-only", "comprehensive", "final", "focused", "grill-me", "triage"}, set.ProfileNames())
 
 	for _, o := range set.Provenance() {
 		assert.Equal(t, LayerEmbedded, o.Layer, o.Path)

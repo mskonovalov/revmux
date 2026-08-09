@@ -80,10 +80,65 @@ func TestVerifier_groupByDir(t *testing.T) {
 	t.Run("a file-level finding lands in the root group", func(t *testing.T) {
 		v := &verifier{}
 		groups := v.groupByDir([]finding.Finding{
-			{ID: "a-1", File: "", Title: "no file"}, {ID: "a-2", File: "main.go", Title: "root file"},
+			{ID: "a-1", File: "", Sources: []string{"bugs"}, Title: "no file"},
+			{ID: "a-2", File: "main.go", Sources: []string{"impl"}, Title: "root file"},
 		})
+		require.Len(t, groups, 1, "the source a production finding always carries changes nothing in dir mode")
+		assert.Equal(t, []string{"."}, groups[0].dirs)
+	})
+}
+
+func TestVerifier_groupBySource(t *testing.T) {
+	src := Config{VerifyGroupBy: groupBySource}
+
+	t.Run("a panel of one argument each gets a verifier each", func(t *testing.T) {
+		v := &verifier{cfg: src}
+		groups := v.groupByDir(slices.Concat(agentFindings("facts", 1), agentFindings("thesis", 1),
+			agentFindings("antithesis", 1), agentFindings("cost", 1)))
+		require.Len(t, groups, 4, "the thin merge would put a case and its rebuttal in front of one verifier")
+		assert.Equal(t, [][]string{{"antithesis"}, {"cost"}, {"facts"}, {"thesis"}},
+			[][]string{groups[0].dirs, groups[1].dirs, groups[2].dirs, groups[3].dirs}, "agent order is stable across runs")
+	})
+
+	t.Run("a located argument groups by its agent rather than its directory", func(t *testing.T) {
+		v := &verifier{cfg: src}
+		located := finding.Finding{ID: "facts-2", File: "app/prompt/load.go", Sources: []string{"facts"}}
+		groups := v.groupByDir(slices.Concat(agentFindings("facts", 1), []finding.Finding{located}, agentFindings("cost", 1)))
+		require.Len(t, groups, 2)
+		assert.Equal(t, []string{"cost"}, groups[0].dirs)
+		assert.Equal(t, []string{"facts"}, groups[1].dirs)
+		assert.Len(t, groups[1].findings, 2, "the grounding lens citing code stays with the rest of its own case")
+	})
+
+	t.Run("the group count is still capped", func(t *testing.T) {
+		v := &verifier{cfg: Config{VerifyGroupBy: groupBySource, VerifyGroups: 2}}
+		groups := v.groupByDir(slices.Concat(agentFindings("facts", 1), agentFindings("thesis", 2),
+			agentFindings("antithesis", 3), agentFindings("cost", 4)))
+		require.Len(t, groups, 2)
+
+		total := 0
+		for _, g := range groups {
+			total += len(g.findings)
+		}
+		assert.Equal(t, 10, total, "capping merges groups, it never drops arguments")
+	})
+
+	t.Run("an unattributed finding lands in the root bucket", func(t *testing.T) {
+		v := &verifier{cfg: src}
+		groups := v.groupByDir([]finding.Finding{{ID: "x-1", File: "app/ui/model.go"}})
 		require.Len(t, groups, 1)
 		assert.Equal(t, []string{"."}, groups[0].dirs)
+	})
+
+	t.Run("a synthesized finding lands in its first source's bucket", func(t *testing.T) {
+		v := &verifier{cfg: src}
+		merged := finding.Finding{ID: "thesis-1", Sources: []string{"thesis", "antithesis"}}
+		groups := v.groupByDir(slices.Concat([]finding.Finding{merged}, agentFindings("antithesis", 1)))
+		require.Len(t, groups, 2)
+		assert.Equal(t, []string{"antithesis"}, groups[0].dirs)
+		assert.Len(t, groups[0].findings, 1, "a merged finding is judged once, not once per source that raised it")
+		assert.Equal(t, []string{"thesis"}, groups[1].dirs)
+		assert.Equal(t, []string{"thesis-1"}, []string{groups[1].findings[0].ID})
 	})
 }
 
@@ -647,6 +702,27 @@ func TestVerifier_prompt_materiality(t *testing.T) {
 	assert.NotContains(t, text, "{{", "every variable resolved")
 }
 
+func TestVerifier_prompt_locationless(t *testing.T) {
+	h := newHarness(t)
+	stage, err := h.cfg.Set.Stage(stageVerify)
+	require.NoError(t, err)
+
+	v := h.verifier(func(Event) {})
+	v.cfg.VerifyGroupBy = groupBySource
+	group := v.groupByDir(agentFindings("thesis", 2))[0]
+	text, err := stage.Compose(prompt.ComposeOpts{Vars: v.vars(group)})
+	require.NoError(t, err)
+
+	// a triage panel's arguments cite a thread rather than a line, so the carve-out for them has to
+	// survive composition — without it the verifier applies a blast-radius test to a claim with no fix
+	assert.Contains(t, text, "When a finding names no file")
+	assert.Contains(t, text, "pre_existing does not apply")
+	assert.Contains(t, text, "answers the first two questions only")
+	assert.Contains(t, text, "the missing location is its defect",
+		"a code review's finding that lost its location must not be read as a claim citing no code")
+	assert.Contains(t, text, `"file": ""`, "the group the carve-out is written for reaches the model with no location")
+}
+
 // verifyMarker is a line only the verify prompt carries, so the harness runner can tell the stage
 // apart from a roster agent.
 const verifyMarker = "You are verifying findings"
@@ -675,6 +751,17 @@ func dirFindings(dir string, n int) []finding.Finding {
 	for i := range n {
 		out = append(out, finding.Finding{
 			ID: dir + "-" + string(rune('a'+i)), File: dir + "/f" + string(rune('a'+i)) + ".go", Line: i + 1,
+		})
+	}
+	return out
+}
+
+// agentFindings is n location-less arguments from one agent, the shape a triage panel produces.
+func agentFindings(agent string, n int) []finding.Finding {
+	out := make([]finding.Finding, 0, n)
+	for i := range n {
+		out = append(out, finding.Finding{
+			ID: agent + "-" + string(rune('a'+i)), Sources: []string{agent}, Title: agent + " argument",
 		})
 	}
 	return out

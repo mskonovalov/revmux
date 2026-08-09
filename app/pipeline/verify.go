@@ -20,18 +20,23 @@ import (
 )
 
 // thinGroup is the size below which a directory does not earn its own verifier and is merged with
-// the other thin ones. One finding is not worth a process of its own.
+// the other thin ones. One finding is not worth a process of its own. Source mode never consults it:
+// what justifies the merge is directory locality, which a per-agent bucket does not have.
 const thinGroup = 2
 
-// labelDirs caps how many directory names a merged group spells out before the rest are counted,
-// since the label becomes a filename under prompts/stages/.
+// labelDirs caps how many keys a merged group spells out before the rest are counted, since the label
+// becomes a filename under prompts/stages/.
 const labelDirs = 3
 
 // labelUnsafe is everything a group label may not carry. Separators collapse to a dash rather than
 // being dropped, so app/executor and appexecutor cannot label the same.
 var labelUnsafe = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)
 
-// verifier owns the verify stage: one agent per directory group, each seeing only its own findings. The
+// groupBySource is the Config.VerifyGroupBy value that buckets by the agent that raised a finding. The
+// flag's vocabulary is spelled a second time in package main's option tag, which cannot name a constant.
+const groupBySource = "source"
+
+// verifier owns the verify stage: one agent per group, each seeing only its own findings. The
 // stagger is handed in rather than constructed, since the gate latched open during find.
 type verifier struct {
 	cfg     Config
@@ -43,11 +48,11 @@ type verifier struct {
 	tokens atomic.Int64
 }
 
-// verifyGroup is what one verifier sees: the directories it covers, their findings and the prompt
-// composed from them. The composed text rides along because the archive stores it per group, under a
-// filename built from the same label.
+// verifyGroup is what one verifier sees: the keys it covers, their findings and the prompt composed from
+// them. The composed text rides along because the archive stores it per group, under a filename built
+// from the same label.
 type verifyGroup struct {
-	dirs     []string
+	dirs     []string // the group's keys: directories, or agent names under --verify-group-by=source
 	findings []finding.Finding
 	text     string
 	name     string // the resolved, collision-free label; assigned once by compose
@@ -305,19 +310,22 @@ func (v *verifier) vars(g verifyGroup) prompt.Vars {
 	return out
 }
 
-// groupByDir buckets findings by directory, merges the thin buckets into one and caps how many groups
-// result. Directory approximates code locality, so one verifier reads that area once.
+// groupByDir buckets findings by key, merges the thin buckets into one and caps how many groups result.
+// Directory approximates code locality, so one verifier reads that area once. Source mode keeps every
+// bucket instead: thin-merging is what directory locality buys, and a panelist's lone argument has to be
+// judged apart from the argument answering it.
 func (v *verifier) groupByDir(findings []finding.Finding) []verifyGroup {
-	byDir := map[string][]finding.Finding{}
+	byKey := map[string][]finding.Finding{}
 	for _, f := range findings {
-		dir := v.dir(f)
-		byDir[dir] = append(byDir[dir], f)
+		key := v.key(f)
+		byKey[key] = append(byKey[key], f)
 	}
 
+	merge := !v.bySource()
 	groups, thin := []verifyGroup{}, verifyGroup{}
-	for _, dir := range slices.Sorted(maps.Keys(byDir)) {
-		g := verifyGroup{dirs: []string{dir}, findings: byDir[dir]}
-		if len(g.findings) < thinGroup {
+	for _, key := range slices.Sorted(maps.Keys(byKey)) {
+		g := verifyGroup{dirs: []string{key}, findings: byKey[key]}
+		if merge && len(g.findings) < thinGroup {
 			thin = thin.merge(g)
 			continue
 		}
@@ -330,7 +338,7 @@ func (v *verifier) groupByDir(findings []finding.Finding) []verifyGroup {
 }
 
 // capped merges the smallest groups together until the count fits the configured limit, taking whole
-// directories rather than splitting one.
+// groups rather than splitting one.
 func (v *verifier) capped(groups []verifyGroup) []verifyGroup {
 	limit := v.cfg.VerifyGroups
 	if limit <= 0 || len(groups) <= limit {
@@ -349,9 +357,23 @@ func (v *verifier) capped(groups []verifyGroup) []verifyGroup {
 	return out
 }
 
-// dir is the bucket one finding falls in. A file-level finding carries no line and a repository-root
-// file has no directory, and both land in the same root bucket.
-func (v *verifier) dir(f finding.Finding) string {
+// bySource reports whether verification buckets by the agent that raised a finding rather than by its
+// directory. Both the thin merge and the bucket key turn on it, and reading it two different ways is
+// what would let a third mode inherit one and not the other.
+func (v *verifier) bySource() bool { return v.cfg.VerifyGroupBy == groupBySource }
+
+// key is the bucket one finding falls in: the first agent that raised it in source mode, its directory
+// otherwise. A panel's arguments are judged one panelist at a time, so one verifier never holds a case
+// and the case answering it. A synthesized finding carries several sources and lands in the first one's
+// bucket. In directory mode a file-level finding carries no line and a repository-root file has no
+// directory, and both land in the same root bucket.
+func (v *verifier) key(f finding.Finding) string {
+	if v.bySource() {
+		if len(f.Sources) == 0 {
+			return "."
+		}
+		return f.Sources[0]
+	}
 	if f.File == "" {
 		return "."
 	}
@@ -456,8 +478,8 @@ func (g verifyGroup) label() string {
 	return strings.Join(parts, "+") + suffix
 }
 
-func (g verifyGroup) slug(dir string) string {
-	out := strings.Trim(labelUnsafe.ReplaceAllString(dir, "-"), "-.")
+func (g verifyGroup) slug(key string) string {
+	out := strings.Trim(labelUnsafe.ReplaceAllString(key, "-"), "-.")
 	if out == "" {
 		return "root"
 	}
@@ -465,13 +487,13 @@ func (g verifyGroup) slug(dir string) string {
 }
 
 // agent is what a reader sees: a verify group named for what it covers. The descriptive label stays on
-// the archived prompt, and the group's own started event lists every directory it covers.
+// the archived prompt, and the group's own started event lists every key it covers.
 func (g verifyGroup) agent() string {
 	return stageVerify + " " + g.shown
 }
 
 // shortLabel names the group by what it covers rather than by its position — the last element of the
-// first directory, since the leading path is the same for every group in one review.
+// first key, since a directory's leading path is the same for every group in one review.
 func (g verifyGroup) shortLabel() string {
 	if len(g.dirs) == 0 {
 		return "root"
