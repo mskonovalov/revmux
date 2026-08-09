@@ -710,6 +710,24 @@ func TestFinder_report(t *testing.T) {
 	require.Len(t, rep.Sources.Agents, 2)
 	assert.False(t, rep.Sources.Agents[0].Degraded)
 	assert.True(t, rep.Sources.Agents[1].Degraded)
+	assert.Equal(t, 1, rep.Sources.Agents[0].Raised)
+	assert.Equal(t, 0, rep.Sources.Agents[1].Raised, "a degraded source raised nothing")
+}
+
+// an agent whose tools are broken answers {"findings":[]} and is not degraded, so raised is the only
+// field that separates it from one that looked and found nothing.
+func TestFinder_reportRaisedNothing(t *testing.T) {
+	f := &finder{}
+	rep := f.report([]sourceResult{{
+		spec: prompt.AgentSpec{Name: "cost"},
+		stat: finding.SourceStat{Name: "cost", Tokens: 900},
+	}})
+
+	require.Len(t, rep.Sources.Agents, 1)
+	assert.Equal(t, 0, rep.Sources.Agents[0].Raised)
+	assert.False(t, rep.Sources.Agents[0].Degraded, "it answered, so it is not a degraded source")
+	assert.Equal(t, 1, rep.Sources.Reported)
+	assert.False(t, rep.Sources.Degraded())
 }
 
 func TestSourceResult_ok(t *testing.T) {

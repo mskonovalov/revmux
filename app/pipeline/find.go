@@ -265,6 +265,7 @@ func (f *finder) report(sources []sourceResult) finding.Report {
 	rep := finding.Report{Sources: finding.SourceStatus{Expected: len(sources)}}
 	for _, s := range sources {
 		stat := s.stat
+		stat.Raised = len(s.findings)
 		stat.Degraded = !s.ok()
 		rep.Sources.Agents = append(rep.Sources.Agents, stat)
 		rep.Stats.Tokens += stat.Tokens

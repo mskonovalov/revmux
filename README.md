@@ -560,7 +560,7 @@ exactly that invocation.
     "agents": [
       {"name": "bugs+impl", "lenses": ["bugs", "impl"], "executor": "claude",
        "requested_model": "opus", "actual_model": "claude-opus-5",
-       "effort": "high", "tokens": 48210, "degraded": false}
+       "effort": "high", "tokens": 48210, "raised": 6, "degraded": false}
     ]
   },
   "findings": [

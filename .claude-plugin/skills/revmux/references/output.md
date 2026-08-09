@@ -18,7 +18,7 @@ Prefer JSON when a model consumes it. Use `--markdown` only for output going str
     "agents": [
       {"name": "bugs+impl", "lenses": ["bugs", "impl"], "executor": "claude",
        "requested_model": "opus", "actual_model": "claude-opus-5",
-       "effort": "high", "tokens": 48210, "degraded": false}
+       "effort": "high", "tokens": 48210, "raised": 6, "degraded": false}
     ]
   },
   "findings": [
@@ -46,15 +46,23 @@ Empty lists are arrays, never `null`.
 A degraded run looks like a clean one: the findings list is genuinely shorter and nothing in it says why.
 
 ```
-sources.expected    how many sources the roster called for
-sources.reported    how many returned findings
-sources.degraded    names of the ones that did not
+sources.expected          how many sources the roster called for
+sources.reported          how many returned findings
+sources.degraded          names of the ones that did not
+sources.agents[].raised   how many each returned, before any stage filtered them
 ```
 
 `expected != reported` means partial. Lead with it, name the degraded sources, and treat "no findings"
 as inconclusive rather than clean. Offer to re-run.
 
 Every source degrading exits `2` — a tool error, not a clean empty report.
+
+**`raised: 0` on a source that is not degraded is the other way a run comes back thin, and it does not
+show up in any of the three counts above.** An agent whose tools are broken answers `{"findings": []}`,
+which is a valid answer, so it reports as healthy and lands in `reported`. Say so when you see it rather
+than presenting the run as complete — and in a triage it is worth more than a mention, since a panelist
+that built no case is either agreeing there is nothing to say or was never able to look. The archive
+settles which: the round's `agents/<name>.*` tee is a few bytes when it could not work.
 
 `requested_model` vs `actual_model`: `claude --model` can be silently ignored, so a model pin is a
 claim until read back. A mismatch does not invalidate the review but explains a shallow one.

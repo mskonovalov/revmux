@@ -23,9 +23,9 @@ func sampleReport() Report {
 			Expected: 2, Reported: 2, DegradedSources: []string{},
 			Agents: []SourceStat{
 				{Name: "bugs+impl", Lenses: []string{"bugs", "impl"}, Executor: "claude",
-					RequestedModel: "opus", ActualModel: "claude-opus-5", Effort: "high", Tokens: 48210},
+					RequestedModel: "opus", ActualModel: "claude-opus-5", Effort: "high", Tokens: 48210, Raised: 2},
 				{Name: "codex", Lenses: []string{"adversarial"}, Executor: "codex",
-					RequestedModel: "gpt-5.6-sol", ActualModel: "gpt-5.6-sol", Effort: "xhigh", Tokens: 31000},
+					RequestedModel: "gpt-5.6-sol", ActualModel: "gpt-5.6-sol", Effort: "xhigh", Tokens: 31000, Raised: 2},
 			},
 		},
 		Findings: []Finding{
@@ -156,9 +156,9 @@ func TestReport_MarkdownSourceTable(t *testing.T) {
 	out := buf.String()
 
 	assert.Contains(t, out, "## Sources")
-	assert.Contains(t, out, "| bugs+impl | claude | claude-opus-5 (requested opus) | high | 48210 | ok |",
+	assert.Contains(t, out, "| bugs+impl | claude | claude-opus-5 (requested opus) | high | 48210 | 2 | ok |",
 		"the model actually used is reported next to the one requested")
-	assert.Contains(t, out, "| codex | codex | gpt-5.6-sol | xhigh | 31000 | ok |")
+	assert.Contains(t, out, "| codex | codex | gpt-5.6-sol | xhigh | 31000 | 2 | ok |")
 }
 
 func TestReport_MarkdownSourceTableStatus(t *testing.T) {
@@ -168,7 +168,23 @@ func TestReport_MarkdownSourceTableStatus(t *testing.T) {
 
 	buf := &bytes.Buffer{}
 	require.NoError(t, rep.Markdown(buf))
-	assert.Contains(t, buf.String(), "| docs+tests | claude | - |  | 0 | degraded |")
+	assert.Contains(t, buf.String(), "| docs+tests | claude | - |  | 0 | 0 | degraded |")
+}
+
+// an agent whose tools are broken answers with a valid empty list and degrades nothing, so the table is
+// the only place that difference is visible.
+func TestReport_MarkdownSourceRaisedNothing(t *testing.T) {
+	rep := Report{Sources: SourceStatus{Expected: 2, Reported: 2, Agents: []SourceStat{
+		{Name: "cost", Executor: "codex", ActualModel: "gpt-5.6-sol", Effort: "high", Tokens: 900, Raised: 0},
+		{Name: "thesis", Executor: "claude", ActualModel: "opus", Effort: "high", Tokens: 40000, Raised: 6},
+	}}}
+
+	buf := &bytes.Buffer{}
+	require.NoError(t, rep.Markdown(buf))
+	out := buf.String()
+	assert.Contains(t, out, "| cost | codex | gpt-5.6-sol | high | 900 | 0 | ok, nothing raised |")
+	assert.Contains(t, out, "| thesis | claude | opus | high | 40000 | 6 | ok |")
+	assert.NotContains(t, out, "Degraded run", "a source that answered is not a degraded run")
 }
 
 func TestReport_MarkdownEveryEnumValue(t *testing.T) {

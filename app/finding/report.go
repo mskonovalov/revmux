@@ -51,7 +51,13 @@ type SourceStat struct {
 	// counters; codex prints one number after its "tokens used" footer. In one measured corpus claude
 	// agents ranged 0.11M-7.0M per round while the codex peer sat flat at 0.12-0.17M, which is mostly
 	// the two definitions rather than two costs. It is honest per agent and over time for that agent.
-	Tokens   int  `json:"tokens"`
+	Tokens int `json:"tokens"`
+
+	// Raised is how many findings this source returned before any stage filtered them, so a source that
+	// answered and contributed nothing is distinguishable from one that never answered. An agent whose
+	// tools are broken returns a valid empty list and reports as healthy otherwise: zero here beside
+	// Degraded false is what says so, and it is the only place a reader is told.
+	Raised   int  `json:"raised"`
 	Degraded bool `json:"degraded"`
 }
 
@@ -210,16 +216,21 @@ func (r Report) sourcesLines() []string {
 		return nil
 	}
 	out := []string{"## Sources", "",
-		"| agent | executor | model | effort | tokens | status |",
-		"| --- | --- | --- | --- | --- | --- |",
+		"| agent | executor | model | effort | tokens | raised | status |",
+		"| --- | --- | --- | --- | --- | --- | --- |",
 	}
 	for _, a := range r.Sources.Agents {
 		status := "ok"
-		if a.Degraded {
+		switch {
+		case a.Degraded:
 			status = "degraded"
+		case a.Raised == 0:
+			// an agent that answered and raised nothing is the shape a broken one takes: it returns a
+			// valid empty list and degrades nothing, so the reader is told here or nowhere
+			status = "ok, nothing raised"
 		}
-		out = append(out, fmt.Sprintf("| %s | %s | %s | %s | %d | %s |",
-			a.Name, a.Executor, a.model(), a.Effort, a.Tokens, status))
+		out = append(out, fmt.Sprintf("| %s | %s | %s | %s | %d | %d | %s |",
+			a.Name, a.Executor, a.model(), a.Effort, a.Tokens, a.Raised, status))
 	}
 	return append(out, "")
 }
