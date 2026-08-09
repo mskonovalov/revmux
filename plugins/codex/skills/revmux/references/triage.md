@@ -143,9 +143,12 @@ curiosity rather than the strongest signal in the report.
 
 ## 5. Put the six to the user
 
-The panel produced the case; this is where the maintainer answers it. Six options, the one the arguments
-point at first and marked as recommended, **with its reason in the option itself** rather than only in
-the text above it:
+**Say what it adds up to first, in two sentences.** Which way the arguments lean, and the one point that
+decides it. A summary of where the panel split is not a verdict — the maintainer is answering a question,
+and an observation does not put one to him.
+
+Then the six. The one the arguments point at goes first and is marked as recommended, **with its reason
+in the option itself** rather than only in the text above it:
 
 | answer | when the arguments point here |
 |---|---|
@@ -156,7 +159,8 @@ the text above it:
 | decline it | `antithesis` or `precedent` carries a critical, and nothing rebuts it |
 | decide nothing yet | the panel split, or `facts` reports it could not check the thing the case rests on |
 
-Use whatever the harness's own way of asking is — SKILL.md Step 6 names it for this one.
+Ask with the harness's own question tool, not in prose. Do not follow SKILL.md Step 6 here: that step
+belongs to the code review and keys on severity counts a triage does not have.
 
 **Never act on the answer before it is given, and never post because the arguments look one-sided.** The
 panel was built to argue; the maintainer decides, and this question is where he does it.

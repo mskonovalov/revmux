@@ -51,6 +51,9 @@ resolved including user overrides, runs no pipeline, and is always safe to call.
 
 ## Non-negotiables
 
+**0. Every run ends on an answer the user can give.** Presenting findings or arguments is the middle of
+the job, never the end of it. A turn that stops after the report has not finished.
+
 **1. Exit `1` means findings were reported — a success.** `0` none, `1` findings, `2` tool error.
 Never treat `1` as failure. Never re-run on it.
 
