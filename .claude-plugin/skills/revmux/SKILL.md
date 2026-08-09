@@ -53,6 +53,9 @@ resolved including user overrides, runs no pipeline, and is always safe to call.
 
 **0. Every run ends on an answer the user can give.** Presenting findings or arguments is the middle of
 the job, never the end of it. A turn that stops after the report has not finished.
+**An option names what it acts on, never counts it.** The question widget covers the lines above it, so
+"covering the two majors" is unanswerable and "covering the `uv` gate in `make test` and the
+`request_user_input` gap" is not. Anything the reader must know to choose goes inside the option.
 
 **1. Exit `1` means findings were reported — a success.** `0` none, `1` findings, `2` tool error.
 Never treat `1` as failure. Never re-run on it.
@@ -394,7 +397,11 @@ lens names and is informational. One agent flagging under two lenses is still on
 
 ### Step 6: Present, then propose
 
-Lead with completeness, then severity counts, then each finding with location, argument and fix. Call
+**Say what is under review before you say what is wrong with it.** One line: what the change sets out to
+do, and for a pull request whose title and body you fetched, whose it is. A reader handed nine findings
+about PR 418 without being told what 418 claims to do has to reconstruct the subject from the complaints.
+
+Then completeness, then severity counts, then each finding with location, argument and fix. Call
 out findings with more than one entry in `sources`.
 
 **Tag every finding with its surface and severity in one bracket before the title:** `[code, minor]`.
@@ -410,8 +417,13 @@ Carry the same combined tags into the counts. "3 findings" says nothing about wh
 
 Do not compress a finding to its title — the body carries the trigger and consequence.
 
-**Then close with what is actionable and what to do about it.** A list of findings is not a decision,
-and the reader should not have to re-derive one from it.
+**The last thing before the question is the conclusion, and it is two or three sentences.** What this
+change amounts to, what happens next, and **why — the one or two findings that decide it, named.** Counts
+at the top are not that: they say how much there is, not what it means. A reader who has just read nine
+findings should not have to work out which two of them matter.
+
+Nothing goes after it. A finding still looking for a home belongs in the list, not trailing the verdict —
+and a review that ends on a loose thread reads as one that ran out rather than concluded.
 
 Actionable is `findings` alone — what revmux kept. Report the other three, and keep them out of the
 count: `immaterial` is real and judged not worth the fix, `pre_existing` is real and not this change's,
