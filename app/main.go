@@ -289,6 +289,9 @@ func (o runOpts) render(cfg renderConfig) *renderer {
 	go func() {
 		defer close(r.done)
 		defer func() { _ = tty.Close() }()
+		// Run returns before bubbletea's own goroutines have exited, and its resize watcher still
+		// reads the tty's descriptor. Wait joins them, so the close below cannot race that read.
+		defer r.prog.Wait()
 		if _, err := r.prog.Run(); err != nil {
 			_, _ = fmt.Fprintf(o.stderr, "warning: terminal ui: %v\n", err)
 		}
