@@ -23,15 +23,14 @@ func TestInputSnapshotter_load(t *testing.T) {
 	s := &inputSnapshotter{limits: inputLimits{fileBytes: 1024, totalBytes: 4096, contexts: 10, entries: 20}}
 	docs := s.load(reviewContext{Scope: scope, Goal: goal, Context: contextDir})
 
-	require.Len(t, docs, 5)
-	assert.Equal(t, []string{"scope", "goal", "profile", "a.md", "nested/b.json"},
-		[]string{docs[0].Label, docs[1].Label, docs[2].Label, docs[3].Label, docs[4].Label})
+	require.Len(t, docs, 4, "no profile was supplied, so it costs no tab")
+	assert.Equal(t, []string{"scope", "goal", "a.md", "nested/b.json"},
+		[]string{docs[0].Label, docs[1].Label, docs[2].Label, docs[3].Label})
 	assert.Equal(t, "input/scope.md", docs[0].Path)
 	assert.Equal(t, "# Scope\nreview it", docs[0].Content)
 	assert.True(t, docs[0].Markdown)
-	assert.Equal(t, "not provided", docs[2].Notice)
-	assert.True(t, docs[3].Markdown)
-	assert.False(t, docs[4].Markdown)
+	assert.True(t, docs[2].Markdown)
+	assert.False(t, docs[3].Markdown)
 
 	t.Run("present empty optional file stays distinct from missing", func(t *testing.T) {
 		root := t.TempDir()
@@ -43,9 +42,10 @@ func TestInputSnapshotter_load(t *testing.T) {
 			fileBytes: 100, totalBytes: 100, contexts: 2, entries: 10,
 		}}).load(reviewContext{InputDir: root, Scope: scope})
 
+		require.Len(t, snapshot, 2, "goal.md exists and keeps its tab; the absent profile costs none")
+		assert.Equal(t, "goal", snapshot[1].Label)
 		assert.Empty(t, snapshot[1].Content)
 		assert.Empty(t, snapshot[1].Notice, "the renderer identifies this as an empty file")
-		assert.Equal(t, "not provided", snapshot[2].Notice, "a missing profile remains absent")
 	})
 }
 
@@ -65,9 +65,9 @@ func TestInputSnapshotter_limits(t *testing.T) {
 
 		assert.Equal(t, "12345", docs[0].Content)
 		assert.Contains(t, docs[0].Notice, "showing 5 of 9 bytes")
-		require.Len(t, docs, 6, "three fixed tabs, two context files and one overflow tab")
-		assert.Equal(t, "more", docs[5].Label)
-		assert.Equal(t, "more context entries omitted after the 2-file display or 10-entry traversal limit", docs[5].Notice)
+		require.Len(t, docs, 4, "scope, two context files and one overflow tab; no goal or profile was supplied")
+		assert.Equal(t, "more", docs[3].Label)
+		assert.Equal(t, "more context entries omitted after the 2-file display or 10-entry traversal limit", docs[3].Notice)
 	})
 
 	t.Run("aggregate limit leaves the tab visible", func(t *testing.T) {
@@ -141,9 +141,8 @@ func TestInputSnapshotter_absentContextHasNoTab(t *testing.T) {
 
 	t.Run("no context directory", func(t *testing.T) {
 		docs := s.load(reviewContext{Scope: scope})
-		assert.Equal(t, []string{"scope", "goal", "profile"},
-			[]string{docs[0].Label, docs[1].Label, docs[2].Label})
-		require.Len(t, docs, 3, "an absent context adds no tab, while goal and profile keep theirs")
+		require.Len(t, docs, 1, "goal, profile and context are all optional, so an absent one costs no tab")
+		assert.Equal(t, "scope", docs[0].Label)
 	})
 
 	t.Run("empty context directory", func(t *testing.T) {

@@ -139,11 +139,16 @@ cover both.
 - The tabs after it are per-agent full-detail scrollback. Those are the forensic views.
 - `i` switches the detail area to the startup input snapshot while the status table keeps updating.
   Input tabs are scope, goal, profile and each context file in lexical relative-path order.
-  A missing `goal` or `profile` keeps a tab saying it was not provided: their absence changes how the
-  agents calibrated, so it is worth a tab. **An absent or empty `context/` gets none** — it is the
-  ordinary case, and a tab that is always there and always silent is one a reader learns to skip.
-  A context directory that could not be read, or a symlinked one left untraversed, still gets its tab:
-  that is a failure to show what the agents saw rather than an honest absence.
+  **Only `scope` is always there. Every optional input that the caller did not supply gets no tab at
+  all** — `goal`, `profile` and `context/` alike. Their absence is the ordinary case, and a tab that is
+  always there and always says "not provided" is one a reader learns to skip.
+  An earlier version kept a placeholder tab for `goal` and `profile`, on the grounds that their absence
+  changes how the agents calibrated. It does, and the tab was still not where a reader learns it: the
+  caller wrote the round and knows what he put in it. That reasoning was not extended to `context/` and
+  the inconsistency was the tell.
+  A file or directory that **exists and could not be read** still gets its tab, including a symlinked
+  `context/` left untraversed: that is a failure to show what the agents saw rather than an honest
+  absence. An optional file that exists but is empty keeps its tab too, and the renderer marks it empty.
   Markdown files render as documents through glamour and other safe UTF-8 files render verbatim.
   Tables, rules, links, emphasis and fenced code all render as themselves; tabs are expanded per line
   before the document is handed over, since `expandTabs` carries a running column that a whole-document

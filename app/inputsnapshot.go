@@ -50,12 +50,11 @@ type contextWalk struct {
 func (s *inputSnapshotter) load(rc reviewContext) []ui.InputDocument {
 	docs := make([]ui.InputDocument, 0, 3)
 	docs = append(docs,
-		s.file(inputFile{label: "scope", relative: filepath.Join(task.InputDir, task.ScopeFile), path: rc.Scope}),
-		s.optional(inputFile{label: "goal", relative: filepath.Join(task.InputDir, task.GoalFile),
-			path: s.inputPath(rc, task.GoalFile, rc.Goal)}),
-		s.optional(inputFile{label: "profile", relative: filepath.Join(task.InputDir, task.ProfileFile),
-			path: s.inputPath(rc, task.ProfileFile, rc.Profile)}),
-	)
+		s.file(inputFile{label: "scope", relative: filepath.Join(task.InputDir, task.ScopeFile), path: rc.Scope}))
+	docs = append(docs, s.optional(inputFile{label: "goal", relative: filepath.Join(task.InputDir, task.GoalFile),
+		path: s.inputPath(rc, task.GoalFile, rc.Goal)})...)
+	docs = append(docs, s.optional(inputFile{label: "profile", relative: filepath.Join(task.InputDir, task.ProfileFile),
+		path: s.inputPath(rc, task.ProfileFile, rc.Profile)})...)
 	return append(docs, s.context(rc.Context)...)
 }
 
@@ -73,13 +72,15 @@ func (*inputSnapshotter) inputPath(rc reviewContext, name, resolved string) stri
 	return path
 }
 
-func (s *inputSnapshotter) optional(file inputFile) ui.InputDocument {
+// optional is one document when the caller supplied the file and none at all when he did not, the same
+// rule context follows: goal.md and profile.md are optional by design, so their absence is ordinary and a
+// tab reading "not provided" is one a reader learns to skip. A file that exists and could not be read
+// still gets its document, since that is a failure to show what the agents saw rather than an absence.
+func (s *inputSnapshotter) optional(file inputFile) []ui.InputDocument {
 	if file.path == "" {
-		return ui.InputDocument{
-			Label: file.label, Path: filepath.ToSlash(file.relative), Markdown: true, Notice: "not provided",
-		}
+		return nil
 	}
-	return s.file(file)
+	return []ui.InputDocument{s.file(file)}
 }
 
 // context is one document per context file, and no document at all when the caller supplied none: an
