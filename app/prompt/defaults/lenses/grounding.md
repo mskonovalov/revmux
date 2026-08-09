@@ -22,3 +22,8 @@ Every answer cites a file and a line, or says explicitly that you looked and fou
 Report what you established, never what you infer from it. "The path is guarded at that line" and
 "the report is wrong" are different claims, and only the first is yours to make from reading. A claim
 you checked and confirmed is worth as much as one you refuted — say which of the two you did.
+
+**If you cannot read the code, report that as a finding of its own, first.** Nothing else in this
+lens survives it: every claim you would make rests on having opened the file, and a panel that hears
+nothing from you takes it for "the report checks out". Name the command that failed and what it
+printed.

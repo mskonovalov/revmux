@@ -25,3 +25,8 @@ finding too, and the kind that ends an argument.
 
 Do not estimate what you did not read. A guess at reach reads exactly like a measurement and is worth
 less than naming the parts you could not trace.
+
+**If you cannot read the code at all, report that as a finding of its own, first.** A change that
+reaches nothing and a tree you never opened produce the same silence, and a reader takes silence for
+"this is cheap", which is itself an argument for the item. Name the command that failed and what it
+printed.

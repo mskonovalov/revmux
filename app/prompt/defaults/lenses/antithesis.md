@@ -25,3 +25,8 @@ your mind and the evidence that would establish it. An objection nothing could a
 rather than an argument, and a maintainer learns nothing from it.
 
 The case is against the change, never against the person who filed it.
+
+**If you cannot read the code or the project's history, report that as a finding of its own, first.**
+An item nothing argues against and an item whose objections you could not check produce the same
+silence, and the maintainer reads that silence as consent. Name the command that failed and what it
+printed.

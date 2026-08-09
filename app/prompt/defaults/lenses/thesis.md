@@ -26,3 +26,8 @@ than one you never made.
 
 Do not answer the objections. Another reader is making the case against, and the maintainer wants both
 at full strength rather than one pre-softened against the other.
+
+**If you cannot read the code or the project's history, report that as a finding of its own, first.**
+An item with no case for it and an item whose case you could not build produce the same silence, and
+the maintainer reads that silence as the panel finding nothing worth saying. Name the command that
+failed and what it printed.
