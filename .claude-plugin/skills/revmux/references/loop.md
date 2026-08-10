@@ -62,7 +62,7 @@ Stop on the first of these:
 | condition | what to report |
 |---|---|
 | a review returns zero gating findings | clean, plus whatever minors are left |
-| the **code** gating count is not **strictly lower** than the previous round's | not converging — identify a repeated finding, or say the count stalled on different findings, and stop |
+| the **code** gating count is not **strictly lower** than the previous round's **and** one of its gating findings repeats | the fix is not landing — name the repeated finding and stop |
 | five rounds | cap reached, with what is still open |
 | a run exits `2`, or `sources.degraded` is non-empty | the failure, not a verdict — `1` is findings and is the normal case |
 
@@ -92,13 +92,16 @@ requires of any last-round goal. Without it the round runs as round N+1 of the s
 the same prose findings the batch just created — the roster narrows what is looked at, and only the
 goal narrows what is worth reporting.
 
-**Count the gating findings every round and write the number down before fixing anything.** The
-non-converging row is a comparison against that recorded number, and it fires on equal counts as well as
-on a rise: 3 → 1 → 1 stops at the second `1`. Two rounds that each leave one gating finding standing are
-not progress, however small the number looks, and the loop otherwise runs to the five-round cap on a
-count that never moves. Compare finding identity and location across the two rounds. If one repeated,
-name its file; if the findings changed, say the count stalled despite that turnover rather than inventing
-a repeat.
+**Write down every round's gating count and each finding's mechanism and file before fixing anything.**
+The non-converging row is a comparison against both, and it takes both to fire. A stalled count alone is
+not a stall: round N's fixes produce about two thirds of what round N+1 finds, so one new defect
+replacing one that was fixed is what a productive loop looks like from the outside. What stops the loop
+is a finding from the previous round arriving again — the same mechanism in the same place, however it is
+worded — because the fix did not answer it and the next one will not either. Name that finding and stop.
+
+**A count that stalls or rises on findings that are all new is progress, and the loop continues to the
+cap.** Say so in the round report — "round 3: 2 gating again, both new, continuing" — or the user reads a
+flat number as a stall. The five-round cap is the bound on that case and it does not need a second one.
 
 On a clean exit with minors left, ask **once** whether to sweep them. Fix them if so and stop either
 way — no review round runs after that question.
