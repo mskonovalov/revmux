@@ -1,5 +1,5 @@
 ---
-description: two agents at the highest effort, codex sol and claude fable, each carrying all eight lenses — for a plan, or a change nobody wants to get wrong
+description: two agents at xhigh, codex gpt-5.6-sol and claude fable, each carrying all eight lenses — for a plan, or a change nobody wants to get wrong
 model: claude/fable:xhigh
 agents:
   - {name: sol,   lenses: [bugs, impl, architecture, quality, docs, tests, comments, adversarial], model: codex/gpt-5.6-sol:xhigh, color: cyan}

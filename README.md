@@ -453,7 +453,7 @@ Shipped profiles:
 | `codex-only` | the same four lens splits on codex, and synthesis and verify with them — no claude anywhere |
 | `grill-me` | `bugs+impl` and `architecture+quality`, each run once on claude and once on codex, every agent reading against the change |
 | `triage` | `facts`, `thesis`, `antithesis` on claude plus `cost` on codex — a panel over a filed item rather than a diff, and it wants `--no-synthesis` |
-| `expert` | two agents at the highest effort — codex `gpt-5.6-sol` and claude `fable` — each carrying all eight lenses, and both stages on fable |
+| `expert` | two agents at the highest effort — codex `gpt-5.6-sol:xhigh` and claude `fable:xhigh` — each carrying all eight lenses, and both stages on fable |
 
 `expert` is for when the answer matters more than the wall clock, and it is expensive enough that it is
 worth asking for deliberately rather than reaching for by default — the shipped skill will not select it
