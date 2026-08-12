@@ -41,6 +41,23 @@ The supervisor's behavior is defined by these, so they are written before the co
 Fixtures are recorded from real CLI output, not hand-written.
 Hand-written fixtures encode what someone assumed the CLI emits, which is exactly the class of bug they should catch.
 
+**A claude capture carries the recording machine's environment, and this repository is public.**
+Everything identifying sits in the one `system`/`init` line — `cwd`, the agent roster, the installed
+skills and the plugin cache paths with their versions — so a raw capture publishes whoever recorded it.
+Record in a container or scrub that line before committing: `cwd` to `/home/reviewer/revmux`,
+`output_style` to `default`, and `agents`, `skills`, `slash_commands`, `plugins`, `mcp_servers`,
+`memory_paths` emptied with `messaging_socket_path` blanked.
+**The replacement path carries no directory layout of its own.** A checkout parent is as much the
+recorder's own arrangement as a plugin list is, and it survives every later re-record by being copied
+from the fixture already there — `codex-clean.err.txt` carried one for exactly that reason.
+Scrubbing that line only is safe because `parseStream` has no case for `system` at all — no test reads a
+byte of it — and it must stay the only edit: any other line is a shape a test asserts against.
+Re-check with `grep` for the home path afterwards, since the fields move between CLI versions.
+
+**Which non-rejected `rate_limit_info.status` a capture carries depends on the recording account's own
+headroom**, so neither `allowed` nor `allowed_warning` can be counted on. Whichever the capture holds,
+the other is derived with `patchEvent`, and both stay covered.
+
 **Only the clean capture per CLI is recorded live. Every other fixture is derived from it, in code.**
 A truncated stream is the clean capture cut mid-line; a stalling one is the clean capture cut early;
 rate-limited and model-mismatch are the clean capture with a single field patched.

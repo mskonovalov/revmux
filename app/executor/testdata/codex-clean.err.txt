@@ -1,6 +1,6 @@
 OpenAI Codex v0.145.0
 --------
-workdir: /home/reviewer/dev.umputun/revmux
+workdir: /home/reviewer/revmux
 model: gpt-5.6-sol
 provider: openai
 approval: on-request
@@ -96,7 +96,7 @@ hook: UserPromptSubmit Completed
 hook: PreToolUse
 hook: PreToolUse Completed
 exec
-/bin/zsh -lc 'nl -ba /tmp/revmux-capture/sample.go' in /home/reviewer/dev.umputun/revmux
+/bin/zsh -lc 'nl -ba /tmp/revmux-capture/sample.go' in /home/reviewer/revmux
  succeeded in 0ms:
      1	package sample
      2	

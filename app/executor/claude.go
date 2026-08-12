@@ -59,6 +59,11 @@ func ClaudeNarrationContract(schema json.RawMessage) string {
 		"- One line at a time, under a dozen words, and never a summary of what you already said.\n"
 }
 
+// args builds the invocation. --include-partial-messages is there for the idle watchdog rather than for
+// anything revmux decodes: without it the whole StructuredOutput tool call arrives as one line written
+// after it is complete, so a large answer puts the stream past the idle timeout with the agent working —
+// measured killing synthesis twice at 120s while it merged 39 findings. The deltas are the only liveness
+// there is in that window; the narration contract cannot reach into a tool call the model is composing.
 func (c *Claude) args(req Request) []string {
 	argv := []string{
 		"--print",
@@ -68,6 +73,7 @@ func (c *Claude) args(req Request) []string {
 		"--disallowedTools", "Edit,Write",
 		"--disable-slash-commands",
 		"--no-session-persistence",
+		"--include-partial-messages",
 	}
 	if req.Model != "" {
 		argv = append(argv, "--model", req.Model)

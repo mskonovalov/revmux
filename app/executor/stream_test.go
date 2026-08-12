@@ -120,7 +120,7 @@ func TestClaude_Run_activityEvents(t *testing.T) {
 
 	// activity is the model's prose and nothing else; a tool name reaching it is the regression that
 	// buried the reasoning under pages of "tool: Read"
-	assert.Contains(t, activity, "I'll read the file and review it.")
+	assert.Contains(t, activity, "I'll read the file and review it under the bugs lens.")
 	assert.NotContains(t, activity, "Read", "a tool name is progress, never activity")
 	assert.NotContains(t, activity, "thinking", "thinking is progress, never activity")
 	for _, text := range activity {

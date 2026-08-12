@@ -105,6 +105,7 @@ func TestClaude_args(t *testing.T) {
 		"--disallowedTools", "Edit,Write",
 		"--disable-slash-commands",
 		"--no-session-persistence",
+		"--include-partial-messages",
 		"--model", "opus",
 		"--effort", "high",
 		"--json-schema", `{"type":"object"}`,
@@ -126,6 +127,8 @@ func TestClaude_args_optionalFlagsOmitted(t *testing.T) {
 	assert.NotContains(t, args, "--effort")
 	assert.NotContains(t, args, "--json-schema")
 	assert.Contains(t, args, "--disable-slash-commands")
+	assert.Contains(t, args, "--include-partial-messages",
+		"the watchdog's only liveness while the model composes a large StructuredOutput call")
 }
 
 func TestClaude_Run_clean(t *testing.T) {
@@ -194,22 +197,23 @@ func TestClaude_Run_rateLimited(t *testing.T) {
 }
 
 func TestClaude_Run_rateLimitAllowed(t *testing.T) {
-	path := writeFixture(t, cleanCapture(t))
-	c := executor.NewClaude(fakeRunner("emit", path), executor.Opts{})
+	// derived rather than recorded: which non-rejected status a live capture carries depends on the
+	// account's own headroom at recording time, and both of them have to be covered whichever it was
+	data := patchEvent(t, "rate_limit_event", func(ev map[string]any) {
+		info, ok := ev["rate_limit_info"].(map[string]any)
+		require.True(t, ok)
+		info["status"] = "allowed"
+	})
+	c := executor.NewClaude(fakeRunner("emit", writeFixture(t, data)), executor.Opts{})
 
 	res, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, discardSink())
 	require.NoError(t, err)
-	assert.False(t, res.RateLimited, "the recorded run was allowed")
+	assert.False(t, res.RateLimited)
 	assert.Equal(t, "allowed", res.RateLimit.Status)
 }
 
 func TestClaude_Run_rateLimitAllowedWarning(t *testing.T) {
-	data := patchEvent(t, "rate_limit_event", func(ev map[string]any) {
-		info, ok := ev["rate_limit_info"].(map[string]any)
-		require.True(t, ok)
-		info["status"] = "allowed_warning"
-	})
-	path := writeFixture(t, data)
+	path := writeFixture(t, cleanCapture(t))
 	sink := discardSink()
 	c := executor.NewClaude(fakeRunner("emit", path), executor.Opts{})
 
@@ -261,6 +265,69 @@ func TestClaude_Run_idleTimeout(t *testing.T) {
 	assert.Empty(t, res.StructuredOutput)
 	assert.NotEmpty(t, res.Raw, "whatever the agent managed to emit is kept")
 	assert.NotEmpty(t, clk.AfterFuncCalls())
+}
+
+// --include-partial-messages puts stream_event lines in every real stream, and the decoder's whole
+// relationship with them is that its switch has no case for the type. ttft_ms is the live hazard: a
+// message_start carries one per message, and only the assignment sitting inside case "result" keeps the
+// run's real figure from being overwritten by the first message's.
+func TestClaude_Run_partialMessageDeltasIgnored(t *testing.T) {
+	data := cleanCapture(t)
+	// asserted as a bool rather than with Contains, whose failure output is the whole recording
+	require.True(t, bytes.Contains(data, []byte(`"type":"stream_event"`)),
+		"the recording predates --include-partial-messages and cannot exercise this")
+
+	resultTTFT, deltaTTFT, assistantText := 0, 0, 0
+	for line := range bytes.SplitSeq(data, []byte("\n")) {
+		var ev struct {
+			Type    string `json:"type"`
+			TTFTMs  int    `json:"ttft_ms"`
+			Message *struct {
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(bytes.TrimSpace(line), &ev) != nil {
+			continue
+		}
+		switch ev.Type {
+		case "result":
+			resultTTFT = ev.TTFTMs
+		case "stream_event":
+			if ev.TTFTMs > 0 {
+				deltaTTFT++
+			}
+		case "assistant":
+			if ev.Message == nil {
+				continue
+			}
+			for _, b := range ev.Message.Content {
+				if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+					assistantText++
+					break
+				}
+			}
+		}
+	}
+	require.Positive(t, deltaTTFT, "the recording must carry the ttft_ms this test exists to guard")
+	require.Positive(t, resultTTFT)
+
+	sink := discardSink()
+	c := executor.NewClaude(fakeRunner("emit", writeFixture(t, data)), executor.Opts{})
+	res, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, sink)
+	require.NoError(t, err)
+
+	assert.Equal(t, resultTTFT, res.TTFTMs, "ttft comes from the result event, never from a message_start")
+
+	activity := 0
+	for _, call := range sink.EmitCalls() {
+		if call.Event.Kind == executor.EventActivity {
+			activity++
+		}
+	}
+	assert.Equal(t, assistantText, activity, "a delta is not a turn: only assistant events produce activity")
 }
 
 func TestClaude_Run_permissionDenied(t *testing.T) {

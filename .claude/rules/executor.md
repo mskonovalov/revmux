@@ -41,9 +41,9 @@ Measured directly against the real CLI. Do not re-derive, and do not assume any 
   The schema forces every conclusion through a `StructuredOutput` tool call, so a review agent's text
   blocks come back all but empty and the run log is a wall of tool names with no sign of what is being
   investigated. Its thinking is no substitute: the blocks arrive with `thinking` empty and only a
-  `signature`, so the plaintext never reaches the CLI at all. The stream carries no
-  `content_block_delta` either, so nothing else streams incrementally — text blocks are the only
-  live channel there is.
+  `signature`, so the plaintext never reaches the CLI at all. Text blocks are the only channel that
+  carries what the agent is doing — `--include-partial-messages` streams bytes through the emit, but
+  they are the answer being written, not commentary on it.
   Measured on one task with one schema, run twice: bare, 2 text blocks against 8 tool calls; with the
   narration instruction appended, 7 text blocks against 7 tool calls, same 8 findings. It costs
   nothing and it is the only way to get a claude agent to say what it is doing.
@@ -62,6 +62,7 @@ claude --print --output-format stream-json --verbose
        --disallowedTools "Edit,Write"
        --disable-slash-commands
        --no-session-persistence
+       --include-partial-messages
        --json-schema <findings schema>
        < prompt
 ```
@@ -88,6 +89,20 @@ claude --print --output-format stream-json --verbose
   which would put an agent inside the agent.
   The call site cannot prevent that any other way — it is a property of the invoked skill, not of the caller.
 - `--no-session-persistence` avoids leaving one saved transcript per lens per run.
+- **`--include-partial-messages` is armour for the idle watchdog, not something revmux decodes.**
+  Without it the `StructuredOutput` tool call reaches stdout as a single line written only once it is
+  complete, so a large answer means minutes with no byte on either pipe while the agent is working —
+  measured killing synthesis twice at exactly 120.2s as it merged 39 findings, then failing the run.
+  With it the tool input arrives as `content_block_delta`/`input_json_delta` chunks throughout, which
+  is the one liveness signal that window has: the narration contract cannot reach inside a tool call
+  the model is still composing, so no prompt wording closes this.
+  The decoder needs no case for the new `stream_event` type and must not grow one — the touch is on
+  raw bytes in `teeReader.Read`, and `parseStream`'s switch ignoring an unknown type is what keeps the
+  deltas out of the log. The cost is archive size, and it is not small: measured at 80-84% growth per
+  agent tee, where the deltas are 44-46% of the file. Most of it is `thinking_delta`, which carries
+  plaintext reaching the tee through this flag alone — the assistant blocks arrive with `thinking` empty
+  and only a `signature` — and the rest is every byte of text and tool input carried a second time
+  under roughly 130 bytes of JSON wrapper per chunk.
 - The prompt goes in on **stdin**, never as an argv positional.
   Windows `cmd.exe` caps a command line at 8191 characters and a composed lens prompt blows past that instantly.
 
@@ -119,6 +134,8 @@ Two independent timers catching two different failures.
   own, and the rollout tail in a third, so a `Timer` implementation is not required to tolerate
   concurrent callers.
   The hard timeout is what bounds a process that chatters forever without answering.
+  Claude has two sources rather than three, and its blind window is its answer rather than its
+  reasoning: see `--include-partial-messages` above, which is what fills it.
 - **Hard timeout** is a plain `context.WithTimeout` over the whole call,
   catching the slow-but-alive case where the agent keeps emitting output forever.
 - Both default to disabled at the executor level; the composition root sets them from config when it builds
