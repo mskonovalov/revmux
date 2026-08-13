@@ -86,6 +86,18 @@ make install      # and symlinks it to /usr/local/bin/revmux
 `make install` links rather than copies, so a later `make build` is picked up without reinstalling. Override
 the location with `BINDIR` when `/usr/local/bin` is not writable. `make uninstall` removes the link.
 
+**Then install the skill, which is what asks for a review.** The binary runs one; the skill is how your
+coding agent drives it. In Claude Code:
+
+```
+/plugin marketplace add umputun/revmux
+/plugin install revmux@revmux
+```
+
+For Codex CLI, copy the tree instead: `cp -r plugins/codex/skills/revmux ~/.codex/skills/revmux`. After
+either, ask for a review in words: revmux this branch, revmux pr 123, re-review after fixes. See
+[Agent skills](#agent-skills) for what it does.
+
 revmux drives the model CLIs as subprocesses, so whichever ones your profile names must already be installed
 and authenticated: both for `comprehensive`, `focused`, `final`, `grill-me`, `triage` and `expert`, claude
 alone for `claude-only`, codex alone for `codex-only`. `preflight.sh` in the shipped skill answers it for any

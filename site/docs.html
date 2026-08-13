@@ -202,6 +202,19 @@ make install      <span class="c-dim"># and symlinks it to /usr/local/bin/revmux
           <code>make uninstall</code> removes the link.
         </p>
 
+        <h3>The agent skill</h3>
+        <p>
+          The binary runs a review; the skill is what asks for one. Install it in Claude Code with two slash
+          commands, and the repository becomes a plugin marketplace of one:
+        </p>
+        <pre class="code">/plugin marketplace add umputun/revmux
+/plugin install revmux@revmux</pre>
+        <p>
+          For Codex CLI, copy the tree instead:
+          <code>cp -r plugins/codex/skills/revmux ~/.codex/skills/revmux</code>. After either, ask for a
+          review in words and the skill does the rest. <a href="#skills">What it does</a> is further down.
+        </p>
+
         <h3>Model CLIs</h3>
         <p>
           revmux drives the model CLIs as subprocesses, so whichever ones your profile names must already be

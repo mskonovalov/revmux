@@ -123,12 +123,22 @@
               <a class="btn primary" href="/docs">read the docs</a>
               <a class="btn" href="https://github.com/umputun/revmux">source</a>
             </div>
-            <div class="hero-cta">
+            <div class="hero-install">
               <span class="copyline">
                 <span class="prompt">$</span>
                 <span id="install-cmd">brew install umputun/apps/revmux</span>
                 <button type="button" data-copy="install-cmd">copy</button>
               </span>
+              <span class="copyline">
+                <span class="prompt">›</span>
+                <span id="plugin-cmd">/plugin marketplace add umputun/revmux</span>
+                <button type="button" data-copy="plugin-cmd">copy</button>
+              </span>
+              <p class="small" style="margin: 0">
+                The first installs the binary. The second is typed in Claude Code and installs
+                <a href="#skills">the skill that drives it</a>, which is how a review is actually asked for.
+                Codex CLI copies the skill instead.
+              </p>
             </div>
           </div>
 
@@ -885,11 +895,12 @@ roster receives, including what counts as critical, major and minor here.</pre>
           <div class="sec-head">
             <p class="sec-index">10 / install</p>
             <div>
-              <h2>Brew it, or take a binary</h2>
+              <h2>The binary, then the skill</h2>
               <p class="sec-note">
-                revmux drives the model CLIs as subprocesses, so whichever ones the profile names must already
-                be installed and authenticated. The shipped <code>preflight.sh</code> answers that for any
-                profile and any invocation.
+                Two installs, and the second is the one that matters day to day: the binary runs the review,
+                the skill is what your coding agent uses to ask for one. revmux also drives the model CLIs as
+                subprocesses, so whichever ones the profile names must already be installed and authenticated.
+                The shipped <code>preflight.sh</code> answers that for any profile and any invocation.
               </p>
             </div>
           </div>
@@ -908,10 +919,18 @@ roster receives, including what counts as critical, major and minor here.</pre>
 dpkg -i revmux_&lt;version&gt;_linux_amd64.deb
 
 <span class="c-dim"># or with a go toolchain, installed as `app`</span>
-go install github.com/umputun/revmux/app@latest</pre>
+go install github.com/umputun/revmux/app@latest
+
+<span class="c-dim"># then the skill, in Claude Code</span>
+<b>/plugin marketplace add umputun/revmux</b>
+<b>/plugin install revmux@revmux</b>
+
+<span class="c-dim"># or for codex cli</span>
+cp -r plugins/codex/skills/revmux ~/.codex/skills/revmux</pre>
               <p class="small">
                 <a href="/docs#install">Full install notes</a>, including building from a clone and how
-                authentication is passed to the model CLIs.
+                authentication is passed to the model CLIs. <a href="#skills">What the skill does</a> is the
+                section above.
               </p>
             </div>
           </div>
