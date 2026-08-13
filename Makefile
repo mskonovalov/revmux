@@ -38,8 +38,16 @@ test:
 	go tool cover -func=coverage_no_mocks.out
 	rm coverage.out coverage_no_mocks.out
 
-lint:
+lint: lint-go lint-scripts
+
+lint-go:
 	golangci-lint run --max-issues-per-linter=0 --max-same-issues=0
+
+# golangci-lint is Go-only, so the shipped shell scripts have their own CI job and would otherwise be
+# checked by nothing local. The command is copied from .github/workflows/ci.yml verbatim: that job
+# pipes shellcheck through xargs, so ANY output fails it, info-level findings included.
+lint-scripts:
+	find . -name '*.sh' -not -path './.git/*' -not -path './vendor/*' -print0 | xargs -0 shellcheck
 
 # the two skill trees ship to different harnesses and each must be self-contained once installed, so
 # plugins/codex/ is a hand-maintained copy rather than a link. What must not diverge is the content:
@@ -63,4 +71,4 @@ version:
 	@echo "branch: $(BRANCH), hash: $(HASH), timestamp: $(TIMESTAMP)"
 	@echo "revision: $(REV)"
 
-.PHONY: all build install uninstall test lint check-plugins fmt race version
+.PHONY: all build install uninstall test lint lint-go lint-scripts check-plugins fmt race version

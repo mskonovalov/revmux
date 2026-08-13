@@ -29,7 +29,11 @@ If a note would be equally true of any Go project, it does not belong here.
 - Build: `make build` (output: `.bin/revmux`)
 - Install: `make install` (symlinks `.bin/revmux` into `$BINDIR`, default `/usr/local/bin`; `make uninstall` removes it)
 - Test: `make test` (race detector + coverage, excludes mocks)
-- Lint: `make lint` or `golangci-lint run --max-issues-per-linter=0 --max-same-issues=0`
+- Lint: `make lint`, which is `lint-go` plus `lint-scripts`.
+  **`golangci-lint` alone is not the whole gate** — it is Go-only, and the shipped shell scripts have
+  their own CI job that pipes `shellcheck` through `xargs`, so any output at all fails it, info-level
+  findings included. `lint-scripts` copies that command verbatim; run `make lint`, never the
+  `golangci-lint` line by itself, or a green local run still reddens master.
 - Format: `make fmt`
 - Generate mocks: `go generate ./...`
 - Vendor after adding deps: `go mod vendor`
