@@ -429,16 +429,6 @@ section {
   color: #16120a;
 }
 
-.hero-install {
-  display: grid;
-  gap: 10px;
-  justify-items: start;
-  margin-top: 22px;
-}
-.hero-install .small {
-  max-width: 40em;
-}
-
 .copyline {
   display: flex;
   flex-wrap: wrap;
