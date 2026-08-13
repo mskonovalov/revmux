@@ -1,6 +1,6 @@
 # revmux
 
-[![build](https://github.com/umputun/revmux/actions/workflows/ci.yml/badge.svg)](https://github.com/umputun/revmux/actions/workflows/ci.yml) [![Coverage Status](https://coveralls.io/repos/github/umputun/revmux/badge.svg?branch=master)](https://coveralls.io/github/umputun/revmux?branch=master) [![Go Report Card](https://goreportcard.com/badge/github.com/umputun/revmux)](https://goreportcard.com/report/github.com/umputun/revmux)
+[![build](https://github.com/umputun/revmux/actions/workflows/ci.yml/badge.svg)](https://github.com/umputun/revmux/actions/workflows/ci.yml) [![Coverage Status](https://coveralls.io/repos/github/umputun/revmux/badge.svg?branch=master)](https://coveralls.io/github/umputun/revmux?branch=master)
 
 **[revmux.com](https://revmux.com)** · [Documentation](https://revmux.com/docs) · [Reference](https://revmux.com/reference) · [Releases](https://github.com/umputun/revmux/releases)
 
