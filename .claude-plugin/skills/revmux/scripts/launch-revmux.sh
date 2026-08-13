@@ -268,7 +268,7 @@ recover_agterm_context() {
     tree=$(agt tree --json 2>/dev/null) || return 0
 
     while IFS=$'\t' read -r session_id session_cwd session_pane; do
-        [ -n "$session_id" ] && [ -n "$session_cwd" ] || continue
+        if [ -z "$session_id" ] || [ -z "$session_cwd" ]; then continue; fi
         session_common=$(git -C "$session_cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || continue
         if [ "$session_common" = "$worktree_common" ]; then
             matches=$((matches + 1))
