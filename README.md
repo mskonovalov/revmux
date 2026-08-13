@@ -20,6 +20,11 @@ and passed in as a task round, named with `--task` and `--run`.
 Full documentation is at **[revmux.com/docs](https://revmux.com/docs)**, and every flag, key and field is in
 the **[reference](https://revmux.com/reference)**.
 
+![revmux running four agents, shown as a terminal overlay above the session that launched it](site/assets/screenshot-run.webp)
+
+A status table with one row per supervised process, a combined chronological pane and a tab per agent. The
+shipped launcher opens it in a terminal overlay, because an agent's shell has no tty.
+
 ## Why
 
 **Every agent is visible, and every phase recoverable.** Each model runs as a subprocess revmux owns, so it
