@@ -429,6 +429,19 @@ section {
   color: #16120a;
 }
 
+.hero-install {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  margin-top: 22px;
+}
+.hero-note {
+  margin: 0;
+  padding-left: 2px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
 .copyline {
   display: flex;
   flex-wrap: wrap;
