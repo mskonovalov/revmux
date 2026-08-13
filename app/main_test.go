@@ -1017,9 +1017,9 @@ func ttyPair(t *testing.T) (open func() (*os.File, error), frames func() string,
 // after it.
 //
 // It stops on the first write error rather than failing the test on one. The key it is pressing ends
-// the program, and the program closes the slave side of the pty before the call the test is waiting
-// in returns — so the write that lands in that window fails with EIO, and asserting on it would turn
-// the shutdown this is driving into a failure whose timing is what decides it.
+// the program, and the pty is torn down by ttyPair's cleanup around the same time — so a write that
+// lands in that window fails with EIO, and asserting on it would turn the shutdown this is driving
+// into a failure whose timing is what decides it.
 func holdKey(t *testing.T, press func(string) error, k string) {
 	t.Helper()
 	stop, wg := make(chan struct{}), &sync.WaitGroup{}

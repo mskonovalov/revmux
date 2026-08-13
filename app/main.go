@@ -288,9 +288,12 @@ func (o runOpts) render(cfg renderConfig) *renderer {
 	r.prog = tea.NewProgram(m, tea.WithInput(tty), tea.WithOutput(tty), tea.WithAltScreen())
 	go func() {
 		defer close(r.done)
-		defer func() { _ = tty.Close() }()
-		// Run returns before bubbletea's own goroutines have exited, and its resize watcher still
-		// reads the tty's descriptor. Wait joins them, so the close below cannot race that read.
+		// the tty is deliberately not closed here. bubbletea starts its initial size check as a bare
+		// goroutine that reads the descriptor (tea.go handleResize -> checkResize), and that one is in
+		// neither p.handlers nor p.finished, so Wait cannot join it: closing after Wait still raced the
+		// read whenever Run returned fast, which is the failed-run path. The opener owns the file — the
+		// process exits with it, and the pty in tests is closed by its own cleanup.
+		// Wait stays, since it is what guarantees the terminal is restored before the run reports.
 		defer r.prog.Wait()
 		if _, err := r.prog.Run(); err != nil {
 			_, _ = fmt.Fprintf(o.stderr, "warning: terminal ui: %v\n", err)
