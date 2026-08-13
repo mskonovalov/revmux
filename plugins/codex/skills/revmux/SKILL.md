@@ -1,8 +1,13 @@
 ---
 name: revmux
-description: Run a supervised multi-agent code review by composing a task directory and driving the revmux CLI, then report or act on the findings it returns. revmux spawns and watches parallel claude and codex subprocesses with stall detection, retry, per-agent progress and a full run archive; this skill is the caller that writes the review context, launches it, reads the JSON back, and re-runs it after fixes. It also triages a filed issue, proposal or discussion instead of a diff, running a four-way panel over it — grounding, the case for, the case against, and cost — and putting the maintainer's six answers to him with the arguments behind each. It also has a self mode that reads what past rounds produced and tells the user what the record says about the review itself — which stage is filtering, which lens rates hardest, whether rounds converge — then proposes one change to the local prompt text at a time, with the number behind it. It fetches a pull request into a throwaway worktree, reviews it there and cleans up after. Also answers questions about revmux itself — profiles, lenses, task directories, flags, the JSON shape, exit codes and the run archive. Activates on "revmux", "run revmux", "multi-agent review", "supervised review", "review with revmux", "revmux this branch", "revmux the last commit", "revmux pr 123", "revmux this PR", "review PR 123 with revmux", "run a revmux round", "re-review after fixes", "revmux it and show me", "revmux this, I want to watch", "run it visible", "show me the review", "triage this", "triage issue 123", "is this worth doing", "should we accept this", "should I close this", "revmux self", "self-improve revmux", "tune revmux", "revmux profiles", "revmux lenses", "what does revmux return", "revmux exit codes", "revmux task directory".
-argument-hint: 'optional: what to review ("pr 123", "issue 123", a ref, a path), plus "show me" / "focused" / "final" / "triage" / "loop" / "lenses a,b"'
-allowed-tools: [Bash, Read, Edit, Write, Grep, Glob]
+description: >
+  Run supervised multi-agent reviews with the revmux CLI, report or act on findings, and re-review
+  fixes. Supports branches, commits, paths, fetched pull requests, visible overlay runs, review-fix
+  loops, and issue or discussion triage with grounding, thesis, antithesis, and cost panels. Also
+  analyzes archived rounds in self mode to tune local prompts and answers questions about profiles,
+  lenses, task directories, output, exit codes, and archives. Use when the user says revmux, supervised
+  review, multi-agent review, review with revmux, revmux a branch/commit/PR, show the review, triage an
+  issue, is this worth doing, revmux self, tune revmux, or asks about revmux behavior.
 ---
 
 # revmux — supervised multi-agent code review
@@ -19,36 +24,6 @@ It does no scope detection, no git, no PR fetching, no source modification. This
 | write `scope.md`, `goal.md`, `profile.md`, `context/` | merge, dedupe, verify |
 | choose profile, lenses, flags | return findings on stdout |
 | read the JSON, present, fix, re-run | inject prior rounds |
-
-## Script path resolution
-
-```bash
-SCRIPT_DIR="${CODEX_HOME:-$HOME/.codex}/skills/revmux/scripts"
-```
-
-Use `$SCRIPT_DIR` in place of every script path below.
-
-**Resolve only from the installed skill, never from the repository under review.** Deriving it from
-`git rev-parse --show-toplevel` would run the scripts of whatever repo is checked out — a branch that
-adds `plugins/codex/skills/revmux/scripts/` executes its own code at Step 0. For a development
-install, symlink the checkout:
-
-```bash
-ln -s "$PWD/plugins/codex/skills/revmux" ~/.codex/skills/revmux
-```
-
-## Asking the user
-
-Three decision points need a choice: an ambiguous scope, headless versus overlay, and each self-mode
-suggestion. Codex has no structured question tool — present a numbered list and ask for a number:
-
-```
-Which scope?
-  1. branch vs master (all 7 commits)
-  2. just the uncommitted changes
-```
-
-Before applying fixes, write the plan inline as markdown and ask for explicit confirmation.
 
 ## Activation triggers
 
@@ -86,17 +61,17 @@ resolved including user overrides, runs no pipeline, and is always safe to call.
 the job, never the end of it. A turn that stops after the report has not finished.
 **`references/present.md` is the shape of that turn — read it before writing one**, whichever review
 shape ran.
-**An option names what it acts on, never counts it.** "covering the two majors" is unanswerable and
-"covering the `uv` gate in `make test` and the `request_user_input` gap" is not. Anything the reader must
-know to choose goes inside the option, since the choices are what he reads.
+**The question widget covers the lines directly above it**, so what the reader needs in order to choose
+goes inside the question and never immediately above it. An option names what it acts on, never counts
+it: "covering the two majors" is unanswerable and "covering the `uv` gate in `make test` and the
+`request_user_input` gap" is not.
 
 **1. Exit `1` means findings were reported — a success.** `0` none, `1` findings, `2` tool error.
 Never treat `1` as failure. Never re-run on it.
 
 **2. Run it in the background.** A review takes 3-15 minutes. Redirect stdout to a file, wait for the
-completion notification. Do not sleep-and-check in a loop. Applies to the overlay launcher too.
-The one wait that is not that is Step 4's: a managed background command, polled with blocking reads
-that carry the progress feed and return the moment the run ends.
+completion notification. Do not poll, do not sleep-and-check. Applies to the overlay launcher too.
+Watching the round's event log is not polling — Step 4 arms it, and it speaks only when the run does.
 
 **3. Check `sources.degraded` before believing the findings.** If `expected != reported` the review is
 partial. Say so. Never report "no findings" from a degraded run as "the code is clean".
@@ -115,7 +90,7 @@ the JSON unparseable.
 ### Step 0: Preflight
 
 ```bash
-$SCRIPT_DIR/preflight.sh [profile] [--lenses]
+~/.codex/skills/revmux/scripts/preflight.sh [profile] [--lenses]
 ```
 
 Checks revmux plus every binary the invocation needs. Exits `1` naming what is missing.
@@ -185,10 +160,10 @@ to read: it reads a diff and returns a shortstat, and a triage has neither. `ref
 writes the round, and hands back here at Step 5. A bare number goes through the probe in the table
 above first; a number that turns out to be a pull request is `pr.md`, whatever the user called it.
 
-Ask only when genuinely ambiguous — a feature branch with uncommitted work is the standard case. Put it
-as a numbered list, here and at the headless-versus-overlay choice in Step 4. **The question is always
-this session's, never a subagent's**: a subagent cannot ask, and one that guesses reviews the wrong
-thing at full cost.
+Ask only when genuinely ambiguous; a feature branch with uncommitted work is the standard case. Use
+`request_user_input` when available, otherwise ask one concise question and stop. **The question is
+always this session's, never a subagent's**: a subagent cannot ask, and one that guesses reviews the
+wrong thing at full cost.
 
 ### Step 2: Prepare the round — in a subagent
 
@@ -203,7 +178,7 @@ at a flat rate across all eight — so what makes it slow is prose written and t
 latency. The budgets and the prohibitions in the brief are load-bearing for that, not tidiness.
 
 **Expand every path before handing the brief over.** The subagent does not have this skill loaded, so
-`$SCRIPT_DIR` means nothing in its shell — substitute the resolved absolute path into the brief's text
+the parent skill directory is not inherited by a subagent, so substitute its resolved absolute path into the brief
 rather than passing the variable through, or its `task-state.sh` step silently runs nothing.
 
 **Say one line first, then spawn it:** `Preparing the round for <what is being reviewed>…` — the
@@ -211,15 +186,8 @@ subject in the user's own terms, "the branch against master", "PR 123", "the las
 nothing further until the subagent returns: a delegated step the user was told about reads as work in
 progress, while an unannounced pause reads as a stall.
 
-**This step explicitly authorizes one subagent.** Spawn exactly one, hand it the resolved scope from
-Step 1 and the brief below, send it no intermediate messages, wait for it, and continue using only its
-final returned summary. Do not perform or repeat the delegated work in this thread. If spawning fails or
-the subagent workflow is unavailable, say so and stop — do not silently do it here instead.
-
-Name no tool: which subagent backend a codex session exposes is decided by the model, so an invocation
-written into this file is wrong for half of them. The words above are what authorizes the workflow.
-
-The brief:
+Spawn **one** subagent with the collaboration tool, without overriding its model or reasoning effort.
+Hand it the resolved scope from Step 1 and this brief:
 
 > Prepare a revmux review round. Write files; change no source, run no review, commit nothing.
 >
@@ -282,10 +250,10 @@ The brief:
 > round into every composed prompt itself, so reading them buys nothing and anchors this round's scope
 > on the last one's wording. `profile.md` is the exception, and it is copied rather than read.
 >
-> Send no intermediate message. Return one final summary and nothing else, as JSON:
-> `{"task": "", "run": "", "round_dir": "", "scope_path": "", "wrote": [], "files_changed": 0,
-> "insertions": 0, "deletions": 0, "areas": [], "notes": ""}`. `areas` names the parts of the codebase
-> the diff touches. Put anything that went wrong in `notes` and do not paper over it.
+> Return JSON only: `{"task": "", "run": "", "round_dir": "", "scope_path": "", "wrote": [],
+> "files_changed": 0, "insertions": 0, "deletions": 0, "areas": [], "notes": ""}`. `areas` names the
+> parts of the codebase the diff touches. Put anything that went wrong in `notes` and do not paper
+> over it.
 
 Read `references/task-dir.md` yourself only if the subagent reports something it could not resolve.
 
@@ -352,7 +320,7 @@ Both return the same report on stdout and the same exit code.
 revmux --task <id> --run <name> --no-tui > /tmp/revmux-<id>-<run>.json 2> /tmp/revmux-<id>-<run>.log
 ```
 
-Launch in the background, wait for the notification.
+Launch as a yielded command session, keep its session id, and wait on that same session until it exits.
 
 Reviewing a fetched pull request adds `--workdir <worktree>` and changes nothing else — including that
 the command is still run from the main checkout, which is what keeps the archive out of the directory
@@ -367,35 +335,27 @@ the cleanup deletes. `references/pr.md` has the reasoning.
 On a status request, read the tail of the stderr log and `events.jsonl` in the round directory. Report
 the stage, which agents are active, and elapsed. Never guess.
 
-**Carry the progress feed on the command's own stdout — headless only.** Nothing in the Codex CLI wakes the model when
-a file grows — `notify`, hooks and `tui.notifications` are all turn-bound, and there is no watch to
-subscribe to. What there is: a shell call that yields after about 30 seconds and hands back a session
-id, and empty `write_stdin` polls that block for more output. So the milestones have to come out of
-the command that is already being polled:
+**Then arm the progress feed, before yielding — headless only.** Start a second yielded command session
+over the round's own `events.jsonl`:
 
 ```bash
-revmux --task <id> --run <name> --no-tui \
-       > /tmp/revmux-<id>-<run>.json 2> /tmp/revmux-<id>-<run>.log &
-rev=$!
-tail -n +1 -F <round_dir>/events.jsonl 2>/dev/null \
-  | grep -E --line-buffered '"kind":"(stage|agent_started|agent_done|agent_retried|agent_degraded|dropped|rate_limit)"' &
-feed=$!
-wait "$rev"; status=$?
-kill "$feed" 2>/dev/null
-echo "revmux exit $status"
+tail -n +1 -F <round_dir>/events.jsonl \
+  | grep -E --line-buffered '"kind":"(stage|agent_started|agent_done|agent_retried|agent_degraded|dropped|rate_limit)"'
 ```
 
-Poll it with empty `write_stdin`, a minute a call, and answer each poll by what it returned:
+Use `write_stdin` to read new output with waits no longer than 60 seconds. When the review session exits,
+send Ctrl-C to the tail session because `tail -F` never ends by itself. `references/invocation.md` says
+why those seven kinds are used instead of the log.
 
-- **milestone lines** — one short message folding the whole batch together: the stage that opened, the
-  agents that started or finished, any retry or degrade. One line for the poll, not one per line in it
-- **nothing** — say nothing at all, and poll again. An empty batch is not news, and a message
-  reporting one is the tick this feed exists to avoid: no heartbeat, no "no change since the last
-  check", no restating a milestone already relayed.
-- **`revmux exit N`** — the run is over. Stop polling and read the report.
+**Speak at most once a minute, and only about what happened.** Fold every event since the last relay
+into one short line — the stage that opened, the agents that started or finished — rather than one
+line each: a roster launches four agents within seconds of each other, and four consecutive messages
+saying so is the same noise from the other direction. A retry, a degrade or a rate limit goes out when
+it arrives instead of waiting for the minute; those change what the user would do next.
 
-Updates land at the poll boundary rather than the instant the event does, which is what having no
-watch costs. `references/invocation.md` says why those seven kinds and not the stderr log.
+**Never report a quiet interval.** No heartbeat, no "no change since the last check", no restating a
+milestone already relayed — a feed that speaks when nothing happened is the one the user turns off.
+The monitor is woken by the file, so silence costs nothing and needs no announcing.
 
 **The feed belongs to this form alone.** It exists because a headless run says nothing for ten minutes
 and the user has no other signal. An overlay run is that signal, on screen, live.
@@ -403,7 +363,7 @@ and the user has no other signal. An overlay run is that signal, on screen, live
 **Overlay — when the user wants to watch:**
 
 ```bash
-$SCRIPT_DIR/launch-revmux.sh --task <id> --run <name> [any revmux flag]
+~/.codex/skills/revmux/scripts/launch-revmux.sh --task <id> --run <name> [any revmux flag]
 ```
 
 Detects the terminal (agterm, tmux, zellij, herdr, kitty, wezterm/kaku, cmux, ghostty, iTerm2, Emacs
@@ -411,10 +371,11 @@ vterm), runs revmux with its TUI in an overlay, returns the report on stdout. Un
 panel at 80% of the pane, or a pane overlay when the session is split, which leaves the sibling pane
 live. Either shape is tinted blue. Do not pass `--no-tui`; the script rejects it.
 
-- it blocks for the whole review, so background it and poll for its completion
+- it blocks for the whole review, so launch it as a yielded command session and wait on that same session
 - **no progress feed, and none of the three-things announcement.** The TUI is the progress feed: a
-  relay here narrates in prose what the user is already watching render, and the three lines about
-  `tail -f` point at a log he does not need. Say what is running in one line and yield.
+  second tail session here narrates in prose what the user is already watching render, once a minute, and the
+  three lines about `tail -f` point at a log he does not need. Say what is running in one line and
+  yield.
 - **its exit codes: `0`/`1`/`2` are revmux's, `3` is a launcher failure, `127` is revmux not
   installed.** A `3` means no review happened — that is the one to retry.
 - overrides: `REVMUX_AGTERM_PERCENT` (80, and forces the floating panel in a split),
@@ -487,7 +448,8 @@ Recommend the option that fits the outcome:
 
 Rows are tried in order and the first match wins, so a degraded run outranks whatever it did report.
 
-Put it as a numbered list, the recommendation first and marked `(recommended)`, and wait for the pick.
+Ask with `request_user_input` when available, putting the recommendation first and marking it
+`(Recommended)`. Otherwise ask one concise question and stop.
 
 **Never start fixing because the findings look clear.** A review produces findings; editing is a
 separate decision, and this is where the user makes it.
@@ -581,7 +543,8 @@ Documentation is the one surface a re-review does **not** widen to cover. Every 
 round before never looked at; a doc fix is a sentence this loop just wrote, and running the `docs` lens
 over it produces a finding about that sentence round after round while the code stands still.
 
-Put it as a numbered list, the matching row first and marked `(recommended)`, and wait for the pick.
+Ask with `request_user_input` when available, putting the matching row first and marking it
+`(Recommended)`. Otherwise ask one concise question and stop.
 Never narrow the roster silently: a user who does not notice gets a smaller review than the one he
 thinks he asked for. Skip the question when he named a profile himself.
 
@@ -605,15 +568,16 @@ The proposal is oldest first by `last_run`, whole tasks, and never the task this
 task whose rounds never completed ahead of ones that did. Order those by `id` after the dated ones, and
 say in the option that they carry no completed round.
 
-Put it as one numbered list before anything is removed, and wait for the pick:
+Use one `request_user_input` call before anything is removed. If the tool is unavailable, ask one
+concise question and stop:
 
-- the oldest tasks that together get under ~10MB as the first option, marked `(recommended)`
-- the single largest task as a second choice, when the first is not already just that task
-- keeping everything as the last choice
+- the oldest tasks that together get under ~10MB as the first option, marked `(Recommended)`
+- the single largest task as a second option, when the first is not already just that task
+- keeping everything as the last option
 
-Every choice names the megabytes it frees and, for each task it removes, that task's `description` and
+Every option names the megabytes it frees and, for each task it removes, that task's `description` and
 `rounds` — an option that says only "clean up old tasks", or names ids without saying what they
-reviewed, is not one the user can weigh.
+reviewed, is not a choice the user can weigh.
 
 **Say what is lost in the question itself:** a removed task takes its rounds with it, so `revmux stats`
 and self mode's corpus both shrink by that much evidence.
@@ -653,7 +617,7 @@ rounds produced and proposes changes to the review configuration itself.
 ### Step S1: Run the analysis
 
 ```bash
-$SCRIPT_DIR/analyze-corpus.py
+~/.codex/skills/revmux/scripts/analyze-corpus.py
 ```
 
 It walks the archive and prints numbered conclusions with the numbers behind each, then the tables they
@@ -717,7 +681,8 @@ One. The most supported, with:
 2. **the number behind it** — the one the script printed, quoted
 3. **how you would know it worked** — the measurement that moves if it did, on the next round
 
-Then ask as a numbered list — apply it, skip it, or stop — and wait for the pick. Act on the answer, then offer the next one the same
+Then use `request_user_input`: apply it, skip it, or stop. If unavailable, ask one concise question and
+stop. Act on the answer, then offer the next one the same
 way. Stop when he says stop or the conclusions run out. Never batch edits, never apply one unasked.
 
 **A conclusion is not automatically a change.** Several are worth knowing and not worth acting on —
@@ -735,7 +700,7 @@ User: "revmux this branch"
   01-initial, writes task.md/scope/goal/profile → returns round_dir, wrote[4]
 → revmux --task tui-rework --run 01-initial --no-tui > /tmp/…json  (background)
 → tell user: ~9 min, tail -f /tmp/…log for live progress
-→ poll the managed command; relay each milestone batch, say nothing on an empty one
+→ yielded tail session on <round_dir>/events.jsonl, milestone kinds only; one folded line a minute
 → exit 1, sources 4/4, degraded []
 → 6 findings: 1 major, 5 minor; 2 corroborated across bugs+impl and codex
 ```
@@ -753,9 +718,9 @@ User: "fix the major one and run it again"
 ```
 User: "revmux the branch, I want to watch it"
 → subagent prepares 01-initial and returns its paths
-→ $SCRIPT_DIR/launch-revmux.sh --task tui-rework --run 01-initial > /tmp/…json  (background)
+→ launch-revmux.sh --task tui-rework --run 01-initial > /tmp/…json  (background)
 → agterm: split session, so a pane overlay on the agent's own pane, TUI live, self-closes 30s after the report
-→ no progress feed and no status lines: he is watching it
+→ no tail session and no status lines: he is watching it
 → same JSON, same exit code, Step 5 onward identical
 ```
 
@@ -786,5 +751,5 @@ User: "revmux self"
 → revmux config → the roster actually running; revmux init → the paths an edit would go to
 → propose one: the adversarial lens's severity text, quoting the 61%, measurable by whether the
   demotion count falls next round
-→ numbered list: apply / skip / stop. Then the next one, or stop.
+→ request_user_input: apply / skip / stop. Then the next one, or stop.
 ```

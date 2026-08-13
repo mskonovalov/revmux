@@ -254,6 +254,42 @@ agt() {
     fi
 }
 
+# Codex can drop AGTERM variables and run from a temporary worktree. Recover the calling session only
+# when one live session belongs to the same Git checkout; ambiguity must fall through to other backends.
+recover_agterm_context() {
+    local tree worktree_common session_id session_cwd session_pane session_common
+    local match_id="" match_pane="" matches=0
+
+    [ -z "${AGTERM_SESSION_ID:-}" ] || return 0
+    [ -n "$AGTERMCTL" ] || return 0
+    command -v git >/dev/null 2>&1 || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    worktree_common=$(git -C "$CWD" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0
+    tree=$(agt tree --json 2>/dev/null) || return 0
+
+    while IFS=$'\t' read -r session_id session_cwd session_pane; do
+        [ -n "$session_id" ] && [ -n "$session_cwd" ] || continue
+        session_common=$(git -C "$session_cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || continue
+        if [ "$session_common" = "$worktree_common" ]; then
+            matches=$((matches + 1))
+            match_id="$session_id"
+            match_pane="$session_pane"
+        fi
+    done < <(printf '%s' "$tree" | jq -r '
+        .result.tree.workspaces[]?.sessions[]?
+        | select((.cwd // "") != "")
+        | [.id, .cwd, ([.surfaces[]? | select(.active == true) | .kind][0] // "left")]
+        | @tsv
+    ' 2>/dev/null)
+
+    if [ "$matches" -eq 1 ]; then
+        AGTERM_SESSION_ID="$match_id"
+        AGTERM_PANE="$match_pane"
+    fi
+}
+
+recover_agterm_context
+
 # `--pane` on overlay open reached agtermctl after v0.9.0. On an older one it is a usage error, which
 # --block would surface as an exit code in revmux's own 0/1/2 vocabulary - so ask the CLI rather than
 # assume, and fall back to the floating panel every version has.

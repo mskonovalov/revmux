@@ -1,0 +1,4 @@
+interface:
+  display_name: "revmux"
+  short_description: "Run supervised multi-agent code reviews"
+  default_prompt: "Use $revmux to run a supervised multi-agent review of the current changes."

@@ -100,7 +100,7 @@ is visible while it runs.
 
 | backend | detected by | how it opens |
 |---|---|---|
-| agterm | `$AGTERM_SESSION_ID` + `agtermctl` | floating panel at 80%, or a pane overlay in a split, blocking |
+| agterm | `$AGTERM_SESSION_ID`, or one Git checkout match, plus `agtermctl` | floating panel at 80%, or a pane overlay in a split, blocking |
 | tmux window | `$TMUX` + `REVMUX_TMUX_WINDOW=1`, or agent-deck | server-owned window, survives a client drop |
 | tmux popup | `$TMUX` | `display-popup -E` at 90% |
 | zellij | `$ZELLIJ` | floating pane at 90% |
@@ -114,6 +114,10 @@ is visible while it runs.
 
 Order matters where environments overlap: herdr is checked before kitty because herdr-in-kitty sets
 `KITTY_LISTEN_ON`, and cmux before ghostty because cmux can expose Ghostty's environment variables.
+
+When Codex drops AGTERM variables or runs from a temporary worktree, the launcher queries the live
+tree and compares absolute Git common directories. It adopts the session and active pane only when
+exactly one live session matches. Zero or multiple matches fall through to other backends.
 
 Under agterm the floating panel is centered over the whole session, so in a **visible split** it covers
 the sibling pane's work and frames the review inside something narrower than the pane it runs in.
