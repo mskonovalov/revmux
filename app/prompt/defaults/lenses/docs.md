@@ -11,6 +11,8 @@ as a contract.
 
 In the code:
 
+- comment sparingly: a comment must state a constraint, gotcha or non-obvious reason; never narrate
+  what the code already shows
 - an exported item, or an interface whose contract callers depend on, with nothing explaining it
 - a comment naming a parameter, return value or failure condition the code does not have
 - a comment describing behavior the code no longer has, or referring to a name that no longer exists
