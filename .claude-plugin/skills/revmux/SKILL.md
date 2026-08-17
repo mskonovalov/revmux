@@ -16,7 +16,7 @@ It does no scope detection, no git, no PR fetching, no source modification. This
 |---|---|
 | resolve what is under review | supervise, stagger, retry, degrade |
 | run git, gather context | compose and archive prompts |
-| write `scope.md`, `goal.md`, `profile.md`, `context/` | merge, dedupe, verify |
+| write `scope.md`, `goal.md`, `context/` | merge, dedupe, verify |
 | choose profile, lenses, flags | return findings on stdout |
 | read the JSON, present, fix, re-run | inject prior rounds |
 
@@ -111,6 +111,25 @@ brew install umputun/apps/revmux                   # macOS
 go install github.com/umputun/revmux/app@latest    # installs as 'app'; rename to 'revmux'
 git clone https://github.com/umputun/revmux.git && cd revmux && make install
 ```
+
+### Step 0.5: Offer the project profile, once per repository
+
+`revmux config`'s `paths.profile_fallback` is `./.revmux/profile.md` when the repo has one. Every round
+without its own `input/profile.md` inherits it, and nothing creates it — not `revmux init`, not this
+skill on its own. An empty field means every review here runs on generic calibration.
+
+When it is empty, say so in one line and offer to write it. **Only ever with the user's yes**, and never
+from the diff: read the project's own rules — `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`, `docs/`, the
+linter config — and write what the software is, what a real failure looks like there, the blast radius,
+the reporting bar, and which conventions are deliberate. A profile guessed from one change is the thing
+this file exists to replace.
+
+Offer it once. If he declines, do not ask again in the session, and do not write a round-local
+`input/profile.md` instead — that wins over the project file and is exactly the substitution the round
+brief forbids.
+
+**Never on a fetched pull request or any tree that is not his**: `.revmux/` is checked-in configuration,
+so authoring one there commits a review standard to somebody else's repository.
 
 ### Step 1: Resolve what is being reviewed
 
@@ -225,13 +244,11 @@ Spawn **one** `general-purpose` agent. Hand it the resolved scope from Step 1 an
 >      that would make a later run wrong, or a contradiction that would mislead an agent executing the
 >      document. Say that finding nothing is a valid answer, or the round reads as owing findings and
 >      manufactures them.
->    - `profile` — optional, reusable across the repo. What the software is, what a real failure looks
->      like, where the project's rules live, which conventions are deliberate. **On any round after the
->      first, `cp` the previous round's file to this round's path** rather than writing one: it is about
->      the project rather than the round, so a fresh one is the same document generated again.
->      Copy from the most recent round `task-state.sh` reported `profile=present` for — the file is
->      optional, so an earlier round may not have one, and `cp` from a round that lacks it just fails.
->      Write one when no round has it.
+>    - `profile` — **do not write it.** What it holds is about the repository rather than this round, so
+>      it lives in `./.revmux/profile.md` and revmux gives every round without a non-empty override the same one
+>      with nothing copied forward. You see the diff and the file list, which is not enough to state a repo's conventions,
+>      and a generated file here wins over the project's and silently replaces it.
+>      Write it only when the user says this subject needs a different bar than the repo's.
 >    - `context` — optional. Ticket text, design notes, commit list. Its path is reported but the
 >      directory is not created.
 >    - `task_file` — when `created` lists it, and also when it is already there but still the unfilled
@@ -243,7 +260,7 @@ Spawn **one** `general-purpose` agent. Hand it the resolved scope from Step 1 an
 >
 > **Do not read the previous round's `scope.md`, `goal.md` or `context/`.** revmux injects every prior
 > round into every composed prompt itself, so reading them buys nothing and anchors this round's scope
-> on the last one's wording. `profile.md` is the exception, and it is copied rather than read.
+> on the last one's wording. No round's `profile.md` is read either: the project file revmux resolves is not one of these.
 >
 > Return JSON only: `{"task": "", "run": "", "round_dir": "", "scope_path": "", "wrote": [],
 > "files_changed": 0, "insertions": 0, "deletions": 0, "areas": [], "notes": ""}`. `areas` names the
@@ -688,7 +705,7 @@ User: "revmux this branch"
 → git diff master...HEAD --shortstat → 22 files, +840/-310, handed to the brief as the scale
 → "Preparing the round for the branch against master…"
 → one subagent: reads the diff once, matches no existing task, derives `tui-rework`, opens
-  01-initial, writes task.md/scope/goal/profile → returns round_dir, wrote[4]
+  01-initial, writes task.md/scope/goal → returns round_dir, wrote[3]
 → revmux --task tui-rework --run 01-initial --no-tui > /tmp/…json  (background)
 → tell user: ~9 min, tail -f /tmp/…log for live progress
 → Monitor on <round_dir>/events.jsonl, milestone kinds only; one folded line a minute, silence between
@@ -700,8 +717,8 @@ User: "revmux this branch"
 User: "fix the major one and run it again"
 → fix applied
 → "Preparing the round for the fixes…" → same subagent, handed task `tui-rework` and the fixes'
-  shortstat so it neither matches a task nor re-measures; opens 02-after-fix, copies profile.md
-  across and writes its own scope
+  shortstat so it neither matches a task nor re-measures; opens 02-after-fix and writes its own
+  scope; the profile is the repo's and revmux resolves it
 → revmux --task tui-rework --run 02-after-fix --no-tui
 → exit 0, nothing above threshold
 ```

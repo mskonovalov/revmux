@@ -361,10 +361,10 @@ revmux --task pr-123 --run 02-after-fix &gt; findings.json</pre>
         <pre class="code">&lt;tasks-dir&gt;/pr-123/               a task: one subject, reviewed over as many rounds as it takes
 ├── task.md                       optional; front matter identifying the task
 ├── 01-initial/                   a round
-│   ├── input/                    caller-written; the only channel review context travels through
+│   ├── input/                    caller-written; the only channel this round's own context travels through
 │   │   ├── scope.md              {{SCOPE}}    required; missing or empty is a load-time error
 │   │   ├── goal.md               {{GOAL}}     optional
-│   │   ├── profile.md            {{PROFILE}}  optional, the project's own conventions
+│   │   ├── profile.md            {{PROFILE}}  optional; non-empty overrides ./.revmux/profile.md
 │   │   └── context/              {{CONTEXT}}  optional: ticket text, design notes, spec excerpts
 │   └── ...                       revmux-written artifacts, see the run archive
 └── 02-after-fix/                 the next round, with its own input/</pre>
@@ -382,8 +382,17 @@ revmux --task pr-123 --run 02-after-fix &gt; findings.json</pre>
         </p>
         <p>
           There are no <code>--goal</code>, <code>--goal-file</code>, <code>--profile-file</code> or
-          <code>--context-file</code> flags. One mechanism, no precedence rules, and nothing for revmux to
-          author.
+          <code>--context-file</code> flags. One mechanism, and nothing for revmux to author.
+        </p>
+        <p>
+          <code>profile.md</code> is the one file with a layer under it, because what it says is true of the
+          repository rather than of one round. Put it in <code>./.revmux/profile.md</code> and every round
+          without a non-empty override inherits it — <a href="#config"><code>revmux config</code></a> reports the resolved path
+          as <code>paths.profile_fallback</code>, and the bytes are copied into each round as
+          <code>prompts/input-profile.md</code> so the archive records what actually calibrated it. A round's
+          non-empty <code>input/profile.md</code> wins outright, and is worth writing only to hold that subject
+          to a different bar than the repo's. The user layer is never searched for it: calibration spanning
+          repositories describes none of them.
         </p>
         <p>
           <code>--run</code> has no default: the round holds your own context, so revmux cannot name one you
@@ -503,7 +512,11 @@ Reviewing the token exchange path after the provider swap.</pre>
 └── lenses/
     ├── bugs.md  impl.md  architecture.md
     ├── quality.md  docs.md  tests.md  comments.md  adversarial.md
-    └── grounding.md  precedent.md  thesis.md  antithesis.md  cost.md</pre>
+    └── grounding.md  precedent.md  thesis.md  antithesis.md  cost.md
+
+./.revmux/                    the project layer: the same shape, plus one file of its own
+└── profile.md                what this repo is and its reporting bar, inherited by every round
+                              here only — the user layer is never searched for it</pre>
         <p>
           <code>--config-dir</code> relocates the user layer. <a href="#init"><code>revmux init</code></a>
           materializes <code>./.revmux/</code> from whatever resolved, and
@@ -515,7 +528,10 @@ Reviewing the token exchange path after the provider swap.</pre>
           Paths resolve against the <strong>process working directory</strong>: the project config layer, and
           <code>--tasks-dir</code>'s <code>./.revmux/tasks</code> default. <code>--workdir</code> is separate,
           setting where the subprocesses run and what <code>{{WORKDIR}}</code> expands to. Reviewing a repository
-          from outside it means passing <code>--config-dir</code> and <code>--tasks-dir</code> as well.
+          from outside it means passing <code>--config-dir</code> and <code>--tasks-dir</code> as well, and
+          writing the round its own <code>input/profile.md</code> — <code>./.revmux/profile.md</code> is
+          cwd-relative too and no flag relocates it, so a round without one inherits the calibration of
+          whatever project you are standing in.
         </p>
 
         <h2 id="profiles">Profiles <a class="anchor" href="#profiles">#</a></h2>
@@ -866,10 +882,11 @@ receives, including what counts as critical, major and minor here.</pre>
 │   ├── agents/               composed prompt per agent, post-substitution: the bytes the model saw
 │   │   ├── bugs+impl.md
 │   │   └── codex.md
-│   └── stages/               separate from agents/ so an agent named `verify` cannot collide
-│       ├── synthesis.md
-│       ├── verify-app-executor.md      one per group, directories by default
-│       └── verify-app-pipeline.md
+│   ├── stages/               separate from agents/ so an agent named `verify` cannot collide
+│   │   ├── synthesis.md
+│   │   ├── verify-app-executor.md      one per group, directories by default
+│   │   └── verify-app-pipeline.md
+│   └── input-profile.md      the project profile's bytes, when this round inherited one
 ├── stages/                   a skipped stage writes no snapshot
 │   ├── 1-found.json          findings as the find stage left them
 │   ├── 2-synthesized.json
@@ -1062,6 +1079,13 @@ receives, including what counts as critical, major and minor here.</pre>
           completion, so neither a directory prepared but not yet reviewed nor a round whose review was
           interrupted is one. An empty list always means empty: a tasks root that could not be read is reported
           as <code>paths.tasks_error</code>, and nothing that failed is reported as nothing being there.
+        </p>
+        <p>
+          <code>paths.profile_fallback</code> is the resolved <code>./.revmux/profile.md</code>, so a caller can
+          tell that a round it leaves without a non-empty profile will still be calibrated. The same rule applies here:
+          one that will not resolve is <code>paths.profile_fallback_error</code> rather than a missing
+          fallback, because a round that inherited it would refuse to start. A round with a non-empty
+          <code>input/profile.md</code> is unaffected — that file wins before the project one is read.
         </p>
 
         <h2 id="init">revmux init <a class="anchor" href="#init">#</a></h2>

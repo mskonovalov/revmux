@@ -32,6 +32,8 @@ revmux looks without tracking which flag a given path hangs off. `--workdir` set
 run and what `{{WORKDIR}}` expands to; reviewing a repo from outside it means passing `--config-dir` and
 `--tasks-dir` as well, since by the same rule both would otherwise resolve against the caller's cwd rather
 than the repo under review.
+`./.revmux/profile.md` is the fourth of these and the one no flag relocates, so an out-of-tree round with
+no `input/profile.md` inherits the *caller's* project profile and reviews one repo against another's bar.
 
 **`--config-dir ./.revmux` collapses the two layers into one, and that must be detected.**
 Otherwise the same directory loads twice as both the user and project layer — harmless for a scalar, but
@@ -78,7 +80,8 @@ In documentation use the `--flag=value` form for long flags that take a value, n
 
 revmux never derives context — the caller writes it to disk and names it.
 `--task <id>` selects a directory under `--tasks-dir` (default `./.revmux/tasks`), `--run <name>` selects one
-round inside it, and `<task>/<run>/input/` is the only channel review context travels through.
+round inside it, and `<task>/<run>/input/` is the only channel a round's own context travels through —
+`./.revmux/profile.md` is the one repo-level default underneath it, resolved per the section below.
 There are no `--goal`, `--goal-file`, `--profile-file` or `--context-file` flags:
 variables resolve to **paths**, so a flag carrying inline text could not be substituted without revmux
 first writing it to a file, which would make revmux an author of context rather than a consumer of it.
@@ -92,12 +95,28 @@ archived prompt carries the path and not the text.
 `options.resolveContext` stats `<task>/<run>/input/` and returns the resolved absolute paths:
 
 1. `scope.md` — required, and a missing or empty one is a load-time error, since a review with no scope is a caller bug
-2. `goal.md`, `profile.md` — optional, absent resolves to the "none provided" placeholder
-3. `context/` — optional directory the caller fills with as many files as it likes
+2. `goal.md` — optional, absent resolves to the "none provided" placeholder
+3. `profile.md` — optional, absent or empty falls through to the project profile and then to the placeholder
+4. `context/` — optional directory the caller fills with as many files as it likes
 
-Absent `goal.md` or `profile.md` is **not an error**.
-The run proceeds, and the variable resolves to a "none provided" placeholder the shipped profile bodies
-instruct the agent to read as generic severity calibration.
+**`profile.md` is the one context file with a layer under it.**
+When the round has no non-empty profile, `options.projectProfile` looks for `./.revmux/profile.md` and, finding one,
+sets `reviewContext.ProfileSource` to it and `Profile` to `<round>/prompts/input-profile.md` — the path the
+snapshot will occupy. `runOpts.materializeProfile` writes those bytes through the held archive at the top of
+`review`, before the renderer is built, since the TUI's input snapshot is taken there and the agents read
+the path later still.
+It resolves through `projectDir`, **never** `o.layers.project`: `resolveLayers` empties that field when
+`--config-dir ./.revmux` collapses the two layers, and keying on it would make the fallback silently vanish
+under that one invocation while the file sat untouched on disk. `revmux config` reports the same resolution
+as `paths.profile_fallback` and must use the same method, or the catalog and the run disagree.
+The user layer is deliberately not searched: calibration that spans repositories describes none of them.
+Nothing is ever written into `input/` — a snapshot placed there would be read as an explicit round-local
+override by the next attempt on that round, and the authored project file would stop applying with nothing
+saying so.
+
+An absent `goal.md` is **not an error**. An absent or empty round profile falls through to the project
+profile; when that is also absent or empty, `{{PROFILE}}` resolves to the "none provided" placeholder the
+shipped profile bodies instruct the agent to read as generic severity calibration.
 That guarantee lives in the prompt text, not in Go — the report header carries the title, the scope path
 and the degraded banner, and says nothing about calibration.
 
@@ -521,7 +540,14 @@ denominator of every rate the analysis reports.
 **The same rule applies to every other failure this command can hit: an empty list must mean empty.**
 An unreadable tasks root reported as `"tasks": []` is the identical wrong advice one level up — it reads as
 "nothing is there" and mints a duplicate id — so it is `paths.tasks_error`, an unreadable task directory is
-`rounds_error` on that entry, and a `--workdir` that will not resolve is `paths.workdir_error` beside the
+`rounds_error` on that entry, a `./.revmux/profile.md` that will not resolve is `paths.profile_fallback_error`
+rather than a missing `profile_fallback`, since reporting it as no fallback describes a round that would
+refuse to start as one that is merely uncalibrated — **it is observability and not a gate**, because
+whether it matters depends on the round: one with a non-empty `input/profile.md` wins before the project
+file is read, and nothing repo-global can know that before the round exists. It also answers `os.Stat`
+rather than a read, so an unreadable regular file resolves clean here and fails later at
+`materializeProfile`; do not label the field as readability.
+And a `--workdir` that will not resolve is `paths.workdir_error` beside the
 raw value. An absent tasks root is the one clean case: it is a fresh install, not a failure to read one.
 
 **`configCmd.Execute` does not print.** go-flags calls it from inside `parseArgs`, before the injected

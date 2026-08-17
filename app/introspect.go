@@ -85,13 +85,15 @@ type vocabulary struct {
 // WorkDirError carry why a field is the raw flag: an unreadable tasks root reported as no tasks reads
 // as "nothing is there" and mints a duplicate id.
 type pathInfo struct {
-	TasksDir     string     `json:"tasks_dir"`
-	TasksError   string     `json:"tasks_error,omitempty"`
-	ConfigDir    string     `json:"config_dir"`
-	ProjectDir   string     `json:"project_dir,omitempty"`
-	WorkDir      string     `json:"workdir"`
-	WorkDirError string     `json:"workdir_error,omitempty"`
-	Tasks        []taskInfo `json:"tasks"`
+	TasksDir             string     `json:"tasks_dir"`
+	TasksError           string     `json:"tasks_error,omitempty"`
+	ConfigDir            string     `json:"config_dir"`
+	ProjectDir           string     `json:"project_dir,omitempty"`
+	ProfileFallback      string     `json:"profile_fallback,omitempty"`
+	ProfileFallbackError string     `json:"profile_fallback_error,omitempty"`
+	WorkDir              string     `json:"workdir"`
+	WorkDirError         string     `json:"workdir_error,omitempty"`
+	Tasks                []taskInfo `json:"tasks"`
 }
 
 // taskInfo is one existing task: its id, what its task.md says about it, and the rounds already recorded
@@ -191,6 +193,13 @@ func (o options) knobs() []knob {
 func (o options) paths() pathInfo {
 	p := pathInfo{TasksDir: o.TasksDir, ConfigDir: o.layers.user, ProjectDir: o.layers.project,
 		WorkDir: o.WorkDir, Tasks: []taskInfo{}}
+	// a failure reported as no fallback describes an inheriting round as uncalibrated when it would
+	// refuse to start, which is the same wrong advice tasks_error and workdir_error exist to prevent
+	if fallback, err := o.projectProfile(); err != nil {
+		p.ProfileFallbackError = err.Error()
+	} else {
+		p.ProfileFallback = fallback
+	}
 	if dir, err := o.workDir(); err != nil {
 		p.WorkDirError = err.Error()
 	} else {

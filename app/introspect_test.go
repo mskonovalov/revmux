@@ -193,6 +193,37 @@ func TestOptions_paths(t *testing.T) {
 	assert.Equal(t, []taskInfo{{ID: "pr-1", Rounds: []string{}}, {ID: "pr-2", Rounds: []string{}}}, got.Tasks,
 		"only directories are tasks, and a --run collides with an existing round")
 
+	// the collapse empties layers.project for provenance while the file stays where it is, so reading
+	// the layer here would report no fallback on an invocation that still uses one
+	t.Run("the profile fallback is reported and survives --config-dir ./.revmux", func(t *testing.T) {
+		dir := isolate(t)
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, projectDirName), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, projectDirName, task.ProfileFile),
+			[]byte("# calibration"), 0o600))
+
+		got := options{TasksDir: root, layers: configLayers{}}.paths()
+		assert.Equal(t, filepath.Join(dir, projectDirName, task.ProfileFile), got.ProfileFallback)
+		assert.Empty(t, got.ProjectDir, "the layer is collapsed, and the fallback is reported regardless")
+	})
+
+	t.Run("no project profile reports no fallback", func(t *testing.T) {
+		isolate(t)
+		got := options{TasksDir: root}.paths()
+		assert.Empty(t, got.ProfileFallback)
+		assert.Empty(t, got.ProfileFallbackError)
+	})
+
+	// reported as absent, this describes an inheriting round as uncalibrated when it would refuse to
+	// start — the same wrong advice tasks_error and workdir_error exist to prevent one level up
+	t.Run("a profile that will not resolve is an error rather than an absence", func(t *testing.T) {
+		dir := isolate(t)
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, projectDirName, task.ProfileFile), 0o750))
+
+		got := options{TasksDir: root}.paths()
+		assert.Empty(t, got.ProfileFallback)
+		assert.Contains(t, got.ProfileFallbackError, "want a file")
+	})
+
 	t.Run("a relative tasks root resolves against the working directory", func(t *testing.T) {
 		dir := isolate(t)
 		got := options{TasksDir: "./.revmux/tasks"}.paths()

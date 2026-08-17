@@ -313,13 +313,20 @@ everything that survived verification.
 
 Two distinct roots, and conflating them is a common failure:
 
-- **the process working directory** governs the project config layer (`./.revmux/`) and the
-  `./.revmux/tasks` default for `--tasks-dir`
+- **the process working directory** governs the project config layer (`./.revmux/`), the project profile
+  `./.revmux/profile.md` inside it, and the `./.revmux/tasks` default for `--tasks-dir`
 - **`--workdir`** sets where the review subprocesses run and what `{{WORKDIR}}` expands to
 
 Reviewing a repository from outside it therefore means passing `--workdir`, `--tasks-dir` **and**
 `--config-dir` — otherwise the first resolves to the repo and the other two to wherever the caller
 happens to be standing.
+
+**`./.revmux/profile.md` is a fourth cwd-relative input and no flag relocates it.** Reviewing repo B from
+a checkout of repo A, a round with no `input/profile.md` of its own inherits **A's** project profile, so B
+is reviewed against A's bar. Write the round its own `input/profile.md` when reviewing from outside a
+tree, or check `revmux config`'s `paths.profile_fallback` first — the run itself is not silent about it,
+since the inherited bytes are archived as `prompts/input-profile.md` and labelled in the TUI, but that is
+after the fact.
 
 ## `.revmux/` in a repository is executable trust
 
@@ -404,6 +411,12 @@ empty; fix the file rather than minting a second id for the same subject.
 An empty list always means empty. If the tasks root could not be read the reason is `.paths.tasks_error`,
 if one task's directory could not be read it is `rounds_error` on that entry, and a `--workdir` that would
 not resolve is `.paths.workdir_error`. Treat any of them as "unknown", never as "nothing is there".
+
+`.paths.profile_fallback` is `./.revmux/profile.md` when the repo has one: every round with no non-empty
+`input/profile.md` of its own inherits it, so do not write one per round. `.paths.profile_fallback_error`
+means that file will not resolve — a round that inherits it would refuse to start, while one with a
+non-empty `input/profile.md` is unaffected, since the round file wins before the project one is read.
+`preflight.sh` does not gate on it: it runs before the round exists and cannot know which will win.
 
 ## `revmux new` — the only call that creates anything
 

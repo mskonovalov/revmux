@@ -472,10 +472,10 @@
 <b>.revmux/tasks/pr-123/</b>        a task: one subject, as many rounds as it takes
 ├── task.md                 optional anchors: description, url, branch, base
 ├── <b>01-initial/</b>             a round
-│   ├── input/              caller-written, the only channel context travels through
+│   ├── input/              caller-written, the only channel this round's own context travels through
 │   │   ├── scope.md        {{SCOPE}}    required
 │   │   ├── goal.md         {{GOAL}}     optional
-│   │   ├── profile.md      {{PROFILE}}  optional, the project's own conventions
+│   │   ├── profile.md      {{PROFILE}}  optional; non-empty overrides ./.revmux/profile.md
 │   │   └── context/        {{CONTEXT}}  optional, any number of files
 │   └── ...                 revmux-written artifacts
 └── <b>02-after-fix/</b>           the next round, with its own input/</pre
@@ -548,7 +548,8 @@ EOF
 ├── manifest.json       roster, prompt provenance and hashes, requested vs actual model
 ├── prompts/
 │   ├── agents/         the composed prompt each agent received, post-substitution
-│   └── stages/         synthesis.md, verify-app-pipeline.md, ...
+│   ├── stages/         synthesis.md, verify-app-pipeline.md, ...
+│   └── input-profile.md  the project profile's bytes, when the round inherited one
 ├── stages/             1-found.json, 2-synthesized.json, 3-verified.json
 ├── events.jsonl        revmux's own decisions: stalls, retries, degrades, transitions
 ├── agents/             verbatim tees, one file per attempt
