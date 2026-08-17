@@ -281,13 +281,13 @@ func TestRun_archive(t *testing.T) {
 		require.NoError(t, json.Unmarshal(data, &got))
 
 		require.Len(t, got.Agents, 2, "a source that never delivered is still part of the roster that ran")
-		codex := got.Agents[1]
-		assert.Equal(t, "codex", codex.Name)
-		assert.Equal(t, "gpt-5.6-sol", codex.RequestedModel)
-		assert.Equal(t, "high", codex.Effort)
-		assert.True(t, codex.Degraded)
-		assert.Empty(t, codex.ActualModel, "nothing ran, so nothing is claimed to have run")
-		assert.Equal(t, []string{"codex"}, got.Degraded)
+		peer := got.Agents[1]
+		assert.Equal(t, "adversarial", peer.Name, "an agent is named for its lens, never for the binary running it")
+		assert.Equal(t, "gpt-5.6-sol", peer.RequestedModel)
+		assert.Equal(t, "high", peer.Effort)
+		assert.True(t, peer.Degraded)
+		assert.Empty(t, peer.ActualModel, "nothing ran, so nothing is claimed to have run")
+		assert.Equal(t, []string{"adversarial"}, got.Degraded)
 	})
 
 	t.Run("a run name that already exists fails without touching the round it names", func(t *testing.T) {
@@ -372,7 +372,7 @@ func TestRun_writesOnlyUnderItsOwnRun(t *testing.T) {
 func TestRun_tokensPerAgentSumToTheRunTotal(t *testing.T) {
 	// per-agent token counts are one of the things a subprocess buys, so both the report and the
 	// manifest carry them and the run total has to be their sum rather than an independent number
-	tokens := map[string]int{"bugs": 4210, "codex": 1234}
+	tokens := map[string]int{"bugs": 4210, "adversarial": 1234}
 
 	r, root := archiveRun(t)
 	r.o.Lenses, r.o.StaggerDelay, r.o.Profile = nil, 0, "focused"
@@ -381,7 +381,7 @@ func TestRun_tokensPerAgentSumToTheRunTotal(t *testing.T) {
 	ro.newRunner = func(spec pipeline.RunnerSpec) pipeline.Runner {
 		name := "bugs"
 		if spec.Executor == executorCodex {
-			name = "codex"
+			name = "adversarial"
 		}
 		return &pmocks.RunnerMock{
 			RunFunc: func(_ context.Context, _ executor.Request, _ executor.EventSink) (executor.Result, error) {
@@ -393,7 +393,7 @@ func TestRun_tokensPerAgentSumToTheRunTotal(t *testing.T) {
 	}
 	require.Equal(t, 1, run(ro))
 
-	want := tokens["bugs"] + tokens["codex"]
+	want := tokens["bugs"] + tokens["adversarial"]
 	dir := filepath.Join(root, "pr-1", "round-1")
 
 	var rep finding.Report

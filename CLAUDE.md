@@ -310,8 +310,10 @@ See `.claude/rules/tui.md`.
 **Executor and lens are orthogonal.**
 Every roster entry composes lenses; its `model:` only selects which binary runs it, and which model of that
 binary at what effort.
-There is no codex-specific prompt file — codex is an entry whose `model:` names it, composing
-`lenses/adversarial.md`.
+There is no codex-specific prompt file — the shipped `adversarial` entry composes
+`lenses/adversarial.md`, and only its `model:` says codex runs it.
+An agent is named for its lens, never for its binary: the exception is a profile whose agents carry
+identical lens sets, where the runner is the only thing distinguishing them — `grill-me` and `expert`.
 Lens text stays executor-agnostic; the output-contract difference (claude has `--json-schema`, codex does not)
 is injected by the executor, never authored into a lens file.
 A roster entry also carries an optional `color` — an ANSI-16 name or `#RRGGBB` — resolved in `app/prompt`
@@ -415,7 +417,7 @@ An agent carrying two lenses that flags the same issue under both is still one s
 The pipeline knows which process emitted which finding, so the count is structurally correct. Keep it that way.
 
 The wire format enforces the distinction with two fields that must never be conflated.
-`Finding.sources` holds **agent names** (`["bugs+impl", "codex"]`) and is the only input to the boost.
+`Finding.sources` holds **agent names** (`["bugs+impl", "adversarial"]`) and is the only input to the boost.
 `Finding.lenses` holds the lens names that raised it (`["bugs", "adversarial"]`) and is informational —
 it answers "why was this reported", never "how many independently agreed".
 A `sources` array holding lens names inflates confidence on exactly the single-agent case the rule exists to catch.

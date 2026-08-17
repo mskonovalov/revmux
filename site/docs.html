@@ -346,7 +346,7 @@ revmux --task pr-123 --run 02-after-fix &gt; findings.json</pre>
         </p>
         <p>
           The wire format keeps the distinction in two fields that are never interchangeable.
-          <code>sources</code> holds agent names such as <code>["bugs+impl", "codex"]</code> and is the only
+          <code>sources</code> holds agent names such as <code>["bugs+impl", "adversarial"]</code> and is the only
           input to the boost. <code>lenses</code> holds the lens names that raised the finding and is
           informational. revmux stamps <code>sources</code> itself once the model's output is parsed, and no
           schema exposes the field, so an agent cannot name itself twice.
@@ -547,7 +547,7 @@ agents:
   - {name: bugs+impl,    lenses: [bugs, impl],            color: cyan}
   - {name: arch+quality, lenses: [architecture, quality], color: magenta}
   - {name: docs+tests,   lenses: [docs, tests, comments], color: green}
-  - {name: codex, lenses: [adversarial], model: codex/gpt-5.6-sol:high, color: yellow}
+  - {name: adversarial, lenses: [adversarial], model: codex/gpt-5.6-sol:high, color: yellow}
 ---</pre>
         <p>
           The top-level runner is inheritance, not a fixed review topology. This supports single-vendor profiles
@@ -808,7 +808,7 @@ receives, including what counts as critical, major and minor here.</pre>
     {"id": "f1", "file": "app/pipeline/find.go", "line": 88, "end_line": 0,
      "severity": "major", "confidence": 90,
      "title": "...", "body": "...", "fix": "...",
-     "sources": ["bugs+impl", "codex"], "lenses": ["bugs", "adversarial"],
+     "sources": ["bugs+impl", "adversarial"], "lenses": ["bugs", "adversarial"],
      "verdict": "confirmed"}
   ],
   "open_questions": [], "pre_existing": [], "immaterial": [],

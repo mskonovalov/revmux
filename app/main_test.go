@@ -568,10 +568,10 @@ func TestRun_degradedSourceDoesNotAbortTheRun(t *testing.T) {
 	assert.EqualValues(t, 2, codexRuns.Load(), "one launch plus one retry, and never a third")
 
 	out := r.stdout.String()
-	assert.Contains(t, out, "**Degraded run**: 1 of 2 sources reported, missing codex",
+	assert.Contains(t, out, "**Degraded run**: 1 of 2 sources reported, missing adversarial",
 		"a degraded run that reads like a complete one is the worst failure this tool has")
 	assert.Contains(t, out, "unchecked error", "the surviving source still reported")
-	assert.Contains(t, out, "| codex | codex |")
+	assert.Contains(t, out, "| adversarial | codex |", "the row is the agent's lens name then the binary that ran it")
 	assert.Contains(t, out, "| degraded |")
 
 	stderr := r.stderr.String()

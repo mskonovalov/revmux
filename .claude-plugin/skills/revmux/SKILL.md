@@ -710,7 +710,7 @@ User: "revmux this branch"
 → tell user: ~9 min, tail -f /tmp/…log for live progress
 → Monitor on <round_dir>/events.jsonl, milestone kinds only; one folded line a minute, silence between
 → exit 1, sources 4/4, degraded []
-→ 6 findings: 1 major, 5 minor; 2 corroborated across bugs+impl and codex
+→ 6 findings: 1 major, 5 minor; 2 corroborated across bugs+impl and adversarial
 ```
 
 ```

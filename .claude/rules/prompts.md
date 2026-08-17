@@ -44,7 +44,7 @@ agents:
   - {name: bugs+impl,    lenses: [bugs, impl],            color: cyan}
   - {name: arch+quality, lenses: [architecture, quality], color: magenta}
   - {name: docs+tests,   lenses: [docs, tests, comments], color: green}
-  - {name: codex, lenses: [adversarial], model: codex/gpt-5.6-sol:high, color: yellow}
+  - {name: adversarial, lenses: [adversarial], model: codex/gpt-5.6-sol:high, color: yellow}
 ---
 ```
 

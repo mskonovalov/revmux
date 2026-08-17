@@ -25,7 +25,7 @@ Prefer JSON when a model consumes it. Use `--markdown` only for output going str
     {"id": "f1", "file": "app/pipeline/find.go", "line": 88, "end_line": 0,
      "severity": "major", "confidence": 90,
      "title": "…", "body": "…", "fix": "…",
-     "sources": ["bugs+impl", "codex"], "lenses": ["bugs", "adversarial"],
+     "sources": ["bugs+impl", "adversarial"], "lenses": ["bugs", "adversarial"],
      "verdict": "confirmed"}
   ],
   "open_questions": [], "pre_existing": [], "immaterial": [],

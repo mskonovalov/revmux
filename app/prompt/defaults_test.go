@@ -39,9 +39,9 @@ func TestDefaults_FocusedRoster(t *testing.T) {
 
 	assert.Equal(t, AgentSpec{Name: "bugs", Lenses: []string{"bugs"}, Executor: "claude",
 		Model: "opus", Effort: "high", Color: "6", ColorName: "cyan"}, specs[0])
-	assert.Equal(t, AgentSpec{Name: "codex", Lenses: []string{"adversarial"}, Executor: "codex",
+	assert.Equal(t, AgentSpec{Name: "adversarial", Lenses: []string{"adversarial"}, Executor: "codex",
 		Model: "gpt-5.6-sol", Effort: "high", Color: "3", ColorName: "yellow"}, specs[1],
-		"codex is a roster entry composing a lens, not a prompt file of its own")
+		"the adversarial entry composes a lens, not a prompt file of its own")
 }
 
 func TestDefaults_ProfileBodyNamesEveryContextPathAsAPath(t *testing.T) {
@@ -170,9 +170,9 @@ func TestDefaults_ComprehensiveRoster(t *testing.T) {
 		"comments rides with docs rather than taking a slot of its own: the two overlap on a stale doc "+
 			"comment, so one process settles that where two would both report it, and a fifth agent "+
 			"would queue behind the default --max-parallel of 4")
-	assert.Equal(t, AgentSpec{Name: "codex", Lenses: []string{"adversarial"}, Executor: "codex",
+	assert.Equal(t, AgentSpec{Name: "adversarial", Lenses: []string{"adversarial"}, Executor: "codex",
 		Model: "gpt-5.6-sol", Effort: "high", Color: "3", ColorName: "yellow"}, specs[3],
-		"codex is a peer source in the default roster, not a second pass over the others")
+		"adversarial is a peer source in the default roster, not a second pass over the others")
 
 	var carried []string
 	for _, spec := range specs {
