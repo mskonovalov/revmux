@@ -592,22 +592,33 @@ func TestCodex_Run_rolloutLivenessIsNotTheDisplayFilter(t *testing.T) {
 		`{"type":"response_item","payload":{"type":"function_call_output","output":"ok"}}`+"\n"+
 			`{"type":"event_msg","payload":{"type":"token_count"}}`+"\n"), 0o600))
 
+	// stdout is empty and stderr is one line, so any reset past the first is the tail's. The run ends on
+	// it rather than on its own: a process that exits first returns before the tail has made a pass, and
+	// Run withdraws the touch as it returns.
 	var resets atomic.Int64
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var tailTouched sync.Once
 	clk := &mocks.ClockMock{
 		NowFunc: func() time.Time { return time.Unix(0, 0).UTC() },
 		AfterFuncFunc: func(time.Duration, func()) executor.Timer {
 			return &mocks.TimerMock{
-				StopFunc:  func() bool { return true },
-				ResetFunc: func(time.Duration) bool { resets.Add(1); return true },
+				StopFunc: func() bool { return true },
+				ResetFunc: func(time.Duration) bool {
+					if resets.Add(1) > 1 {
+						tailTouched.Do(cancel)
+					}
+					return true
+				},
 			}
 		},
 	}
 
 	sink := discardSink()
-	c := executor.NewCodex(fakeRunner("emit", writeFixture(t, nil), writeFixture(t, []byte("session id: "+session+"\n"))),
+	c := executor.NewCodex(fakeRunner("stall", writeFixture(t, nil), writeFixture(t, []byte("session id: "+session+"\n"))),
 		executor.Opts{IdleTimeout: time.Minute, Clock: clk})
-	_, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, sink)
-	require.NoError(t, err)
+	_, err := c.Run(ctx, executor.Request{Prompt: "x"}, sink)
+	require.ErrorIs(t, err, context.Canceled, "the run ended because the rollout touched, not because it finished first")
 
 	var rollouts int
 	for _, call := range sink.EmitCalls() {
