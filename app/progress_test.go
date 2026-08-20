@@ -463,7 +463,7 @@ func TestProgress_finish(t *testing.T) {
 		ev := pr.line(pipeline.Event{Kind: pipeline.EventStage, Stage: "verify", At: progressAt})
 		pr.finish(base, nil)
 
-		summary := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")[0]
+		summary, _, _ := strings.Cut(out.String(), "\n")
 		assert.Equal(t, strings.Index(ev, "──"), strings.Index(summary, "──"),
 			"a stage banner and the closing banner start at one column")
 	})

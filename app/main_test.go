@@ -529,7 +529,7 @@ func TestRun_promptsCarryPathsNotContents(t *testing.T) {
 	assert.Equal(t, prompts[0], string(archived))
 
 	for _, body := range contents {
-		sentinel := strings.SplitN(body, " ", 2)[0]
+		sentinel, _, _ := strings.Cut(body, " ")
 		for i, p := range prompts {
 			assert.NotContains(t, p, sentinel, "prompt %d carries file contents, not just a path", i)
 		}
