@@ -104,6 +104,20 @@ type Result struct {
 	TTFTMs           int
 }
 
+// PromptContract is what Run appends to the composed prompt for this binary. An archived prompt that
+// omits it describes a review that did not happen, so the pipeline and the tests that pin the archive
+// both go through here rather than each reconstructing the switch.
+func PromptContract(name string, schema json.RawMessage) string {
+	switch name {
+	case "codex":
+		return CodexOutputContract(schema)
+	case executorCursor:
+		return CursorContract(schema)
+	default:
+		return ClaudeNarrationContract(schema)
+	}
+}
+
 // NewRunner returns the production CommandRunner backed by os/exec.
 func NewRunner() CommandRunner { return realRunner{} }
 

@@ -37,6 +37,10 @@ The supervisor's behavior is defined by these, so they are written before the co
   forwarding, the model read-back and the diagnostic gate are tested against.
   The single capture prints each header line once and so cannot exercise the dedup at all —
   the doubled-banner fixture is derived from it, like every other derivation here.
+- **cursor-agent clean** — `cursor-clean.jsonl`, a stream-json recording of `cursor-agent --print`.
+  Truncated and stalling cases are derived from it in the test file, same as claude.
+  Unlike claude, cursor-agent's decoder reads `model` off `system`/`init`, so a scrub of that line
+  must keep the model field accurate; emptying it would make every actual-model assertion lie.
 
 Fixtures are recorded from real CLI output, not hand-written.
 Hand-written fixtures encode what someone assumed the CLI emits, which is exactly the class of bug they should catch.

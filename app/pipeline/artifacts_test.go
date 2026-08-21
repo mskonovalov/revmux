@@ -107,6 +107,35 @@ func TestPipeline_Run_artifacts(t *testing.T) {
 			"the one instruction asking codex for JSON at all cannot be the missing part")
 	})
 
+	t.Run("a cursor-agent prompt is archived with the contract its executor appends", func(t *testing.T) {
+		h := newHarnessWith(t, map[string]string{"prompts/profiles/peer.md": cursorPeerProfile})
+		profile, err := h.cfg.Set.Profile("peer")
+		require.NoError(t, err)
+		roster, err := profile.Roster(nil, h.cfg.Set.LensNames())
+		require.NoError(t, err)
+		h.cfg.Profile, h.cfg.Roster = profile, roster
+
+		var got executor.Request
+		h.cfg.NewRunner = func(RunnerSpec) Runner {
+			return &mocks.RunnerMock{RunFunc: func(_ context.Context, req executor.Request, _ executor.EventSink) (executor.Result, error) {
+				got = req
+				return executor.Result{StructuredOutput: findingsJSON()}, nil
+			}}
+		}
+
+		p := New(h.cfg)
+		drain(p)
+		_, err = p.Run(context.Background())
+		require.NoError(t, err)
+
+		archived := h.get("prompts/agents/cursor.md")
+		require.NotNil(t, archived, "no prompt was archived for the cursor-agent entry")
+		assert.Equal(t, got.Prompt+executor.CursorContract(got.Schema), archived.String(),
+			"cursor-agent appends its contract after dispatch, so an archive without it describes a different run")
+		assert.Contains(t, archived.String(), "Return ONLY a JSON object")
+		assert.Contains(t, archived.String(), "narrate what you are doing")
+	})
+
 	t.Run("an agent named events keeps its stream out of the event log", func(t *testing.T) {
 		h := newHarnessWith(t, map[string]string{
 			"prompts/profiles/collide.md": collidingProfile,
@@ -297,10 +326,7 @@ func artifactHarness(t *testing.T) (*harness, func() []string) {
 				// claude its narration contract — and this mock stands in for one of them. Recording
 				// the prompt as handed over would make "the archived prompt is what a process
 				// received" pass against bytes no process would ever receive.
-				prompt := req.Prompt + executor.ClaudeNarrationContract(req.Schema)
-				if spec.Executor == executorCodex {
-					prompt = req.Prompt + executor.CodexOutputContract(req.Schema)
-				}
+				prompt := req.Prompt + executor.PromptContract(spec.Executor, req.Schema)
 				mu.Lock()
 				prompts = append(prompts, prompt)
 				mu.Unlock()
@@ -352,6 +378,13 @@ const codexPeerProfile = `---
 description: one codex peer
 agents:
   - {name: codex, lenses: [bugs], model: codex/gpt-5.6-sol}
+---
+review the change`
+
+const cursorPeerProfile = `---
+description: one cursor-agent peer
+agents:
+  - {name: cursor, lenses: [bugs], model: cursor-agent/composer-2.5}
 ---
 review the change`
 

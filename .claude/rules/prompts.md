@@ -12,7 +12,7 @@ and get the same review, and change a timeout without touching a prompt.
 ### Layout
 
 ```
-prompts/profiles/comprehensive.md   focused.md   final.md   claude-only.md   codex-only.md   grill-me.md
+prompts/profiles/comprehensive.md   focused.md   final.md   claude-only.md   codex-only.md   cursor-only.md   grill-me.md
 prompts/profiles/expert.md
 prompts/profiles/triage.md
 prompts/synthesis.md   prompts/verify.md
@@ -60,11 +60,12 @@ claude                   the binary's own default model and effort
 claude/opus:high         fully specified
 codex/gpt-5.6-sol        effort falls back to the profile's, then the binary's
 codex:high               the binary's default model at high effort
+cursor-agent/composer-2.5:high
 ```
 
 **The binary leads and is mandatory, which is what makes the value validate itself.**
 Deriving it from the model name instead would need a catalog of vendor model names inside revmux, and the
-day either vendor ships a name outside the pattern a valid profile stops loading until revmux cuts a
+day a vendor ships a name outside the pattern a valid profile stops loading until revmux cuts a
 release — a hard external dependency traded for saving eight characters.
 It also lets `model:` mean "that binary, whatever it defaults to", which two fields expressed as an
 `executor:` with no `model:` beside it.

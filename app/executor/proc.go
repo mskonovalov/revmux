@@ -197,6 +197,8 @@ func (p *proc) readLines(ctx context.Context, r io.Reader, handler func(string))
 
 // childEnv drops the variables that break or misroute a child model CLI. CLAUDECODE always goes:
 // revmux normally runs inside an AI coding session and the child refuses to start as a nested one.
+// CURSOR_API_KEY is left alone: unlike ANTHROPIC_API_KEY it is how a headless cursor-agent authenticates
+// when there is no login session, and stripping it would make every cursor source degrade.
 func (p *proc) childEnv() []string {
 	src := os.Environ()
 	out := make([]string, 0, len(src))

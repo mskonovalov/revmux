@@ -199,7 +199,7 @@ failing process to have something to order against. The `fail` helper mode exist
 
 ### Shared base, thin executors
 
-`Claude` and `Codex` both need the same run loop, idle watchdog, process-group teardown and line reader.
+`Claude`, `Codex` and `Cursor` all need the same run loop, idle watchdog, process-group teardown and line reader.
 Duplicating that gives two near-identical `Run` bodies, which `dupl` will fail in lint.
 
 Put the shared machinery on an unexported `proc` struct that both embed.
@@ -315,6 +315,39 @@ Codex is a peer executor, not a special case in the pipeline — but the executo
   and hands `classify` a line that can carry a limit pattern the run never hit.
 - `--sandbox read-only` always. revmux never lets an agent write.
 
+### Cursor differences
+
+Cursor is a peer executor, not a special case in the pipeline.
+The binary is `cursor-agent`.
+The documented headless invocation is `--print --output-format stream-json`.
+
+- **There is no `--json-schema`.**
+  The output contract rides on the prompt, like codex, and the answer is extracted from the terminal
+  `result` event's `result` string, never from the NDJSON stream as a whole — extracting from `Raw`
+  would take the first `{`, which is `system`/`init`.
+- **`--stream-partial-output` is armour for the idle watchdog**, the same job `--include-partial-messages`
+  does for claude.
+  Print mode suppresses thinking, so a long answer with no tool call is otherwise silent.
+  The decoder skips `assistant` events that carry `timestamp_ms` (deltas and the pre-tool flush)
+  and emits only the complete message, which is the one without that field.
+- **`--trust` is required in headless mode** so the CLI does not block on a workspace prompt.
+  **Do not pass `--approve-mcps`.**
+  Cursor loads `.cursor/mcp.json` from the reviewed checkout; auto-approving those servers would run
+  repository-defined commands as the reviewer, with `CURSOR_API_KEY` in the environment.
+  An unapproved MCP that prompts is an idle timeout, which degrades the source — that is the safe failure.
+  Servers the operator already enabled under `~/.cursor` still load without this flag.
+  **Do not pass `--force`.**
+  revmux never lets an agent write; without `--force`, print mode proposes changes rather than applying them.
+- **There is no `--effort` flag.**
+  Effort is folded into `--model` as `id[effort=high]`, which is the documented form.
+  A model string that already contains `[` is left alone, so a roster that pins thinking or context
+  itself is not rewritten.
+- **Read the actual model from `system`/`init`.**
+  The result event does not carry usage in the documented schema, so tokens stay zero rather than being estimated.
+- **`CURSOR_API_KEY` is not stripped.**
+  Unlike `ANTHROPIC_API_KEY`, it is how headless cursor-agent authenticates when there is no
+  `cursor-agent login` session.
+
 ### Error and limit patterns
 
 claude gets its rate-limit signal from the typed `rate_limit_event`, so string matching is only needed for codex.
@@ -337,7 +370,7 @@ Where patterns are used, tier them: **retry → limit → error**.
 
 ### Capturing real streams for fixtures
 
-To learn what the upstream CLIs actually emit, do not launch `claude` or `codex` from an AI agent's own tool shell —
+To learn what the upstream CLIs actually emit, do not launch `claude`, `codex` or `cursor-agent` from an AI agent's own tool shell —
 nested launches are commonly blocked by the host tool's permission layer, and the capture silently fails.
 Run the capture in a separate, independent terminal session, redirect stdout and stderr to files, and inspect those.
 Recorded captures belong in `app/executor/testdata/` as fixtures; see `.claude/rules/testing.md`.

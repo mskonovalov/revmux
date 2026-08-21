@@ -65,8 +65,8 @@ func TestDefaults_EveryProfileResolvesItsRoster(t *testing.T) {
 	set, err := Load(LoadOpts{})
 	require.NoError(t, err)
 	known := set.LensNames()
-	require.Len(t, set.ProfileNames(), 8,
-		"the shipped set is comprehensive, focused, final, claude-only, codex-only, grill-me, triage and expert")
+	require.Len(t, set.ProfileNames(), 9,
+		"the shipped set is comprehensive, focused, final, claude-only, codex-only, cursor-only, grill-me, triage and expert")
 
 	for _, name := range set.ProfileNames() {
 		p, err := set.Profile(name)
@@ -149,6 +149,38 @@ func TestDefaults_CodexOnlyRunsEveryStageOnCodex(t *testing.T) {
 		require.NoError(t, stErr)
 		assert.Equal(t, "claude", st.Executor, "%s: the mirror profile names no override and keeps the file's own", stage)
 	}
+}
+
+func TestDefaults_CursorOnlyRunsEveryStageOnCursor(t *testing.T) {
+	set, err := Load(LoadOpts{})
+	require.NoError(t, err)
+	p, err := set.Profile("cursor-only")
+	require.NoError(t, err)
+
+	specs, err := p.Roster(nil, set.LensNames())
+	require.NoError(t, err)
+	require.Len(t, specs, 4)
+	for _, spec := range specs {
+		assert.Equal(t, "cursor-agent", spec.Executor, spec.Name)
+	}
+	assert.Equal(t, "grok-4.6", specs[0].Model)
+	assert.Equal(t, "grok-4.5", specs[1].Model)
+	assert.Equal(t, "composer-2.5", specs[2].Model)
+	assert.Equal(t, "gpt-5.6-sol", specs[3].Model)
+
+	for _, stage := range []string{"synthesis", "verify"} {
+		st, stErr := p.Stage(set, stage)
+		require.NoError(t, stErr)
+		assert.Equal(t, "cursor-agent", st.Executor, stage)
+		assert.Equal(t, "composer-2.5", st.Model, "%s inherits the profile's own model", stage)
+		assert.Equal(t, "high", st.Effort, "%s inherits the profile's own effort", stage)
+	}
+
+	override, err := p.Roster([]string{"bugs"}, set.LensNames())
+	require.NoError(t, err)
+	require.Len(t, override, 1)
+	assert.Equal(t, "cursor-agent", override[0].Executor)
+	assert.Equal(t, "composer-2.5", override[0].Model)
 }
 
 func TestDefaults_ComprehensiveRoster(t *testing.T) {
@@ -366,7 +398,7 @@ func TestDefaults_LensesStayExecutorAgnostic(t *testing.T) {
 		body, err := set.lens(l.Name)
 		require.NoError(t, err)
 		lower := strings.ToLower(body)
-		for _, banned := range []string{"json", "schema", "claude", "codex"} {
+		for _, banned := range []string{"json", "schema", "claude", "codex", "cursor-agent"} {
 			assert.NotContains(t, lower, banned,
 				"lens %s must not carry an output contract or name a binary", l.Name)
 		}

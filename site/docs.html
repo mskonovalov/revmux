@@ -129,7 +129,8 @@
           <h1>revmux</h1>
           <p class="lede">
             A supervised multi-agent review, normally launched by your coding agent rather than typed by you.
-            revmux spawns <code>claude --print</code> and <code>codex exec</code> subprocesses, watches them,
+            revmux spawns <code>claude --print</code>, <code>codex exec</code> and
+            <code>cursor-agent --print</code> subprocesses, watches them,
             and returns findings on stdout as JSON or markdown.
           </p>
         </div>
@@ -227,6 +228,7 @@ make install      <span class="c-dim"># and symlinks it to /usr/local/bin/revmux
           </li>
           <li><code>claude-only</code>: claude alone</li>
           <li><code>codex-only</code>: codex alone</li>
+          <li><code>cursor-only</code>: cursor-agent alone</li>
         </ul>
         <p>
           <code>preflight.sh</code> in the shipped skill answers it for any profile and any invocation,
@@ -235,7 +237,9 @@ make install      <span class="c-dim"># and symlinks it to /usr/local/bin/revmux
         <p>
           <code>ANTHROPIC_API_KEY</code> is stripped from the child environment by default so
           <code>claude</code> uses interactive subscription auth. Pass
-          <code>--preserve-anthropic-api-key</code> if you authenticate by key. <code>CLAUDECODE</code> is
+          <code>--preserve-anthropic-api-key</code> if you authenticate by key. <code>CURSOR_API_KEY</code>
+          is left in place: it is how a headless <code>cursor-agent</code> authenticates when there is no
+          login session. <code>CLAUDECODE</code> is
           always stripped, since a <code>claude</code> child refuses to start when it thinks it is a nested
           session.
         </p>
@@ -505,7 +509,7 @@ Reviewing the token exchange path after the provider swap.</pre>
 ├── prompts/
 │   ├── profiles/
 │   │   ├── comprehensive.md  roster front matter + shared preamble + severity bar
-│   │   ├── focused.md  final.md  claude-only.md  codex-only.md
+│   │   ├── focused.md  final.md  claude-only.md  codex-only.md  cursor-only.md
 │   │   └── grill-me.md  expert.md  triage.md
 │   ├── synthesis.md
 │   └── verify.md
@@ -627,6 +631,13 @@ codex:high               codex's default model at high effort</pre>
                 </td>
               </tr>
               <tr>
+                <td>cursor-only</td>
+                <td class="prose">
+                  the same four lens splits on cursor-agent, across Composer 2.5, Grok 4.6, Grok 4.5 and
+                  GPT-5.6 Sol, and synthesis and verify with them
+                </td>
+              </tr>
+              <tr>
                 <td>grill-me</td>
                 <td class="prose">
                   <code>bugs+impl</code> and <code>architecture+quality</code>, each run once on claude and once
@@ -660,7 +671,7 @@ codex:high               codex's default model at high effort</pre>
         </p>
         <h3>Writing your own</h3>
         <p>
-          The eight are starting points, not the menu. A profile is a file under
+          The nine are starting points, not the menu. A profile is a file under
           <code>prompts/profiles/</code> in any of the three layers, so dropping
           <code>.revmux/prompts/profiles/release.md</code> into a project makes
           <code>--profile release</code> work, with no registration step anywhere. The same is true of lenses:

@@ -25,8 +25,9 @@ import (
 
 var revision = "unknown"
 
-// executorCodex is the one roster executor that is not claude, which is also the default.
+// executorCodex and executorCursor are the roster binaries that are not claude, which is the default.
 const executorCodex = "codex"
+const executorCursor = "cursor-agent"
 
 // runOpts is what run needs from its surroundings. Every one of them is injected so the whole entry
 // point is drivable from a test: no real terminal, no real clock, no writes to the process streams.
@@ -354,19 +355,23 @@ func (o runOpts) tty() *os.File {
 }
 
 // runnerFactory builds the per-spec executor factory. A caller-supplied one wins, so a test drives
-// the whole slice without spawning a model CLI. Both executors are built once and shared: each holds
+// the whole slice without spawning a model CLI. The executors are built once and shared: each holds
 // immutable configuration only, and the roster runs them concurrently.
 func (o runOpts) runnerFactory(rc reviewContext) func(pipeline.RunnerSpec) pipeline.Runner {
 	if o.newRunner != nil {
 		return o.newRunner
 	}
 	runner, eo := executor.NewRunner(), o.opts.executorOpts(rc, o.clock)
-	claude, codex := executor.NewClaude(runner, eo), executor.NewCodex(runner, eo)
+	claude, codex, cursor := executor.NewClaude(runner, eo), executor.NewCodex(runner, eo), executor.NewCursor(runner, eo)
 	return func(spec pipeline.RunnerSpec) pipeline.Runner {
-		if spec.Executor == executorCodex {
+		switch spec.Executor {
+		case executorCodex:
 			return codex
+		case executorCursor:
+			return cursor
+		default:
+			return claude
 		}
-		return claude
 	}
 }
 

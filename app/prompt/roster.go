@@ -26,7 +26,7 @@ const (
 
 // the two accepted vocabularies, checked by validate and reported verbatim by `revmux config`.
 var (
-	executors = []string{executorClaude, "codex"}
+	executors = []string{executorClaude, "codex", "cursor-agent"}
 	efforts   = []string{"low", "medium", "high", "xhigh", "max"}
 )
 
@@ -55,7 +55,7 @@ var hexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 // runner through a single `model:` string — see runner.go — and there is no `executor:` or `effort:` key.
 
 // profileYAML is a profile's front matter: the roster-wide runner default, the roster, and the per-stage
-// runner overrides. A per-entry `model:` still wins, since a roster mixing claude and codex is the point.
+// runner overrides. A per-entry `model:` still wins, since a roster mixing binaries is the point.
 type profileYAML struct {
 	Description string            `yaml:"description"`
 	Model       string            `yaml:"model"`

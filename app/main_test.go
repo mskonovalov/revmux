@@ -158,7 +158,7 @@ func TestRun_config(t *testing.T) {
 				assert.NotEmpty(t, a.Color, "agent %s reports no color, so the palette assignment is invisible", a.Name)
 			}
 		}
-		assert.Equal(t, []string{"claude-only", "codex-only", "comprehensive", "expert", "final", "focused", "grill-me", "triage"}, names)
+		assert.Equal(t, []string{"claude-only", "codex-only", "comprehensive", "cursor-only", "expert", "final", "focused", "grill-me", "triage"}, names)
 
 		set, err := prompt.Load(prompt.LoadOpts{})
 		require.NoError(t, err)
@@ -1055,6 +1055,7 @@ func TestRunOpts_runnerFactory(t *testing.T) {
 		}{
 			{"claude", pipeline.RunnerSpec{Executor: "claude"}, &executor.Claude{}},
 			{"codex", pipeline.RunnerSpec{Executor: "codex"}, &executor.Codex{}},
+			{"cursor-agent", pipeline.RunnerSpec{Executor: "cursor-agent"}, &executor.Cursor{}},
 			{"empty defaults to claude", pipeline.RunnerSpec{}, &executor.Claude{}},
 		}
 
@@ -1166,10 +1167,7 @@ func (r *runHarness) newRunner(spec pipeline.RunnerSpec) pipeline.Runner {
 			// a real executor appends to the prompt inside Run, and this mock stands in for one. Record
 			// what a process would actually receive, or an archive compared against this is compared
 			// against bytes no process ever saw
-			received := req.Prompt + executor.ClaudeNarrationContract(req.Schema)
-			if spec.Executor == "codex" {
-				received = req.Prompt + executor.CodexOutputContract(req.Schema)
-			}
+			received := req.Prompt + executor.PromptContract(spec.Executor, req.Schema)
 			r.mu.Lock()
 			r.seen = append(r.seen, received)
 			r.mu.Unlock()

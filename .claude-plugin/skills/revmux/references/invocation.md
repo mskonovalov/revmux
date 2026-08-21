@@ -221,6 +221,7 @@ will not read, and an unwritable `./.revmux/` under `revmux init`.
 | `final` | `bugs+impl` plus the codex peer, nothing below major reported | last look before merging |
 | `claude-only` | `bugs+impl`, `arch+quality`, `docs+tests`, `adversarial` — all on claude | codex is unavailable or unwanted |
 | `codex-only` | the same four splits on codex, synthesis and verify included — no claude anywhere | claude is unavailable or unwanted |
+| `cursor-only` | the same four splits on cursor-agent, across Composer 2.5, Grok 4.6, Grok 4.5 and GPT-5.6 Sol | claude and codex are unavailable or unwanted |
 | `grill-me` | `bugs+impl` and `architecture+quality`, each run once on claude and once on codex, every agent reading against the change | the user asked to be grilled; corroboration between two vendors on one lens pair is the point |
 | `expert` | two agents at the highest effort — codex `gpt-5.6-sol:xhigh` and claude `fable:xhigh` — each carrying all eight lenses, both stages on fable | a plan, or a change nobody wants to get wrong. Both agents read everything, so agreement between them is real corroboration rather than two halves of one review |
 | `triage` | `facts` (grounding + precedent), `thesis`, `antithesis` on claude, plus `cost` on codex | the subject is a filed item rather than a diff — an issue, a proposal, a discussion |
@@ -566,17 +567,22 @@ form: the decision is the user's, one task per call.
 
 ## Environment
 
-revmux drives the model CLIs as subprocesses, so both must already be installed and authenticated:
+revmux drives the model CLIs as subprocesses, so whichever ones a profile names must already be installed
+and authenticated:
 
 - `claude` — every lens agent and both model stages run on it by default
 - `codex` — needed when a profile, a roster entry or a stage names it in its `model:`. `claude-only`
-  needs claude alone and `codex-only` needs codex alone; the other six shipped profiles need both.
+  needs claude alone, `codex-only` needs codex alone and `cursor-only` needs cursor-agent alone; the other
+  six shipped profiles need both claude and codex.
   `preflight.sh <profile>` answers it for the profile that will actually run
+- `cursor-agent` — needed when a profile, a roster entry or a stage names it. Install from
+  https://cursor.com/docs/cli/installation and authenticate with `cursor-agent login` or `CURSOR_API_KEY`
 
 `ANTHROPIC_API_KEY` is stripped from the child environment by default so `claude` uses interactive
-subscription auth; `--preserve-anthropic-api-key` passes it through for key-based auth. `CLAUDECODE`
-is always stripped — a `claude` child refuses to start when it believes it is a nested session, which
-is exactly the situation when an agent invokes revmux.
+subscription auth; `--preserve-anthropic-api-key` passes it through for key-based auth. `CURSOR_API_KEY`
+is left in place: it is how a headless `cursor-agent` authenticates when there is no login session.
+`CLAUDECODE` is always stripped — a `claude` child refuses to start when it believes it is a nested
+session, which is exactly the situation when an agent invokes revmux.
 
 Agent processes start in their own session, so the terminal never signals them directly; revmux tears
 each process group down itself rather than leaving model CLIs running unsupervised after it exits.

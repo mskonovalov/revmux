@@ -16,6 +16,8 @@ func TestParseRunner(t *testing.T) {
 		{"binary and model", "claude/opus", Runner{Executor: "claude", Model: "opus"}},
 		{"the whole triple", "codex/gpt-5.6-sol:high", Runner{Executor: "codex", Model: "gpt-5.6-sol", Effort: "high"}},
 		{"binary and effort", "codex:xhigh", Runner{Executor: "codex", Effort: "xhigh"}},
+		{"cursor-agent binary", "cursor-agent", Runner{Executor: "cursor-agent"}},
+		{"cursor-agent model and effort", "cursor-agent/composer-2.5:high", Runner{Executor: "cursor-agent", Model: "composer-2.5", Effort: "high"}},
 		{"empty is empty", "", Runner{}},
 		{"surrounding space", "  claude/opus:low  ", Runner{Executor: "claude", Model: "opus", Effort: "low"}},
 		// split on the first slash, so a model whose own name carries one arrives intact
@@ -74,6 +76,8 @@ func TestRunner_or(t *testing.T) {
 		assert.Equal(t, Runner{Executor: "codex", Effort: "high"}, Runner{Executor: "codex"}.or(base))
 		assert.Equal(t, Runner{Executor: "codex", Model: "gpt-5.6-sol", Effort: "low"},
 			Runner{Executor: "codex", Model: "gpt-5.6-sol", Effort: "low"}.or(base))
+		assert.Equal(t, Runner{Executor: "cursor-agent", Effort: "high"},
+			Runner{Executor: "cursor-agent"}.or(base))
 	})
 
 	t.Run("effort carries across binaries, since it belongs to neither model", func(t *testing.T) {
