@@ -154,20 +154,11 @@ func (c *Codex) drain(ctx context.Context, r io.Reader, sink EventSink) Result {
 // in turn, and an incomplete tail ends the search rather than continuing into it: a nested object inside
 // a truncated answer would otherwise come back looking like the whole answer.
 func (c *Codex) extract(raw string) (json.RawMessage, error) {
-	for i, ch := range raw {
-		if ch != '{' {
-			continue
-		}
-		var out json.RawMessage
-		err := json.NewDecoder(strings.NewReader(raw[i:])).Decode(&out)
-		if err == nil {
-			return out, nil
-		}
-		if errors.Is(err, io.ErrUnexpectedEOF) {
-			break
-		}
+	out, err := extractJSONObject(raw)
+	if err != nil {
+		return nil, errors.New("no JSON object in codex output")
 	}
-	return nil, errors.New("no JSON object in codex output")
+	return out, nil
 }
 
 // classify tiers a failed run: transient hiccup, quota, or a hard diagnostic. Patterns are consulted

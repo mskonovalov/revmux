@@ -137,11 +137,15 @@ func run(o runOpts) int {
 // through promptSet: a caller discovering which profiles exist is the one whose --profile does not
 // resolve.
 func (o runOpts) writeCatalog() error {
-	set, err := prompt.Load(o.opts.promptOpts())
+	recipes, err := o.opts.executorRecipes()
+	if err != nil {
+		return err
+	}
+	set, err := prompt.Load(o.opts.promptOptsWithRecipes(recipes))
 	if err != nil {
 		return fmt.Errorf("load prompts: %w", err)
 	}
-	return o.writeJSON(o.opts.catalog(set), "catalog")
+	return o.writeJSON(o.opts.catalogWithRecipes(set, recipes), "catalog")
 }
 
 // writeJSON puts one subcommand's payload on stdout, indented, since a human reads these occasionally.
@@ -168,9 +172,13 @@ func (o runOpts) pipelineConfig() (configuredReview, error) {
 	if err != nil {
 		return configuredReview{}, err
 	}
-	set, err := o.opts.promptSet()
+	recipes, err := o.opts.executorRecipes()
 	if err != nil {
 		return configuredReview{}, err
+	}
+	set, err := prompt.Load(o.opts.promptOptsWithRecipes(recipes))
+	if err != nil {
+		return configuredReview{}, fmt.Errorf("load prompts: %w", err)
 	}
 	profile, err := set.Profile(o.opts.Profile)
 	if err != nil {
@@ -195,10 +203,19 @@ func (o runOpts) pipelineConfig() (configuredReview, error) {
 	}
 
 	cfg := pipeline.Config{
-		NewRunner: o.runnerFactory(rc),
-		Archive:   arc,
-		Clock:     o.clock,
-		Set:       set, Profile: profile, Roster: roster, Vars: rc.vars(), History: history,
+		NewRunner: o.runnerFactory(rc, recipes),
+		PromptSuffix: func(name string, schema json.RawMessage) string {
+			if recipe, ok := recipes.Get(name); ok {
+				return recipe.RenderPromptSuffix(schema)
+			}
+			if name == executorCodex {
+				return executor.CodexOutputContract(schema)
+			}
+			return executor.ClaudeNarrationContract(schema)
+		},
+		Archive: arc,
+		Clock:   o.clock,
+		Set:     set, Profile: profile, Roster: roster, Recipes: recipes.All(), Vars: rc.vars(), History: history,
 		Task: o.opts.Task, Run: o.opts.Run, ScopePath: rc.Scope,
 		NoSynthesis: o.opts.NoSynthesis, NoVerify: o.opts.NoVerify,
 		StaggerDelay: o.opts.StaggerDelay, MaxParallel: o.opts.MaxParallel,
@@ -354,15 +371,22 @@ func (o runOpts) tty() *os.File {
 }
 
 // runnerFactory builds the per-spec executor factory. A caller-supplied one wins, so a test drives
-// the whole slice without spawning a model CLI. Both executors are built once and shared: each holds
+// the whole slice without spawning a model CLI. Every executor is built once and shared: each holds
 // immutable configuration only, and the roster runs them concurrently.
-func (o runOpts) runnerFactory(rc reviewContext) func(pipeline.RunnerSpec) pipeline.Runner {
+func (o runOpts) runnerFactory(rc reviewContext, recipes executor.Recipes) func(pipeline.RunnerSpec) pipeline.Runner {
 	if o.newRunner != nil {
 		return o.newRunner
 	}
 	runner, eo := executor.NewRunner(), o.opts.executorOpts(rc, o.clock)
 	claude, codex := executor.NewClaude(runner, eo), executor.NewCodex(runner, eo)
+	recipeRunners := make(map[string]pipeline.Runner, len(recipes.Names()))
+	for _, recipe := range recipes.All() {
+		recipeRunners[recipe.Name] = executor.NewRecipeRunner(recipe, runner, eo)
+	}
 	return func(spec pipeline.RunnerSpec) pipeline.Runner {
+		if recipe, ok := recipeRunners[spec.Executor]; ok {
+			return recipe
+		}
 		if spec.Executor == executorCodex {
 			return codex
 		}

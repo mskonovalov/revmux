@@ -1,7 +1,7 @@
 # revmux — project notes
 
-revmux runs a structured multi-agent code review by spawning and supervising `claude --print` and
-`codex exec` subprocesses, then returns findings.
+revmux runs a structured multi-agent code review by spawning and supervising model CLI subprocesses,
+with maintained Claude and Codex executors plus operator recipes, then returns findings.
 It exists because agent fan-out driven from inside an AI coding session is unobservable and unrecoverable:
 agents go silent for minutes, sometimes never return, and the caller has no timeout, no kill, no retry and no progress.
 
@@ -60,7 +60,7 @@ If a note would be equally true of any Go project, it does not belong here.
 - `app/artifacts.go` — the artifacts `package main` owns: `manifest.json`, `report.md`, `findings.json`
 - `app/progress.go` — the non-TTY event subscriber (timestamped lines to stderr), plus the run's closing
   summary, which the pipeline emits no event for
-- `app/executor/` — supervised subprocess execution for claude and codex
+- `app/executor/` — supervised subprocess execution for maintained claude/codex adapters and operator recipes
 - `app/prompt/` — front matter and roster parsing, lens composition, `{{VAR}}` substitution, `go:embed` defaults
 - `app/pipeline/` — the three stages, fan-out, stagger, degrade policy, typed event channel
 - `app/finding/` — `Finding` and `Report` types, the per-stage JSON schemas, markdown and JSON rendering
@@ -314,13 +314,14 @@ There is no codex-specific prompt file — the shipped `adversarial` entry compo
 `lenses/adversarial.md`, and only its `model:` says codex runs it.
 An agent is named for its lens, never for its binary: the exception is a profile whose agents carry
 identical lens sets, where the runner is the only thing distinguishing them — `grill-me` and `expert`.
-Lens text stays executor-agnostic; the output-contract difference (claude has `--json-schema`, codex does not)
-is injected by the executor, never authored into a lens file.
+Lens text stays executor-agnostic; output-contract differences are injected by the maintained executor or
+operator recipe, never authored into a lens file.
 A roster entry also carries an optional `color` — an ANSI-16 name or `#RRGGBB` — resolved in `app/prompt`
 and handed to both renderers, so the TUI and `--no-tui` never color the same agent differently.
 
 **One `model:` string is the whole runner selection, and a profile's covers the whole review.**
-`<binary>[/<model>][:<effort>]` — `claude`, `claude/opus:high`, `codex/gpt-5.6-sol`. There is no `executor:`
+`<binary>[/<model>][:<effort>]` — `claude`, `claude/opus:high`, `codex/gpt-5.6-sol`. The built-in binary
+vocabulary is extended by recipes from the operator config directory. There is no `executor:`
 key and no `effort:` key in any prompt file.
 The three are one field because they are not independent: a model belongs to a binary, so separate keys let
 a file state a pairing that cannot run, and every layer that inherited one without the other recreated it —

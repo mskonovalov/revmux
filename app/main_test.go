@@ -1043,7 +1043,7 @@ func holdKey(t *testing.T, press func(string) error, k string) {
 func TestRunOpts_runnerFactory(t *testing.T) {
 	t.Run("a supplied factory wins", func(t *testing.T) {
 		r := newRunOpts(t, options{})
-		got := r.opts().runnerFactory(reviewContext{})(pipeline.RunnerSpec{Executor: "claude"})
+		got := r.opts().runnerFactory(reviewContext{}, executor.Recipes{})(pipeline.RunnerSpec{Executor: "claude"})
 		assert.IsType(t, &pmocks.RunnerMock{}, got)
 	})
 
@@ -1061,13 +1061,26 @@ func TestRunOpts_runnerFactory(t *testing.T) {
 		r := newRunOpts(t, options{IdleTimeout: time.Minute, HardTimeout: 20 * time.Minute})
 		ro := r.opts()
 		ro.newRunner = nil
-		factory := ro.runnerFactory(reviewContext{WorkDir: t.TempDir()})
+		factory := ro.runnerFactory(reviewContext{WorkDir: t.TempDir()}, executor.Recipes{})
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				assert.IsType(t, tt.want, factory(tt.spec))
 			})
 		}
+	})
+
+	t.Run("routes a recipe executor", func(t *testing.T) {
+		user := t.TempDir()
+		writeExecutorRecipe(t, user, "cursor", "cursor-agent")
+		recipes, err := options{layers: configLayers{user: user}}.executorRecipes()
+		require.NoError(t, err)
+
+		r := newRunOpts(t, options{})
+		ro := r.opts()
+		ro.newRunner = nil
+		got := ro.runnerFactory(reviewContext{WorkDir: t.TempDir()}, recipes)(pipeline.RunnerSpec{Executor: "cursor"})
+		assert.IsType(t, &executor.RecipeRunner{}, got)
 	})
 }
 

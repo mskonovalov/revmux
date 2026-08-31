@@ -1,0 +1,21 @@
+description: Cursor Agent CLI in headless mode, with JSONL progress and a terminal result event
+command: cursor-agent
+args:
+  - --print
+  - --output-format
+  - stream-json
+model-args:
+  - --model
+  - "{{MODEL}}"
+prompt-suffix: |
+
+  Return ONLY a JSON object matching the schema below. Do not add prose before or after it.
+
+  Schema:
+  {{SCHEMA}}
+output:
+  event-field: type
+  result-event: result
+  result-field: result
+  actual-model-field: model
+  progress-events: [assistant, tool_call]

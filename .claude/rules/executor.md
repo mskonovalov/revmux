@@ -328,6 +328,19 @@ Where patterns are used, tier them: **retry → limit → error**.
   Check only the tail, and only when the process exited non-zero.
 - Skip pattern checks entirely when the context was canceled — a canceled run's tail is meaningless.
 
+### Operator recipes
+
+Claude and Codex remain maintained adapters. Additional JSONL model CLIs are data under the operator's
+`executors/` config directory, and `recipe.go` supplies only the stable boundary they share: direct argv,
+prompt on stdin, a schema-bearing prompt suffix, top-level event selection and terminal answer extraction.
+Do not add vendor event types, token accounting or rate-limit strings to the generic runner; that recreates a
+hard-coded adapter whose fixtures and breakage this repository owns.
+
+Recipes never pass through a shell, and only their own argument arrays are executed. They are not a project
+config layer: `./.revmux/` may contain instructions an agent reads, but it must never choose the executable
+revmux launches. The resolved recipe is recorded in `manifest.json`, since an archive that names only a recipe
+whose file later changed cannot reconstruct the run.
+
 ### Cross-platform
 
 - Platform-specific code goes in `foo_unix.go` (`//go:build !windows`) and `foo_windows.go` (`//go:build windows`).

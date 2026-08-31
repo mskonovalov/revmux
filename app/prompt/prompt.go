@@ -49,6 +49,7 @@ var treeGlobs = []string{"prompts/profiles/*.md", "prompts/*.md", "lenses/*.md"}
 type LoadOpts struct {
 	ProjectDir string
 	UserDir    string
+	Executors  []string
 }
 
 // FileOrigin records which layer supplied one loaded file and what it contained. Two runs of one
@@ -75,10 +76,11 @@ type doc struct {
 
 // Set is the resolved prompt tree: what each file resolved to, not what is embedded.
 type Set struct {
-	profiles map[string]*Profile
-	stages   map[string]*Stage
-	lenses   map[string]doc
-	files    map[string]fileRef // the winning file per rel path, which Content and Provenance both read
+	profiles  map[string]*Profile
+	stages    map[string]*Stage
+	lenses    map[string]doc
+	files     map[string]fileRef // the winning file per rel path, which Content and Provenance both read
+	executors []string
 }
 
 // fileRef is the one record of a file that won its layer: where it came from and what it held. Provenance
@@ -108,8 +110,12 @@ func Load(opts LoadOpts) (*Set, error) {
 		return nil, err
 	}
 
+	accepted := opts.Executors
+	if len(accepted) == 0 {
+		accepted = Executors()
+	}
 	set := &Set{profiles: map[string]*Profile{}, stages: map[string]*Stage{}, lenses: map[string]doc{},
-		files: map[string]fileRef{}}
+		files: map[string]fileRef{}, executors: slices.Clone(accepted)}
 	for _, rel := range slices.Sorted(maps.Keys(files)) {
 		ref := files[rel]
 		meta, body, err := frontmatter.Split(ref.data)
@@ -170,6 +176,10 @@ func (s *Set) LensNames() map[string]struct{} {
 // ProfileNames lists every profile that resolved, sorted.
 func (s *Set) ProfileNames() []string { return slices.Sorted(maps.Keys(s.profiles)) }
 
+// Executors returns the binary vocabulary this tree was loaded against. The built-ins are the default;
+// callers that load user-owned executor recipes add their names before parsing profiles.
+func (s *Set) Executors() []string { return slices.Clone(s.executors) }
+
 // Provenance reports the winning layer and content hash per loaded file, sorted by path. It is derived
 // from the same record Content reads rather than kept beside it, so the two cannot come to disagree about
 // which layer won a file.
@@ -204,13 +214,13 @@ func (s *Set) add(rel string, meta, body []byte) error {
 	name := strings.TrimSuffix(path.Base(rel), ".md")
 	switch {
 	case strings.HasPrefix(rel, "prompts/profiles/"):
-		p, err := parseProfile(name, meta, body)
+		p, err := parseProfile(name, meta, body, s.executors)
 		if err != nil {
 			return err
 		}
 		s.profiles[name] = p
 	case strings.HasPrefix(rel, "prompts/"):
-		st, err := parseStage(name, meta, body)
+		st, err := parseStage(name, meta, body, s.executors)
 		if err != nil {
 			return err
 		}

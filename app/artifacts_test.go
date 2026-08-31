@@ -503,6 +503,18 @@ func TestRun_history(t *testing.T) {
 	})
 }
 
+func TestRunOpts_manifestRecordsExecutorRecipes(t *testing.T) {
+	set, err := prompt.Load(prompt.LoadOpts{})
+	require.NoError(t, err)
+	profile, err := set.Profile("focused")
+	require.NoError(t, err)
+	recipe := executor.Recipe{Name: "cursor", Command: "cursor-agent", Args: []string{"--print"}}
+
+	got := (runOpts{}).manifest(pipeline.Config{Set: set, Profile: profile, Recipes: []executor.Recipe{recipe}}, finding.Report{})
+	assert.Equal(t, []executor.Recipe{recipe}, got.Recipes,
+		"a later config edit must not make the archived command impossible to reconstruct")
+}
+
 // archiveRun builds a review that really writes its archive: a fresh tasks root, one agent through the
 // --lenses override, and a canned finding so the report is non-empty.
 func archiveRun(t *testing.T) (*runHarness, string) {

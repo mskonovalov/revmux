@@ -302,6 +302,25 @@ func (o options) promptOpts() prompt.LoadOpts {
 	return prompt.LoadOpts{ProjectDir: o.layers.project, UserDir: o.layers.user}
 }
 
+func (o options) promptOptsWithRecipes(recipes executor.Recipes) prompt.LoadOpts {
+	names := append(prompt.Executors(), recipes.Names()...)
+	return prompt.LoadOpts{ProjectDir: o.layers.project, UserDir: o.layers.user, Executors: names}
+}
+
+// executorRecipes loads executable adapters only from the operator-owned config layer. The project
+// layer is review input and must never get to choose a process revmux launches.
+func (o options) executorRecipes() (executor.Recipes, error) {
+	dir := ""
+	if o.layers.user != "" {
+		dir = filepath.Join(o.layers.user, "executors")
+	}
+	recipes, err := executor.LoadRecipes(dir)
+	if err != nil {
+		return executor.Recipes{}, fmt.Errorf("load executor recipes: %w", err)
+	}
+	return recipes, nil
+}
+
 // executorOpts takes the resolved context rather than the raw flag so the directory an agent is told to
 // review is the one its process actually runs in.
 func (o options) executorOpts(rc reviewContext, clk executor.Clock) executor.Opts {
@@ -316,7 +335,11 @@ func (o options) executorOpts(rc reviewContext, clk executor.Clock) executor.Opt
 
 // promptSet loads the prompt tree and confirms the selected profile resolves.
 func (o options) promptSet() (*prompt.Set, error) {
-	set, err := prompt.Load(o.promptOpts())
+	recipes, err := o.executorRecipes()
+	if err != nil {
+		return nil, err
+	}
+	set, err := prompt.Load(o.promptOptsWithRecipes(recipes))
 	if err != nil {
 		return nil, fmt.Errorf("load prompts: %w", err)
 	}

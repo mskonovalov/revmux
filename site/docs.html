@@ -98,6 +98,7 @@
         <a href="#configuration">two precedence chains</a>
         <a href="#blueprint">a committed standard</a>
         <a href="#profiles">profiles</a>
+        <a href="#executor-recipes">executors</a>
         <a href="#lenses">lenses</a>
         <a href="#composition">prompt composition</a>
         <a href="#knobs">runtime knobs</a>
@@ -129,8 +130,8 @@
           <h1>revmux</h1>
           <p class="lede">
             A supervised multi-agent review, normally launched by your coding agent rather than typed by you.
-            revmux spawns <code>claude --print</code> and <code>codex exec</code> subprocesses, watches them,
-            and returns findings on stdout as JSON or markdown.
+            revmux spawns model CLI subprocesses, with maintained executors for <code>claude --print</code>
+            and <code>codex exec</code>, watches them, and returns findings on stdout as JSON or markdown.
           </p>
         </div>
 
@@ -559,10 +560,10 @@ agents:
 
         <h3>The model string</h3>
         <p>
-          One <code>model</code> string selects the binary, the model and the effort together. The binary leads
-          and is mandatory, either <code>claude</code> or <code>codex</code>, so a value validates itself and
-          revmux never has to guess which CLI runs <code>gpt-5.6-sol</code> from a catalog of model names that
-          would go stale.
+          One <code>model</code> string selects the executor, the model and the effort together. The executor
+          leads and is mandatory — maintained <code>claude</code> and <code>codex</code>, plus operator recipe
+          names — so a value validates itself and revmux never has to guess which CLI runs
+          <code>gpt-5.6-sol</code> from a catalog of model names that would go stale.
         </p>
         <pre class="code">claude                   claude, its own default model and effort
 claude/opus:high         fully specified
@@ -589,6 +590,45 @@ codex:high               codex's default model at high effort</pre>
           Everything is validated at load. An unknown binary, effort, lens or color is a startup error, never a
           silent default: a typo'd model quietly changing which model reviews your code is worse than a failed
           launch.
+        </p>
+
+        <h2 id="executor-recipes">Executor recipes <a class="anchor" href="#executor-recipes">#</a></h2>
+        <p>
+          Claude and Codex have maintained executors because their progress, rate-limit and usage protocols need
+          dedicated handling. A model CLI with a JSONL stream and a terminal result event can be added without Go
+          code by putting a YAML recipe under the operator-owned
+          <code>~/.config/revmux/executors/</code> directory. Recipes are not loaded from the auto-detected
+          project layer, so checking out a repository cannot make revmux launch an executable it chose.
+        </p>
+        <p>The cookbook includes Cursor:</p>
+        <pre class="code">mkdir -p ~/.config/revmux/executors
+cp cookbook/executors/cursor.yaml ~/.config/revmux/executors/cursor.yaml
+revmux config</pre>
+        <p>
+          This adds <code>cursor</code> to the accepted <code>model:</code> executor vocabulary. The prompt travels
+          on stdin and each argument is passed directly, never through a shell. Static arguments plus optional
+          <code>{{MODEL}}</code>, <code>{{EFFORT}}</code> and <code>{{SCHEMA}}</code> argument groups define the
+          invocation; the output block names the top-level JSONL fields for progress, the terminal event and its
+          answer. The answer may be a JSON object or a string containing one.
+        </p>
+        <pre class="code">description: Cursor Agent CLI in headless mode
+command: cursor-agent
+args: [--print, --output-format, stream-json]
+model-args: [--model, "{{MODEL}}"]
+prompt-suffix: |
+
+  Return ONLY a JSON object matching this schema:
+  {{SCHEMA}}
+output:
+  event-field: type
+  result-event: result
+  result-field: result
+  actual-model-field: model
+  progress-events: [assistant, tool_call]</pre>
+        <p>
+          Generic recipes receive the same watchdogs, process cleanup, retry/degrade policy and raw-output archive
+          as built-ins, but no vendor-specific token or rate-limit decoder. The resolved recipe is copied into
+          <code>manifest.json</code>, so a later config edit cannot rewrite the history of a run.
         </p>
 
         <h3>Shipped profiles</h3>
@@ -1033,7 +1073,7 @@ receives, including what counts as critical, major and minor here.</pre>
           revmux is normally driven by a caller model, so the resolved configuration is machine-readable rather
           than something to reconstruct from <code>--help</code> and a directory listing.
           <code>revmux config</code> prints it as JSON on stdout and exits <code>0</code>. It runs no pipeline
-          and creates nothing; the only thing it touches is a read of the tasks root.
+          and creates nothing; it only reads the resolved config, prompt, recipe and task roots.
         </p>
         <p>
           It reports what <strong>resolved</strong>, never what is embedded: a user who overrode one lens and
@@ -1053,7 +1093,8 @@ receives, including what counts as critical, major and minor here.</pre>
                 "roster": [...], "stages": [...]}],
   "lenses": [{"name": "adversarial", "description": "..."}],
   "stages": [{"name": "synthesis", "description": "..."}],
-  "vocabulary": {"executors": ["claude", "codex"],
+  "recipes": [{"name": "cursor", "command": "cursor-agent", "source": "..."}],
+  "vocabulary": {"executors": ["claude", "codex", "cursor"],
                  "efforts": ["low", "medium", "high", "xhigh", "max"]},
   "paths": {
     "tasks_dir": "/abs/project/.revmux/tasks",
@@ -1071,7 +1112,7 @@ receives, including what counts as critical, major and minor here.</pre>
           <code>profiles[].stages</code></strong>, and each profile also reports its own base runner as
           <code>profiles[].runner</code>: the one the roster falls back to and the one the single agent
           <code>--lenses</code> synthesizes runs on. That is why a preflight check can tell which binaries an
-          invocation needs.
+          invocation needs. <code>recipes[]</code> maps an added executor name to the command preflight checks.
         </p>
         <p>
           <code>paths.tasks</code> is the task store: every task that already exists, whatever its
@@ -1283,8 +1324,8 @@ receives, including what counts as critical, major and minor here.</pre>
         <p>
           The launcher exists because an agent's shell has no tty, so the TUI never appears there. The overlay
           is how a user watches a review happen; everything else about the run is identical. It forwards
-          <code>PATH</code> into the overlay deliberately, since revmux spawns <code>claude</code> and
-          <code>codex</code> itself and an overlay shell inherits an environment that predates the user's shell
+          <code>PATH</code> into the overlay deliberately, since revmux spawns model CLIs itself and an overlay
+          shell inherits an environment that predates the user's shell
           rc files. <code>ANTHROPIC_API_KEY</code> is not forwarded, since an <code>env KEY=VAL</code> prefix
           would put it in the process argv.
         </p>

@@ -198,8 +198,8 @@
                 <td>revmux config</td>
                 <td class="prose">
                   reports the resolved configuration: knobs with their precedence layer, every profile with its
-                  roster and stage runners, every lens and stage description, the executor and effort
-                  vocabularies, and the task store
+                  roster and stage runners, every lens and stage description, operator executor recipes,
+                  the executor and effort vocabularies, and the task store
                 </td>
               </tr>
               <tr>
@@ -301,6 +301,7 @@ claude                   claude, its own default model and effort
 claude/opus:high         fully specified
 codex/gpt-5.6-sol        effort falls back to the profile's, then the binary's
 codex:high               codex's default model at high effort
+cursor/sonnet            operator recipe named cursor, model forwarded by its model-args
 claude/                  <span class="c-crimson">refused: a second spelling of `claude`</span>
 claude/opus:hgih         <span class="c-crimson">refused: not an effort</span></pre>
         <div class="scroll-x">
@@ -309,7 +310,7 @@ claude/opus:hgih         <span class="c-crimson">refused: not an effort</span></
               <tr><th>vocabulary</th><th>values</th></tr>
             </thead>
             <tbody>
-              <tr><td>executors</td><td class="prose"><code>claude</code>, <code>codex</code></td></tr>
+              <tr><td>executors</td><td class="prose"><code>claude</code>, <code>codex</code>, plus recipe names loaded from the operator config directory</td></tr>
               <tr><td>efforts</td><td class="prose"><code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code></td></tr>
             </tbody>
           </table>
@@ -499,8 +500,8 @@ claude/opus:hgih         <span class="c-crimson">refused: not an effort</span></
 
         <h2 id="archive">Run archive <a class="anchor" href="#archive">#</a></h2>
         <pre class="code">&lt;tasks-dir&gt;/&lt;task&gt;/&lt;run&gt;/
-├── manifest.json      resolved roster, prompt provenance and hashes, requested vs actual model,
-│                      timings. Created empty as the run starts and filled in when it finishes,
+├── manifest.json      resolved roster, prompt provenance and hashes, executor recipes,
+│                      requested vs actual model and timings. Created empty as the run starts and filled in when it finishes,
 │                      so it doubles as the marker claiming the round
 ├── prompts/agents/    the composed prompt each agent received, post-substitution
 ├── prompts/stages/    synthesis and one file per verify group

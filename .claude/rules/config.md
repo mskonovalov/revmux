@@ -61,6 +61,11 @@ would make the same invocation review different context in different directories
 Everything that shapes a review — rosters, models, effort, prompt text, lenses — lives in markdown.
 See `.claude/rules/prompts.md`. Do not add a roster or a model to the INI file.
 
+Executable recipes are a separate operator-owned config surface under `<user-config>/executors/*.yaml`.
+They are never loaded from the auto-detected project layer: project configuration is review input, and letting
+it name a command would turn opening an untrusted repository into permission to execute its choice of binary.
+`--config-dir` relocates the trusted operator layer and therefore relocates recipes with it.
+
 - `no-ini:"true"` on meta flags that make no sense in a config file (`--init`, `--dump-defaults`, `--version`, `--config-dir`).
 - `ini-name` tags so config keys match the long flag names; a user reading `--help` should be able to guess the key.
 - Distinguish "explicitly false" from "not set" with a sentinel when a bool needs a per-field merge across layers.

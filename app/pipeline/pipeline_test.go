@@ -27,6 +27,14 @@ import (
 	"github.com/umputun/revmux/app/task"
 )
 
+func TestArchivedPromptUsesConfiguredExecutorContract(t *testing.T) {
+	cfg := Config{PromptSuffix: func(name string, schema json.RawMessage) string {
+		return "\n" + name + ":" + string(schema)
+	}}
+	assert.Equal(t, "body\ncursor:{\"type\":\"object\"}",
+		archivedPrompt(cfg, "cursor", "body", json.RawMessage(`{"type":"object"}`)))
+}
+
 func TestPipeline_Run(t *testing.T) {
 	h := newHarness(t)
 	h.cfg.NewRunner = h.runner(map[string]executor.Result{

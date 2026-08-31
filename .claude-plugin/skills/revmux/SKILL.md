@@ -7,8 +7,8 @@ allowed-tools: [Bash, Read, Edit, Write, Grep, Glob, Agent, AskUserQuestion, Mon
 
 # revmux — supervised multi-agent code review
 
-revmux spawns and supervises parallel `claude --print` and `codex exec` subprocesses, watches each for
-stalls, retries what hangs, and returns findings on stdout.
+revmux spawns and supervises parallel model CLI subprocesses, with maintained Claude and Codex executors
+plus operator recipes, watches each for stalls, retries what hangs, and returns findings on stdout.
 
 It does no scope detection, no git, no PR fetching, no source modification. This skill does that half.
 

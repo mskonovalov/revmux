@@ -579,6 +579,30 @@ func TestOptions_promptOptsUsesResolvedLayers(t *testing.T) {
 	assert.Equal(t, prompt.LoadOpts{ProjectDir: "/p", UserDir: "/u"}, o.promptOpts())
 }
 
+func TestOptions_executorRecipesUseOnlyTheOperatorLayer(t *testing.T) {
+	user, project := t.TempDir(), t.TempDir()
+	writeExecutorRecipe(t, user, "cursor", "cursor-agent")
+	writeExecutorRecipe(t, project, "untrusted", "untrusted-agent")
+
+	recipes, err := options{layers: configLayers{user: user, project: project}}.executorRecipes()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"cursor"}, recipes.Names(),
+		"a checked-out project never gets to choose an executable")
+}
+
+func TestOptions_promptSetAcceptsRecipeExecutor(t *testing.T) {
+	user := t.TempDir()
+	writeExecutorRecipe(t, user, "cursor", "cursor-agent")
+	profiles := filepath.Join(user, "prompts", "profiles")
+	require.NoError(t, os.MkdirAll(profiles, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(profiles, "cursor-only.md"), []byte(
+		"---\ndescription: cursor only\nmodel: cursor/sonnet\nagents:\n  - {name: bugs, lenses: [bugs]}\n---\nbody\n"), 0o600))
+
+	set, err := options{Profile: "cursor-only", layers: configLayers{user: user}}.promptSet()
+	require.NoError(t, err)
+	assert.Contains(t, set.Executors(), "cursor")
+}
+
 func TestOptions_promptSetUnknownProfile(t *testing.T) {
 	_, err := options{Profile: "nope"}.promptSet()
 	require.Error(t, err)
@@ -772,6 +796,16 @@ func writeConfig(t *testing.T, dir, body string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(dir, 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, configFileName), []byte(body), 0o600))
+}
+
+func writeExecutorRecipe(t *testing.T, dir, name, command string) {
+	t.Helper()
+	root := filepath.Join(dir, "executors")
+	require.NoError(t, os.MkdirAll(root, 0o750))
+	body := "description: test adapter\ncommand: " + command + "\n" +
+		"prompt-suffix: '{{SCHEMA}}'\n" +
+		"output: {event-field: type, result-event: result, result-field: result}\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, name+".yaml"), []byte(body), 0o600))
 }
 
 func roundInput(t *testing.T, root, taskID string, files ...string) string {

@@ -98,7 +98,7 @@ func (f *finder) runAgent(ctx context.Context, spec prompt.AgentSpec, index int)
 	// archived post-substitution, exactly the bytes the process receives — the codex output contract
 	// included: a reflection agent cannot judge a lens it cannot read, and a paraphrase is worse than
 	// no data
-	f.save(f.promptName(spec), []byte(archivedPrompt(spec.Executor, text, finding.FinderSchema())))
+	f.save(f.promptName(spec), []byte(archivedPrompt(f.cfg, spec.Executor, text, finding.FinderSchema())))
 
 	if slotErr := f.stagger.acquire(ctx, index); slotErr != nil {
 		return f.degrade(res, slotErr)
