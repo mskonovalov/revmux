@@ -77,6 +77,22 @@ func TestOptions_catalogVocabulariesComeFromPrompt(t *testing.T) {
 	assert.Equal(t, prompt.Efforts(), c.Vocabulary.Efforts)
 }
 
+func TestOptions_catalogReportsExecutorRecipes(t *testing.T) {
+	user := t.TempDir()
+	writeExecutorRecipe(t, user, "cursor", "cursor-agent")
+	o := options{layers: configLayers{user: user}}
+	recipes, err := o.executorRecipes()
+	require.NoError(t, err)
+	set, err := prompt.Load(o.promptOptsWithRecipes(recipes))
+	require.NoError(t, err)
+
+	c := o.catalogWithRecipes(set, recipes)
+	assert.Contains(t, c.Vocabulary.Executors, "cursor")
+	require.Len(t, c.Recipes, 1)
+	assert.Equal(t, "cursor", c.Recipes[0].Name)
+	assert.Equal(t, "cursor-agent", c.Recipes[0].Command)
+}
+
 func TestOptions_catalogStages(t *testing.T) {
 	set, err := prompt.Load(prompt.LoadOpts{})
 	require.NoError(t, err)

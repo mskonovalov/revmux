@@ -393,6 +393,9 @@ description. Use it to answer, without guessing:
 - which binaries and efforts a `model:` string may name — `.vocabulary`. A prompt file writes the
   runner as one value, `<binary>[/<model>][:<effort>]`, and the catalog reports the resolved parts
   separately
+- which command an operator-added executor launches — `.recipes[]`. Recipe names join
+  `.vocabulary.executors`, while `command` is what preflight must check; recipes come only from the
+  operator config directory, never the auto-detected project layer
 - which tasks already exist, what each covers and which rounds ran — `.paths.tasks`, whose entries carry
   `id`, `description`, `url`, `branch`, `base` and `rounds`; match on `url` or `branch` before minting
   a new id

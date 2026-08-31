@@ -52,7 +52,10 @@ func answered(raw json.RawMessage, key string) bool {
 // archivedPrompt is the prompt the process actually receives, which is the only version worth storing.
 // Each executor appends something of its own — codex its output contract, claude its narration contract
 // — so a prompt archived as composed describes a review that did not happen.
-func archivedPrompt(exec, text string, schema json.RawMessage) string {
+func archivedPrompt(cfg Config, exec, text string, schema json.RawMessage) string {
+	if cfg.PromptSuffix != nil {
+		return text + cfg.PromptSuffix(exec, schema)
+	}
 	if exec != executorCodex {
 		return text + executor.ClaudeNarrationContract(schema)
 	}
@@ -82,13 +85,15 @@ type archiver interface {
 // deliberately absent — they reach the executors through executor.Opts, built by the composition
 // root, because the pipeline never constructs an executor.
 type Config struct {
-	NewRunner func(RunnerSpec) Runner
-	Archive   archiver
-	Clock     executor.Clock
+	NewRunner    func(RunnerSpec) Runner
+	PromptSuffix func(string, json.RawMessage) string
+	Archive      archiver
+	Clock        executor.Clock
 
 	Set     *prompt.Set
 	Profile *prompt.Profile
 	Roster  []prompt.AgentSpec
+	Recipes []executor.Recipe
 	Vars    prompt.Vars
 	History string
 

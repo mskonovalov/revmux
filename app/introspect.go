@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/umputun/revmux/app/executor"
 	"github.com/umputun/revmux/app/prompt"
 	"github.com/umputun/revmux/app/task"
 )
@@ -29,6 +30,7 @@ type catalog struct {
 	Profiles   []profileInfo     `json:"profiles"`
 	Lenses     []prompt.LensInfo `json:"lenses"`
 	Stages     []stageInfo       `json:"stages"`
+	Recipes    []executor.Recipe `json:"recipes"`
 	Vocabulary vocabulary        `json:"vocabulary"`
 	Paths      pathInfo          `json:"paths"`
 }
@@ -118,10 +120,15 @@ func (c *configCmd) Execute([]string) error { //nolint:unparam // the signature 
 // catalog assembles what resolved, never what is embedded: a user who overrode one lens and added
 // another must see his own tree, or this describes a review that will not happen.
 func (o options) catalog(set *prompt.Set) catalog {
+	return o.catalogWithRecipes(set, executor.Recipes{})
+}
+
+func (o options) catalogWithRecipes(set *prompt.Set, recipes executor.Recipes) catalog {
 	c := catalog{
 		Knobs:      o.knobs(),
 		Lenses:     set.Lenses(),
-		Vocabulary: vocabulary{Executors: prompt.Executors(), Efforts: prompt.Efforts()},
+		Recipes:    recipes.All(),
+		Vocabulary: vocabulary{Executors: set.Executors(), Efforts: prompt.Efforts()},
 		Paths:      o.paths(),
 	}
 

@@ -129,7 +129,7 @@ func (v *verifier) compose(groups []verifyGroup) error {
 		}
 		groups[i].text = text
 		// one file per group: a single verify.md would lose every prompt but the last
-		v.save(v.promptName(groups[i]), []byte(archivedPrompt(stage.Executor, text, finding.VerifySchema())))
+		v.save(v.promptName(groups[i]), []byte(archivedPrompt(v.cfg, stage.Executor, text, finding.VerifySchema())))
 	}
 	return nil
 }

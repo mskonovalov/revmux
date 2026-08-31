@@ -56,6 +56,15 @@ func TestParseRunner_Errors(t *testing.T) {
 	}
 }
 
+func TestParseRunnerWithAdditionalExecutor(t *testing.T) {
+	got, err := parseRunnerWith("cursor/sonnet", []string{"claude", "codex", "cursor"})
+	require.NoError(t, err)
+	assert.Equal(t, Runner{Executor: "cursor", Model: "sonnet"}, got)
+
+	_, err = parseRunner("cursor/sonnet")
+	require.Error(t, err, "the built-in vocabulary stays closed without an operator recipe")
+}
+
 // a model belongs to a binary, so inheriting one across binaries is how `opus` reaches codex
 func TestRunner_or(t *testing.T) {
 	base := Runner{Executor: "claude", Model: "opus", Effort: "high"}

@@ -16,11 +16,16 @@ type Runner struct {
 }
 
 // parseRunner reads `<executor>[/<model>][:<effort>]` — `claude`, `claude/opus:high`,
-// `codex/gpt-5.6-sol`, `codex:high`. The executor is mandatory and closed, so the value validates
+// `codex/gpt-5.6-sol`, `codex:high`. The executor is mandatory and closed over the vocabulary supplied
+// for this load, so the value validates
 // itself; a trailing slash is rejected rather than accepted as a second spelling of the bare binary.
 // It splits on the first slash, so a model name carrying one survives, and on the last colon, whose
 // suffix must be a real effort — a typo'd `:hgih` is a load error, not part of the model name.
 func parseRunner(s string) (Runner, error) {
+	return parseRunnerWith(s, executors)
+}
+
+func parseRunnerWith(s string, accepted []string) (Runner, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return Runner{}, nil
@@ -42,8 +47,8 @@ func parseRunner(s string) (Runner, error) {
 	if found && out.Model == "" {
 		return Runner{}, fmt.Errorf("no model after the slash in %q, write the binary alone for its default", s)
 	}
-	if !slices.Contains(executors, out.Executor) {
-		return Runner{}, fmt.Errorf("unknown executor %q in %q, want one of %v", out.Executor, s, executors)
+	if !slices.Contains(accepted, out.Executor) {
+		return Runner{}, fmt.Errorf("unknown executor %q in %q, want one of %v", out.Executor, s, accepted)
 	}
 	return out, nil
 }

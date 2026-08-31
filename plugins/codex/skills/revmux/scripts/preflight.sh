@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # preflight.sh - verify revmux and the model CLIs a profile actually needs.
 #
-# revmux drives `claude` and `codex` as subprocesses, so a missing binary is a run that
+# revmux drives model CLIs as subprocesses, so a missing binary is a run that
 # starts, launches agents, and degrades every source before failing with exit 2. Checking
 # first turns that into one line of output.
 #
@@ -134,10 +134,12 @@ else
 fi
 
 for exe in $executors; do
-    if command -v "$exe" >/dev/null 2>&1; then
-        echo "$exe: $(command -v "$exe")"
+    binary=$(printf '%s' "$cfg" | jq -r --arg e "$exe" \
+        '([.recipes[]? | select(.name == $e) | .command][0]) // $e')
+    if command -v "$binary" >/dev/null 2>&1; then
+        echo "$exe: $(command -v "$binary")"
     else
-        fail "$exe: MISSING - required by this invocation"
+        fail "$exe: MISSING '$binary' - required by this invocation"
     fi
 done
 

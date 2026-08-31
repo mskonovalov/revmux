@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/umputun/revmux/app/archive"
+	"github.com/umputun/revmux/app/executor"
 	"github.com/umputun/revmux/app/finding"
 	"github.com/umputun/revmux/app/pipeline"
 	"github.com/umputun/revmux/app/prompt"
@@ -15,8 +16,8 @@ import (
 )
 
 // manifest is what makes a finished run auditable: which roster ran, what each agent actually
-// executed, which prompt file won each precedence race and what it contained, and how long each stage
-// took. None of it is recoverable from the report — two rounds of one task can use different lens
+// executed, which prompt and executor recipe won each configuration race, and how long each stage took.
+// None of it is recoverable from the report — two rounds of one task can use different lens or recipe
 // text, and nothing can recompute a stage duration after the fact.
 type manifest struct {
 	Task       string               `json:"task"`
@@ -30,6 +31,7 @@ type manifest struct {
 	Agents     []finding.SourceStat `json:"agents"`
 	Degraded   []string             `json:"degraded"`
 	Prompts    []prompt.FileOrigin  `json:"prompts"`
+	Recipes    []executor.Recipe    `json:"recipes,omitempty"`
 	Stages     []finding.StageRun   `json:"stages"`
 }
 
@@ -109,7 +111,7 @@ func (o runOpts) manifest(cfg pipeline.Config, rep finding.Report) manifest {
 		StartedAt: rep.Stats.StartedAt, FinishedAt: rep.Stats.FinishedAt,
 		DurationMS: rep.Stats.DurationMS, Tokens: rep.Stats.Tokens,
 		Agents: agents, Degraded: rep.Sources.DegradedSources,
-		Prompts: cfg.Set.Provenance(), Stages: rep.Stats.Stages,
+		Prompts: cfg.Set.Provenance(), Recipes: cfg.Recipes, Stages: rep.Stats.Stages,
 	}
 }
 

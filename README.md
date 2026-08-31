@@ -4,8 +4,8 @@
 
 **[revmux.com](https://revmux.com)** · [Documentation](https://revmux.com/docs) · [Reference](https://revmux.com/reference) · [Releases](https://github.com/umputun/revmux/releases)
 
-revmux runs a structured multi-agent review. It spawns and supervises `claude --print` and `codex exec`
-subprocesses, then returns findings on stdout as JSON or markdown.
+revmux runs a structured multi-agent review. It spawns and supervises model CLI subprocesses, with
+maintained executors for `claude --print` and `codex exec`, then returns findings on stdout as JSON or markdown.
 
 **It is normally launched by a coding agent rather than typed by you.** The [shipped skill](#agent-skills)
 works out what is under review, writes the context to disk, runs revmux and reads the report back. To that
@@ -98,7 +98,7 @@ For Codex CLI, copy the tree instead: `cp -r plugins/codex/skills/revmux ~/.code
 either, ask for a review in words: revmux this branch, revmux pr 123, re-review after fixes. See
 [Agent skills](#agent-skills) for what it does.
 
-revmux drives the model CLIs as subprocesses, so whichever ones your profile names must already be installed
+revmux drives model CLIs as subprocesses, so whichever ones your profile names must already be installed
 and authenticated: both for `comprehensive`, `focused`, `final`, `grill-me`, `triage` and `expert`, claude
 alone for `claude-only`, codex alone for `codex-only`. `preflight.sh` in the shipped skill answers it for any
 profile and any invocation.
@@ -250,8 +250,8 @@ independently agreed".
 ## Profiles
 
 A profile is roster front matter plus a body that is the shared preamble and severity bar. Every roster entry
-composes lenses, and one `model:` string selects the binary, the model and the effort together, so claude and
-codex mix inside one review.
+composes lenses, and one `model:` string selects the executor, the model and the effort together, so different
+CLIs can mix inside one review.
 
 | profile | roster |
 |---|---|
@@ -304,13 +304,57 @@ Review it before reviewing a branch you did not write.
 The [profiles](https://revmux.com/docs#profiles) and [lenses](https://revmux.com/docs#lenses) sections cover
 the roster keys, the model grammar and what each of the thirteen lenses looks for.
 
+## Executor recipes
+
+Claude and Codex have maintained executors because their progress, rate-limit and usage protocols need dedicated
+handling. A CLI with a JSONL stream and a terminal result event can be added without Go code by placing a recipe
+in the operator-owned `~/.config/revmux/executors/` directory. Recipes are not loaded from the auto-detected
+project layer: checking out a repository must not let it choose an executable for revmux to launch.
+
+The cookbook includes a Cursor recipe based on Cursor's
+[CLI parameters](https://docs.cursor.com/en/cli/reference/parameters) and
+[stream JSON format](https://docs.cursor.com/en/cli/reference/output-format):
+
+```bash
+mkdir -p ~/.config/revmux/executors
+cp cookbook/executors/cursor.yaml ~/.config/revmux/executors/cursor.yaml
+revmux config
+```
+
+It makes `cursor[/<model>]` valid in profile `model:` fields and runs `cursor-agent --print` with
+`stream-json` output. The prompt is always sent on stdin; argument arrays are passed directly to the executable,
+never through a shell. A recipe provides static arguments, optional model/effort/schema argument templates, the
+schema-bearing prompt suffix, and the top-level JSONL fields that identify progress and the terminal answer.
+
+```yaml
+description: Cursor Agent CLI in headless mode
+command: cursor-agent
+args: [--print, --output-format, stream-json]
+model-args: [--model, "{{MODEL}}"]
+prompt-suffix: |
+
+  Return ONLY a JSON object matching this schema:
+  {{SCHEMA}}
+output:
+  event-field: type
+  result-event: result
+  result-field: result
+  actual-model-field: model
+  progress-events: [assistant, tool_call]
+```
+
+The terminal result field may be the answer object or a string containing it. Generic recipes inherit revmux's
+timeouts, process-group cleanup, retry/degrade behavior, raw-output archive and read-only review prompt, but do
+not add vendor-specific token or rate-limit decoding. The full resolved recipe is recorded in `manifest.json`,
+so a later config edit cannot change what an archived run claims it executed.
+
 ## Subcommands
 
 All five print JSON on stdout and exit before any review starts.
 
 | command | does |
 |---|---|
-| `revmux config` | reports the resolved configuration: knobs with their precedence layer, every profile, lens and stage, and the task store |
+| `revmux config` | reports the resolved configuration: knobs, profiles, lenses, stages, executor recipes and the task store |
 | `revmux new` | creates a task, a round and its `input/`, and prints every path plus which of them it created |
 | `revmux init` | copies each prompt file down from the layer that won it, reporting which one that was, and writes the config from the shipped template |
 | `revmux stats` | arithmetic over the archive: per agent, per lens, per stage and per task |

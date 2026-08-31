@@ -24,7 +24,8 @@ const (
 	ansiDefaultFg = "\x1b[39m"
 )
 
-// the two accepted vocabularies, checked by validate and reported verbatim by `revmux config`.
+// the built-in executor vocabulary and the effort vocabulary. Operator recipe names are added to the
+// former for one Load and reported from its Set.
 var (
 	executors = []string{executorClaude, "codex"}
 	efforts   = []string{"low", "medium", "high", "xhigh", "max"}
@@ -135,7 +136,7 @@ func DerivedSpec(name string) AgentSpec {
 // Efforts returns the accepted effort vocabulary, the same slice parseRunner checks a `model:` against.
 func Efforts() []string { return slices.Clone(efforts) }
 
-// Executors returns the accepted binary vocabulary, the same slice parseRunner checks a `model:` against.
+// Executors returns the built-in binary vocabulary. A loaded Set adds operator recipe names to it.
 func Executors() []string { return slices.Clone(executors) }
 
 // Runner reports the profile's own `model:`, which the roster falls back to and which the single agent
@@ -302,14 +303,14 @@ func (a AgentSpec) resolveColor() (string, error) {
 	return "", fmt.Errorf("invalid color %q, want an ANSI-16 name or #RRGGBB", a.ColorName)
 }
 
-func parseProfile(name string, meta, body []byte) (*Profile, error) {
+func parseProfile(name string, meta, body []byte, acceptedExecutors []string) (*Profile, error) {
 	var fm profileYAML
 	text, err := parseFile(meta, body, &fm)
 	if err != nil {
 		return nil, err
 	}
 
-	base, err := parseRunner(fm.Model)
+	base, err := parseRunnerWith(fm.Model, acceptedExecutors)
 	if err != nil {
 		return nil, fmt.Errorf("profile %s: %w", name, err)
 	}
@@ -320,7 +321,7 @@ func parseProfile(name string, meta, body []byte) (*Profile, error) {
 	p := &Profile{doc: doc{Description: fm.Description, Body: text}, Name: name, runner: base}
 	p.agents = make([]AgentSpec, 0, len(fm.Agents))
 	for _, a := range fm.Agents {
-		run, agentErr := parseRunner(a.Model)
+		run, agentErr := parseRunnerWith(a.Model, acceptedExecutors)
 		if agentErr != nil {
 			return nil, fmt.Errorf("profile %s: agent %s: %w", name, a.Name, agentErr)
 		}
@@ -331,7 +332,7 @@ func parseProfile(name string, meta, body []byte) (*Profile, error) {
 
 	p.stages = make(map[string]Runner, len(fm.Stages))
 	for stage, over := range fm.Stages {
-		run, stageErr := parseRunner(over)
+		run, stageErr := parseRunnerWith(over, acceptedExecutors)
 		if stageErr != nil {
 			return nil, fmt.Errorf("profile %s: stage %s: %w", name, stage, stageErr)
 		}
@@ -346,14 +347,14 @@ func parseProfile(name string, meta, body []byte) (*Profile, error) {
 	return p, nil
 }
 
-func parseStage(name string, meta, body []byte) (*Stage, error) {
+func parseStage(name string, meta, body []byte, acceptedExecutors []string) (*Stage, error) {
 	var fm stageYAML
 	text, err := parseFile(meta, body, &fm)
 	if err != nil {
 		return nil, err
 	}
 
-	run, err := parseRunner(fm.Model)
+	run, err := parseRunnerWith(fm.Model, acceptedExecutors)
 	if err != nil {
 		return nil, fmt.Errorf("stage %s: %w", name, err)
 	}

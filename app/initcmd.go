@@ -41,7 +41,11 @@ func (c *initCmd) Execute([]string) error { //nolint:unparam // the signature is
 // "stdout belongs to the report". The prompt tree is loaded directly rather than through promptSet: a
 // caller initializing a project has not chosen a --profile yet.
 func (o runOpts) writeInitPaths() error {
-	set, err := prompt.Load(o.opts.promptOpts())
+	recipes, err := o.opts.executorRecipes()
+	if err != nil {
+		return err
+	}
+	set, err := prompt.Load(o.opts.promptOptsWithRecipes(recipes))
 	if err != nil {
 		return fmt.Errorf("load prompts: %w", err)
 	}
