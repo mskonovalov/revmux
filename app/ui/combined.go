@@ -3,8 +3,10 @@ package ui
 import (
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 // combinedLimit bounds the compact log the same way scrollbackLimit bounds a pane.
@@ -30,8 +32,10 @@ func (c *combinedState) push(e combinedEntry) {
 	}
 }
 
-// combinedLines renders the compact log in arrival order, each line prefixed with its agent in the
-// agent's own color. An entry from an agent the roster never named keeps the default foreground.
+// combinedLines renders the compact log in arrival order, each line prefixed with its agent and
+// painted, prefix and text alike, in the agent's own color: with several agents interleaving, a
+// block in one color is what lets a reader follow one of them without reading names. A process the
+// roster does not name — a stage, a verify group — is painted the same way in its derived color.
 func (m Model) combinedLines() []string {
 	if len(m.combined.entries) == 0 {
 		return []string{"waiting for the first agent..."}
@@ -45,9 +49,60 @@ func (m Model) combinedLines() []string {
 			out = append(out, head+m.style.stage.Render(" "+e.text+" "))
 			continue
 		}
-		out = append(out, Wrap(head, markdown(e.text), m.view.width())...)
+		out = append(out, m.textRows(head, e.agent, e.text)...)
 	}
 	return out
+}
+
+// textRows lays one entry out under its head with the text in the agent's color on every row. The
+// color is opened and closed per row rather than once around the text: the wrapper leaves a sequence
+// open across the rows it produces, and a continuation row at the top of a scrolled pane reaches the
+// screen alone. A code span is underlined rather than colored: the span color is cyan, which is also
+// the first roster color in every shipped profile, so a colored span vanishes into exactly the agent
+// that writes the most of them. A row that ends inside a span, code or emphasis, closes the span's
+// attribute and the next row re-opens it. Leading whitespace stays ahead of the paint so the wrapper
+// still measures it on the plain text.
+func (m Model) textRows(head, agent, text string) []string {
+	seq := m.textColor(agent)
+	if seq == "" {
+		return Wrap(head, markdown(text), m.view.width())
+	}
+	body := strings.TrimLeftFunc(text, unicode.IsSpace)
+	lead := text[:len(text)-len(body)]
+	painted := inline{codeOn: ansiUnderlineOn, codeOff: ansiUnderlineOff}.render(body)
+	rows := Wrap(head, lead+seq+painted+ansiCodeOff, m.view.width())
+	indent := strings.Repeat(" ", lipgloss.Width(head))
+	open := seq
+	for i, r := range rows {
+		if i > 0 {
+			r = indent + open + strings.TrimPrefix(r, indent)
+		}
+		open = seq
+		for _, span := range [][2]string{{ansiUnderlineOn, ansiUnderlineOff}, {ansiBoldOn, ansiBoldOff}} {
+			if strings.LastIndex(r, span[0]) > strings.LastIndex(r, span[1]) {
+				open, r = open+span[0], r+span[1]
+			}
+		}
+		if !strings.HasSuffix(r, ansiCodeOff) {
+			r += ansiCodeOff
+		}
+		rows[i] = r
+	}
+	return rows
+}
+
+// textColor is the sequence an agent's log text is painted in, the same one its name is painted in,
+// derived or rostered alike. It is empty on a surface that reports no color, where painting is left
+// to the name alone rather than spread over every row; the empty return for a name with no state at
+// all is a guard, since every entry pushed to the log carries the name of a state that exists.
+func (m Model) textColor(agent string) string {
+	if m.style.profile == termenv.Ascii {
+		return ""
+	}
+	if a := m.find(agent); a != nil {
+		return a.spec.SGR()
+	}
+	return ""
 }
 
 // prefix is the agent column: the name padded to the widest in the roster and colored. Padding happens
