@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.2.2
+
+**Improvements**
+- add a codex-sandbox knob, default read-only c61c388
+- paint the combined pane's log text in the agent's color #28 @umputun
+- package the Codex skill for marketplace install #19 @paskal
+- install both skills from the marketplace 63644a1
+- assert the plugin version in the Claude marketplace too 5b0d487
+- bump codex plugin version to 0.5.1 6ee6bc2
+- bump github.com/yuin/goldmark from 1.8.5 to 1.8.6 #26 @dependabot
+
+**Bug Fixes**
+- publish the overlay pid before entering the working directory #31 @umputun
+- publish overlay pid on the iTerm2 path #30 @stillya
+
 ## v0.2.1
 
 **Improvements**
