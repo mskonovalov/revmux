@@ -612,6 +612,7 @@ These also read from the config file, under the same name as the flag:
 | `--verify-group-by=<k>` | `verify-group-by` | `dir` | key verifier groups by directory or by the agent that raised the finding (`source`) |
 | `--tasks-dir=<dir>` | `tasks-dir` | `./.revmux/tasks` | root directory holding task directories |
 | `--auto-exit=<d>` | `auto-exit` | `0s` | close the TUI this long after the report arrives; `0` waits for the reader to quit with `q` or `ctrl+c` |
+| `--codex-sandbox=<mode>` | `codex-sandbox` | `read-only` | sandbox codex agents run their commands under: `read-only`, `workspace-write` or `danger-full-access`. `danger-full-access` is for a container that is itself the isolation boundary, where codex's own bubblewrap sandbox cannot start |
 | `--profile=<name>` | `profile` | `comprehensive` | profile naming the roster to run |
 
 `--task` and `--run` are not config keys: a config file naming the round to write would make the same

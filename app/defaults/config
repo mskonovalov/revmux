@@ -33,3 +33,8 @@
 
 # profile naming the roster to run
 # profile = comprehensive
+
+# sandbox codex agents run their commands under: read-only | workspace-write | danger-full-access.
+# a container that is itself the isolation boundary sets danger-full-access, because codex's own
+# bubblewrap sandbox needs user namespaces and every command fails before it runs without them
+# codex-sandbox = read-only

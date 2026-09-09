@@ -135,7 +135,15 @@ func TestCodex_args(t *testing.T) {
 
 		args := runner.CommandCalls()[0].Args
 		assert.Equal(t, []string{"exec", "--sandbox", "read-only"}, args)
-		assert.Contains(t, args, "read-only", "codex never gets a writable sandbox")
+	})
+
+	t.Run("sandbox from opts", func(t *testing.T) {
+		runner := fakeRunner("emit", path)
+		c := executor.NewCodex(runner, executor.Opts{CodexSandbox: "danger-full-access"})
+		_, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, discardSink())
+		require.NoError(t, err)
+
+		assert.Equal(t, []string{"exec", "--sandbox", "danger-full-access"}, runner.CommandCalls()[0].Args)
 	})
 }
 

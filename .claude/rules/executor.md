@@ -356,7 +356,10 @@ Codex is a peer executor, not a special case in the pipeline — but the executo
   the echoed prompt precedes everything codex reports itself, so a first-match diagnostic names a line the
   prompt quoted — a lens body, a finding describing an error — as the failure,
   and hands `classify` a line that can carry a limit pattern the run never hit.
-- `--sandbox read-only` always. revmux never lets an agent write.
+- `--sandbox` comes from the `codex-sandbox` knob and defaults to `read-only`; revmux itself never asks an
+  agent to write. `danger-full-access` exists for a container that is the isolation boundary: codex's
+  bubblewrap sandbox needs user namespaces, and without them every command fails before it runs while the
+  agent still returns schema-valid empty findings.
 
 ### Error and limit patterns
 

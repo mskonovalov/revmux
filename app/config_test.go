@@ -150,6 +150,7 @@ func TestParseArgs_knobOriginsNameTheWinningLayer(t *testing.T) {
 		"tasks-dir":       originDefault,
 		"auto-exit":       originDefault,
 		"verify-group-by": originDefault,
+		"codex-sandbox":   originDefault,
 	}
 	assert.Equal(t, want, o.knobOrigins)
 	assert.Len(t, o.knobOrigins, len(knobNames()), "every knob reports an origin")
@@ -305,7 +306,7 @@ func TestKnobNames_iniNameMatchesLongName(t *testing.T) {
 		assert.NotEmpty(t, f.Tag.Get("default"), "field %s: a knob with no default resolves to a zero value", f.Name)
 	}
 	assert.Equal(t, []string{"idle-timeout", "hard-timeout", "stagger-delay", "max-parallel",
-		"verify-groups", "verify-group-by", "tasks-dir", "auto-exit", "profile"}, knobNames())
+		"verify-groups", "verify-group-by", "tasks-dir", "auto-exit", "profile", "codex-sandbox"}, knobNames())
 }
 
 func TestResolveContext_shapes(t *testing.T) {
@@ -566,10 +567,10 @@ func TestOptions_checkNames(t *testing.T) {
 
 func TestOptions_executorOpts(t *testing.T) {
 	clk := &mocks.ClockMock{}
-	o := options{IdleTimeout: time.Minute, HardTimeout: time.Hour, PreserveAPIKey: true, WorkDir: "/ignored"}
+	o := options{IdleTimeout: time.Minute, HardTimeout: time.Hour, PreserveAPIKey: true, WorkDir: "/ignored", CodexSandbox: "danger-full-access"}
 
 	got := o.executorOpts(reviewContext{WorkDir: "/resolved"}, clk)
-	assert.Equal(t, executor.Opts{IdleTimeout: time.Minute, HardTimeout: time.Hour,
+	assert.Equal(t, executor.Opts{IdleTimeout: time.Minute, HardTimeout: time.Hour, CodexSandbox: "danger-full-access",
 		WorkDir: "/resolved", PreserveAPIKey: true, Clock: clk}, got,
 		"the subprocess runs where {{WORKDIR}} points, never where the raw flag does")
 }

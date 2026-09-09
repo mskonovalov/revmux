@@ -781,6 +781,7 @@ receives, including what counts as critical, major and minor here.</pre>
               <tr><td>--verify-group-by</td><td>dir</td><td class="prose">key verifier groups by directory or by the agent that raised the finding</td></tr>
               <tr><td>--tasks-dir</td><td>./.revmux/tasks</td><td class="prose">root directory holding task directories</td></tr>
               <tr><td>--auto-exit</td><td>0s</td><td class="prose">close the terminal UI this long after the report arrives; 0 never closes it</td></tr>
+              <tr><td>--codex-sandbox</td><td>read-only</td><td class="prose">sandbox codex agents run their commands under: read-only, workspace-write or danger-full-access. danger-full-access is for a container that is itself the isolation boundary, where codex&#39;s own bubblewrap sandbox cannot start, so every command fails before it runs while the agent still returns schema-valid empty findings</td></tr>
               <tr><td>--profile</td><td>comprehensive</td><td class="prose">profile naming the roster to run</td></tr>
             </tbody>
           </table>

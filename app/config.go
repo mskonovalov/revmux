@@ -65,6 +65,7 @@ type options struct {
 	TasksDir      string        `long:"tasks-dir" ini-name:"tasks-dir" default:"./.revmux/tasks" description:"root directory holding task directories"`
 	AutoExit      time.Duration `long:"auto-exit" ini-name:"auto-exit" default:"0s" description:"close the terminal UI this long after the report arrives; 0 never closes it"`
 	Profile       string        `long:"profile" ini-name:"profile" default:"comprehensive" description:"profile naming the roster to run"`
+	CodexSandbox  string        `long:"codex-sandbox" ini-name:"codex-sandbox" choice:"read-only" choice:"workspace-write" choice:"danger-full-access" default:"read-only" description:"sandbox codex agents run their commands under"`
 
 	ConfigDir    string `long:"config-dir" no-ini:"true" description:"directory holding the config file and the prompt tree"`
 	Init         bool   `long:"init" no-ini:"true" description:"materialize the resolved prompt tree and a config template into ./.revmux/"`
@@ -308,6 +309,7 @@ func (o options) executorOpts(rc reviewContext, clk executor.Clock) executor.Opt
 	return executor.Opts{
 		IdleTimeout:    o.IdleTimeout,
 		HardTimeout:    o.HardTimeout,
+		CodexSandbox:   o.CodexSandbox,
 		WorkDir:        rc.WorkDir,
 		PreserveAPIKey: o.PreserveAPIKey,
 		Clock:          clk,

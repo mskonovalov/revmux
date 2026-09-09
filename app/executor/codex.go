@@ -108,7 +108,11 @@ func (c *Codex) Run(ctx context.Context, req Request, sink EventSink) (Result, e
 }
 
 func (c *Codex) args(req Request) []string {
-	argv := []string{"exec", "--sandbox", "read-only"}
+	sandbox := c.opts.CodexSandbox
+	if sandbox == "" {
+		sandbox = "read-only"
+	}
+	argv := []string{"exec", "--sandbox", sandbox}
 	if req.Model != "" {
 		argv = append(argv, "-m", req.Model)
 	}
