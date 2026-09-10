@@ -51,10 +51,13 @@ homebrew_casks:
     license: MIT
     binaries:
       - revmux
-    # the release binaries are unsigned, so macOS quarantines what brew downloads
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/revmux"]
-          end
+    # the release binaries are unsigned, so macOS quarantines what brew downloads.
+    # this is a custom_block rather than hooks.post.install because goreleaser wraps that hook
+    # in a `postflight do` stanza, which homebrew deprecated in favour of postflight_steps
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr",
+              args: ["-dr", "com.apple.quarantine", "{{ `{{staged_path}}` }}/revmux"]
+        end
+      end
