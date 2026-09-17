@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.3
+
+**Improvements**
+- run expert's codex agent on gpt-6-astra #34 @umputun
+- bump golang.org/x/term from 0.45.0 to 0.46.0 #32 @dependabot
+
+**Bug Fixes**
+- emit postflight_steps in the homebrew cask c907610
+
 ## v0.2.2
 
 **Improvements**
