@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.4
+
+**Bug Fixes**
+- start codex exec with --skip-git-repo-check bf6fc92
+
 ## v0.2.3
 
 **Improvements**
