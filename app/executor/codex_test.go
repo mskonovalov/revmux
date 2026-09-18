@@ -123,7 +123,7 @@ func TestCodex_args(t *testing.T) {
 		require.Len(t, runner.CommandCalls(), 1)
 		call := runner.CommandCalls()[0]
 		assert.Equal(t, "codex", call.Name)
-		want := []string{"exec", "--sandbox", "read-only", "-m", "gpt-5.6-sol", "-c", "model_reasoning_effort=xhigh"}
+		want := []string{"exec", "--skip-git-repo-check", "--sandbox", "read-only", "-m", "gpt-5.6-sol", "-c", "model_reasoning_effort=xhigh"}
 		assert.Equal(t, want, call.Args)
 	})
 
@@ -134,7 +134,7 @@ func TestCodex_args(t *testing.T) {
 		require.NoError(t, err)
 
 		args := runner.CommandCalls()[0].Args
-		assert.Equal(t, []string{"exec", "--sandbox", "read-only"}, args)
+		assert.Equal(t, []string{"exec", "--skip-git-repo-check", "--sandbox", "read-only"}, args)
 	})
 
 	t.Run("sandbox from opts", func(t *testing.T) {
@@ -143,7 +143,7 @@ func TestCodex_args(t *testing.T) {
 		_, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, discardSink())
 		require.NoError(t, err)
 
-		assert.Equal(t, []string{"exec", "--sandbox", "danger-full-access"}, runner.CommandCalls()[0].Args)
+		assert.Equal(t, []string{"exec", "--skip-git-repo-check", "--sandbox", "danger-full-access"}, runner.CommandCalls()[0].Args)
 	})
 }
 

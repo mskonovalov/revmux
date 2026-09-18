@@ -112,7 +112,7 @@ func (c *Codex) args(req Request) []string {
 	if sandbox == "" {
 		sandbox = "read-only"
 	}
-	argv := []string{"exec", "--sandbox", sandbox}
+	argv := []string{"exec", "--skip-git-repo-check", "--sandbox", sandbox}
 	if req.Model != "" {
 		argv = append(argv, "-m", req.Model)
 	}

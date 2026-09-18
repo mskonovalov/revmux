@@ -360,6 +360,10 @@ Codex is a peer executor, not a special case in the pipeline — but the executo
   agent to write. `danger-full-access` exists for a container that is the isolation boundary: codex's
   bubblewrap sandbox needs user namespaces, and without them every command fails before it runs while the
   agent still returns schema-valid empty findings.
+- Always start `codex exec` with `--skip-git-repo-check`: exec otherwise refuses to start outside a Git
+  repository, and revmux has no VCS dependency.
+  The check ignores project trust, as verified in Codex 0.146.0's
+  [`exec-lib.rs` (`codex-rs/exec/src/lib.rs`)](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/exec/src/lib.rs#L790-L799).
 
 ### Error and limit patterns
 
