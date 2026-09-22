@@ -1,6 +1,6 @@
 ---
 description: all eight lenses across four codex agents, synthesized and verified by codex, with no claude anywhere
-model: codex/gpt-5.6-sol:high
+model: codex/gpt-6-sol:high
 agents:
   - {name: bugs+impl,    lenses: [bugs, impl],            color: cyan}
   - {name: arch+quality, lenses: [architecture, quality], color: magenta}

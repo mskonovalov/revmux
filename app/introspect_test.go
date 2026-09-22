@@ -119,8 +119,8 @@ func TestOptions_catalogProfileStages(t *testing.T) {
 	}
 
 	assert.Equal(t, []stageRunner{
-		{Name: "synthesis", Executor: "codex", Model: "gpt-5.6-sol", Effort: "high"},
-		{Name: "verify", Executor: "codex", Model: "gpt-5.6-sol", Effort: "high"},
+		{Name: "synthesis", Executor: "codex", Model: "gpt-6-sol", Effort: "high"},
+		{Name: "verify", Executor: "codex", Model: "gpt-6-sol", Effort: "high"},
 	}, profiles["codex-only"])
 
 	for _, st := range profiles["comprehensive"] {
