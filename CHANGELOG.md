@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.5
+
+**Improvements**
+- default codex agents to gpt-6-sol ff07ca3
+
 ## v0.2.4
 
 **Bug Fixes**
