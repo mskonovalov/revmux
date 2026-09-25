@@ -50,6 +50,29 @@ func NewCodex(runner CommandRunner, opts Opts) *Codex {
 	return &Codex{proc: newProc("codex", runner, opts)}
 }
 
+// Authenticated reads Codex's login status without starting a model request.
+func (c *Codex) Authenticated(ctx context.Context) (bool, error) {
+	out, err := c.authCommand(ctx, "login", "status").CombinedOutput()
+	if strings.Contains(strings.ToLower(string(out)), "not logged in") {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("codex login status: %w", err)
+	}
+	if !strings.Contains(string(out), "Logged in") {
+		return false, fmt.Errorf("codex login status returned unexpected output: %q", strings.TrimSpace(string(out)))
+	}
+	return true, nil
+}
+
+// Login starts the provider's interactive flow on the controlling terminal.
+func (c *Codex) Login(ctx context.Context, terminal io.ReadWriter) error {
+	if terminal == nil {
+		return errors.New("run `codex login` in a terminal")
+	}
+	return c.login(ctx, terminal, "login")
+}
+
 // Run executes one request. A non-zero exit or an idle timeout comes back on the Result rather than as
 // an error, and output holding no JSON degrades the source instead of failing the run.
 func (c *Codex) Run(ctx context.Context, req Request, sink EventSink) (Result, error) {

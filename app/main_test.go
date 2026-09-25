@@ -246,6 +246,68 @@ func TestRun_reviewGate(t *testing.T) {
 	}
 }
 
+type authProviderMock struct {
+	status func() (bool, error)
+	login  func(io.ReadWriter) error
+}
+
+func (a authProviderMock) Authenticated(context.Context) (bool, error) { return a.status() }
+func (a authProviderMock) Login(_ context.Context, terminal io.ReadWriter) error {
+	return a.login(terminal)
+}
+
+func TestRun_authenticationBeforeArchive(t *testing.T) {
+	newOptions := func(t *testing.T) options {
+		t.Helper()
+		return options{Task: "pr-1", Run: "round-1", TasksDir: taskRoot(t), Profile: "focused", NoSynthesis: true, NoVerify: true}
+	}
+
+	t.Run("logs in each required provider before opening the round", func(t *testing.T) {
+		r := newRunOpts(t, newOptions(t))
+		ro := r.opts()
+		checked := map[string]int{}
+		logins := map[string]int{}
+		ro.newAuth = func(name string) executor.Authenticator {
+			return authProviderMock{
+				status: func() (bool, error) {
+					checked[name]++
+					return name != "claude" || checked[name] > 1, nil
+				},
+				login: func(terminal io.ReadWriter) error {
+					require.NotNil(t, terminal)
+					logins[name]++
+					return nil
+				},
+			}
+		}
+		ro.openTTY = func() (*os.File, error) { return os.OpenFile(os.DevNull, os.O_RDWR, 0) }
+
+		review, err := ro.pipelineConfig(t.Context())
+		require.NoError(t, err)
+		defer review.archive.Close()
+		assert.Equal(t, map[string]int{"claude": 2, "codex": 1}, checked)
+		assert.Equal(t, map[string]int{"claude": 1}, logins)
+		assert.Empty(t, r.stdout.String(), "login must not corrupt the JSON report stream")
+	})
+
+	t.Run("a headless logged-out run names the login command before opening the round", func(t *testing.T) {
+		r := newRunOpts(t, newOptions(t))
+		ro := r.opts()
+		ro.newAuth = func(name string) executor.Authenticator {
+			return authProviderMock{
+				status: func() (bool, error) { return name != "claude", nil },
+				login: func(terminal io.ReadWriter) error {
+					assert.Nil(t, terminal)
+					return errors.New("run `claude auth login` in a terminal")
+				},
+			}
+		}
+		_, err := ro.pipelineConfig(t.Context())
+		require.ErrorContains(t, err, "claude auth login")
+		assert.Empty(t, r.stdout.String())
+	})
+}
+
 func TestRun_review(t *testing.T) {
 	// every subtest takes its own tasks root: a run name that already exists is a load-time error, so
 	// two runs of round-1 under one root would collide rather than exercise what each case asserts
@@ -332,7 +394,7 @@ func TestRun_review(t *testing.T) {
 				`{"file":"b.go","line":2,"severity":"major","confidence":90,"title":"above the bar"}]}`)}
 
 		ro := r.opts()
-		review, err := ro.pipelineConfig()
+		review, err := ro.pipelineConfig(t.Context())
 		require.NoError(t, err)
 
 		rep, err := ro.review(context.Background(), review)
@@ -346,7 +408,7 @@ func TestRun_review(t *testing.T) {
 		ro := newRunOpts(t, base(t)).opts()
 		ro.retryDelay = agentRetryDelay
 
-		review, err := ro.pipelineConfig()
+		review, err := ro.pipelineConfig(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, agentRetryDelay, review.pipeline.RetryDelay)
 	})
@@ -356,7 +418,7 @@ func TestRun_review(t *testing.T) {
 		o.VerifyGroupBy = "source"
 		r := newRunOpts(t, o)
 
-		review, err := r.opts().pipelineConfig()
+		review, err := r.opts().pipelineConfig(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, "source", review.pipeline.VerifyGroupBy)
 	})
@@ -384,7 +446,7 @@ func TestRun_review(t *testing.T) {
 			}
 		}
 
-		review, err := ro.pipelineConfig()
+		review, err := ro.pipelineConfig(t.Context())
 		require.NoError(t, err)
 
 		_, err = ro.review(ctx, review)
@@ -1152,6 +1214,11 @@ func newRunOpts(t *testing.T, o options) *runHarness {
 	return &runHarness{o: o, stdout: &strings.Builder{}, stderr: &strings.Builder{}}
 }
 
+type authenticatedProvider struct{}
+
+func (authenticatedProvider) Authenticated(context.Context) (bool, error) { return true, nil }
+func (authenticatedProvider) Login(context.Context, io.ReadWriter) error  { return nil }
+
 func (r *runHarness) opts() runOpts {
 	clk := &mocks.ClockMock{
 		NowFunc: func() time.Time { return time.Date(2026, 7, 26, 16, 2, 11, 0, time.UTC) },
@@ -1166,6 +1233,7 @@ func (r *runHarness) opts() runOpts {
 		opts: r.o, clock: clk, stdout: r.stdout, stderr: r.stderr,
 		openTTY:   func() (*os.File, error) { return nil, errors.New("no tty in tests") },
 		newRunner: r.newRunner,
+		newAuth:   func(string) executor.Authenticator { return authenticatedProvider{} },
 	}
 }
 

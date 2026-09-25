@@ -3,6 +3,8 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"strings"
 )
@@ -21,6 +23,33 @@ type Claude struct {
 // composition root assembles Opts from flags that carry no clock at all.
 func NewClaude(runner CommandRunner, opts Opts) *Claude {
 	return &Claude{proc: newProc("claude", runner, opts)}
+}
+
+// Authenticated asks Claude for the state used by a review. The project settings selection matches
+// the reviewer process; a user-only apiKeyHelper must not make an otherwise unauthenticated run pass.
+func (c *Claude) Authenticated(ctx context.Context) (bool, error) {
+	out, err := c.authCommand(ctx, "--setting-sources", "project", "auth", "status", "--json").Output()
+	var state struct {
+		LoggedIn *bool `json:"loggedIn"`
+	}
+	if json.Unmarshal(out, &state) == nil && state.LoggedIn != nil {
+		if *state.LoggedIn && err != nil {
+			return false, fmt.Errorf("claude auth status: %w", err)
+		}
+		return *state.LoggedIn, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("claude auth status: %w", err)
+	}
+	return false, errors.New("claude auth status returned no loggedIn value")
+}
+
+// Login starts the provider's interactive flow on the controlling terminal.
+func (c *Claude) Login(ctx context.Context, terminal io.ReadWriter) error {
+	if terminal == nil {
+		return errors.New("run `claude auth login` in a terminal")
+	}
+	return c.login(ctx, terminal, "auth", "login")
 }
 
 // Run executes one request and reports what happened. A non-zero exit or an idle timeout comes back on

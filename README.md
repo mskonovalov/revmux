@@ -103,10 +103,10 @@ Install the skill through one marketplace only. If you previously copied or syml
 `~/.codex/skills/revmux`, remove that copy after installing the plugin. Then ask for a review in words:
 revmux this branch, revmux pr 123, re-review after fixes. See [Agent skills](#agent-skills) for what it does.
 
-revmux drives the model CLIs as subprocesses, so whichever ones your profile names must already be installed
-and authenticated: both for `comprehensive`, `focused`, `final`, `grill-me`, `triage` and `expert`, claude
-alone for `claude-only`, codex alone for `codex-only`. `preflight.sh` in the shipped skill answers it for any
-profile and any invocation.
+revmux drives model CLIs as subprocesses. `preflight.sh` in the shipped skill checks which binaries
+an invocation needs; `revmux --profile <name> auth` checks the required Claude and Codex credentials
+and starts their login flows if needed. Run it before preparing a round. The review command checks
+again before claiming the round.
 
 `ANTHROPIC_API_KEY` is stripped from the child environment by default so `claude` uses interactive
 subscription auth; pass `--preserve-anthropic-api-key` if you authenticate by key.
@@ -311,10 +311,11 @@ the roster keys, the model grammar and what each of the thirteen lenses looks fo
 
 ## Subcommands
 
-All five print JSON on stdout and exit before any review starts.
+The five data commands print JSON on stdout; `auth` reports login activity on the terminal and leaves report stdout empty.
 
 | command | does |
 |---|---|
+| `revmux auth` | checks every required CLI for the selected profile and starts interactive login if needed, before any round is opened |
 | `revmux config` | reports the resolved configuration: knobs with their precedence layer, every profile, lens and stage, and the task store |
 | `revmux new` | creates a task, a round and its `input/`, and prints every path plus which of them it created |
 | `revmux init` | copies each prompt file down from the layer that won it, reporting which one that was, and writes the config from the shipped template |

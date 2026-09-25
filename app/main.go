@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 	"time"
 
@@ -50,6 +52,7 @@ type runOpts struct {
 	stderr     io.Writer
 	openTTY    func() (*os.File, error)
 	newRunner  func(pipeline.RunnerSpec) pipeline.Runner
+	newAuth    func(string) executor.Authenticator
 	snapshot   func(reviewContext) []ui.InputDocument
 }
 
@@ -104,6 +107,8 @@ func run(o runOpts) int {
 			return o.fail(err)
 		}
 		return 0
+	case o.opts.showAuth:
+		return o.runAuth()
 	case o.opts.showNew:
 		if err := o.writeTaskPaths(); err != nil {
 			return o.fail(err)
@@ -121,7 +126,12 @@ func run(o runOpts) int {
 		return 0
 	}
 
-	review, err := o.pipelineConfig()
+	// the pipeline and authentication run under a signal-canceled context so an interrupt tears
+	// down a model CLI or an interactive login rather than leaving either process behind
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	review, err := o.pipelineConfig(ctx)
 	if err != nil {
 		return o.fail(err)
 	}
@@ -130,9 +140,6 @@ func run(o runOpts) int {
 	// the pipeline runs under a signal-canceled context so an interrupt tears the agent process groups
 	// down: children are started with Setsid, so the terminal never signals them and dying without
 	// canceling would leave every model CLI and everything it spawned running unsupervised
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	rep, err := o.review(ctx, review)
 	if err != nil {
 		return o.fail(err)
@@ -172,7 +179,7 @@ func (o runOpts) writeJSON(payload any, what string) error {
 // pipelineConfig resolves everything the pipeline needs, plus the archive package main writes its own
 // artifacts through. The roster is resolved exactly once, here: the archive manifest and both
 // renderers take that same slice rather than re-deriving it.
-func (o runOpts) pipelineConfig() (configuredReview, error) {
+func (o runOpts) pipelineConfig(ctx context.Context) (configuredReview, error) {
 	if o.opts.Task == "" {
 		return configuredReview{}, errors.New("--task is required")
 	}
@@ -192,6 +199,10 @@ func (o runOpts) pipelineConfig() (configuredReview, error) {
 	roster, err := profile.Roster(o.opts.Lenses, set.LensNames())
 	if err != nil {
 		return configuredReview{}, fmt.Errorf("resolve roster: %w", err)
+	}
+
+	if authErr := o.authenticate(ctx, rc, set, profile, roster); authErr != nil {
+		return configuredReview{}, authErr
 	}
 
 	// resolved before this round is claimed, so the round being written is never in its own inventory
@@ -377,6 +388,75 @@ func (o runOpts) runnerFactory(rc reviewContext) func(pipeline.RunnerSpec) pipel
 	claude, codex := executor.NewClaude(runner, eo), executor.NewCodex(runner, eo)
 	return func(spec pipeline.RunnerSpec) pipeline.Runner {
 		if spec.Executor == executorCodex {
+			return codex
+		}
+		return claude
+	}
+}
+
+// authenticate checks every executor this profile will run before the archive claims a round.
+// A logged-out CLI starts its own login flow on the controlling terminal, never on report stdout.
+func (o runOpts) authenticate(ctx context.Context, rc reviewContext, set *prompt.Set, profile *prompt.Profile, roster []prompt.AgentSpec) error {
+	needed := map[string]bool{}
+	for _, agent := range roster {
+		needed[agent.Executor] = true
+	}
+	for _, stage := range []struct {
+		name     string
+		disabled bool
+	}{{"synthesis", o.opts.NoSynthesis}, {"verify", o.opts.NoVerify}} {
+		if stage.disabled {
+			continue
+		}
+		selected, err := profile.Stage(set, stage.name)
+		if err != nil {
+			return fmt.Errorf("resolve %s runner: %w", stage.name, err)
+		}
+		needed[selected.Executor] = true
+	}
+
+	factory := o.authFactory(rc)
+	for _, name := range slices.Sorted(maps.Keys(needed)) {
+		auth := factory(name)
+		loggedIn, err := auth.Authenticated(ctx)
+		if err != nil {
+			return fmt.Errorf("check %s authentication: %w", name, err)
+		}
+		if loggedIn {
+			continue
+		}
+		if o.openTTY == nil {
+			return fmt.Errorf("%s is not authenticated: %w", name, auth.Login(ctx, nil))
+		}
+		terminal, err := o.openTTY()
+		if err != nil {
+			return fmt.Errorf("%s is not authenticated: %w", name, auth.Login(ctx, nil))
+		}
+		_, _ = fmt.Fprintf(o.stderr, "%s is not authenticated; starting login on the terminal\n", name)
+		loginErr := auth.Login(ctx, terminal)
+		_ = terminal.Close()
+		if loginErr != nil {
+			return fmt.Errorf("authenticate %s: %w", name, loginErr)
+		}
+		loggedIn, err = auth.Authenticated(ctx)
+		if err != nil {
+			return fmt.Errorf("recheck %s authentication: %w", name, err)
+		}
+		if !loggedIn {
+			return fmt.Errorf("%s login completed without authentication", name)
+		}
+	}
+	return nil
+}
+
+func (o runOpts) authFactory(rc reviewContext) func(string) executor.Authenticator {
+	if o.newAuth != nil {
+		return o.newAuth
+	}
+	runner, eo := executor.NewRunner(), o.opts.executorOpts(rc, o.clock)
+	claude, codex := executor.NewClaude(runner, eo), executor.NewCodex(runner, eo)
+	return func(name string) executor.Authenticator {
+		if name == executorCodex {
 			return codex
 		}
 		return claude

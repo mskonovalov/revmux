@@ -73,7 +73,7 @@ func TestRun_projectProfileSnapshot(t *testing.T) {
 		r, root := archiveRun(t)
 		ro := r.opts()
 
-		review, err := ro.pipelineConfig()
+		review, err := ro.pipelineConfig(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, ro.materializeProfile(review.archive, review.context))
 		require.NoError(t, review.archive.Close())
@@ -106,7 +106,7 @@ func TestRun_projectProfileSnapshot(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(input, task.ProfileFile), []byte("# this round\n"), 0o600))
 		ro := r.opts()
 
-		review, err := ro.pipelineConfig()
+		review, err := ro.pipelineConfig(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, ro.materializeProfile(review.archive, review.context))
 		require.NoError(t, review.archive.Close())
@@ -124,7 +124,7 @@ func TestRun_projectProfileSnapshot(t *testing.T) {
 		r, root := archiveRun(t)
 		ro := r.opts()
 
-		review, err := ro.pipelineConfig()
+		review, err := ro.pipelineConfig(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, os.Remove(review.context.ProfileSource))
 
@@ -142,7 +142,7 @@ func TestRun_projectProfileSnapshot(t *testing.T) {
 		r, root := archiveRun(t)
 		ro := r.opts()
 
-		review, err := ro.pipelineConfig()
+		review, err := ro.pipelineConfig(t.Context())
 		require.NoError(t, err)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()

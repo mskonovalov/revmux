@@ -73,6 +73,7 @@ type options struct {
 	Version      bool   `long:"version" no-ini:"true" description:"show version and exit"`
 
 	Config  configCmd  `command:"config" description:"print the resolved configuration as JSON"`
+	Auth    authCmd    `command:"auth" description:"check and restore authentication for the selected profile"`
 	New     newCmd     `command:"new" description:"create a task round and print the paths its context goes in"`
 	InitCmd initCmd    `command:"init" description:"materialize the resolved prompt tree and a config template into ./.revmux/"`
 	Stats   statsCmd   `command:"stats" description:"print what past rounds produced, per agent and per lens, as JSON"`
@@ -81,6 +82,7 @@ type options struct {
 	layers      configLayers
 	knobOrigins map[string]string
 	showConfig  bool
+	showAuth    bool
 	showNew     bool
 	showInit    bool
 	showStats   bool
@@ -119,7 +121,7 @@ func parseArgs(args []string) (options, error) {
 	p := flags.NewParser(&o, flags.HelpFlag|flags.PassDoubleDash)
 	p.SubcommandsOptional = true // a plain `revmux --task pr-123` carries no command word
 	// the back-pointers are only how each Execute records the selection during this parse
-	o.Config.opts, o.New.opts, o.InitCmd.opts, o.Stats.opts, o.Cleanup.opts = &o, &o, &o, &o, &o
+	o.Config.opts, o.Auth.opts, o.New.opts, o.InitCmd.opts, o.Stats.opts, o.Cleanup.opts = &o, &o, &o, &o, &o, &o
 	if _, err := p.ParseArgs(args); err != nil {
 		return o, fmt.Errorf("parse arguments: %w", err)
 	}

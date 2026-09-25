@@ -102,6 +102,19 @@ the JSON unparseable.
 
 Checks revmux plus every binary the invocation needs. Exits `1` naming what is missing.
 
+**Before Step 1 or any `revmux new`, authenticate the same profile and flags the review will use:**
+
+```bash
+revmux [--profile <name>] [--lenses <names>] [--no-synthesis] [--no-verify] auth
+```
+
+This checks each required Claude and Codex CLI once before a round exists. A logged-out provider starts
+its own interactive login when a controlling terminal is available, then revmux checks its status again.
+In a headless shell without a terminal, stop and give the user the login command revmux reports; retry
+the same `revmux auth` command after they authenticate. Do not prepare a partial review or substitute a
+profile. The review command also checks auth before it opens the round archive in case credentials
+expire between this preflight and launch.
+
 **Pass the profile that will actually run.** Which executors are needed comes from that profile's
 roster, and with no argument preflight checks the resolved *default* instead — so a run under a
 profile the default does not share a roster with is never checked at all, and degrades mid-review over
