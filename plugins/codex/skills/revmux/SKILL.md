@@ -112,7 +112,8 @@ This checks each required Claude and Codex CLI once before a round exists. A log
 its own interactive login when a controlling terminal is available, then revmux checks its status again.
 In a headless shell without a terminal, stop and give the user the login command revmux reports; retry
 the same `revmux auth` command after they authenticate. Do not prepare a partial review or substitute a
-profile. The review command also checks auth before it opens the round archive in case credentials
+profile. If Step 3 selects a different profile or flags, run `revmux auth` again for that selection
+before launch. The review command also checks auth before it opens the round archive in case credentials
 expire between this preflight and launch.
 
 **Pass the profile that will actually run.** Which executors are needed comes from that profile's
