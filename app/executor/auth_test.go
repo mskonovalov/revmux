@@ -79,19 +79,32 @@ func TestCodex_Authentication(t *testing.T) {
 	}
 }
 
-func TestCodex_Authentication_envCredentialDoesNotTriggerLogin(t *testing.T) {
-	for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
+func TestCodex_Authentication_envCredentialTakesPrecedence(t *testing.T) {
+	for _, key := range []string{"CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
 		t.Run(key, func(t *testing.T) {
 			for _, other := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
 				t.Setenv(other, "")
 			}
 			t.Setenv(key, "configured-credential")
-			provider := executor.NewCodex(fakeRunner("fail", writeFixture(t, []byte("Not logged in"))), executor.Opts{})
+			runner := fakeRunner("emit", writeFixture(t, []byte("Logged in using ChatGPT")))
+			provider := executor.NewCodex(runner, executor.Opts{})
 			loggedIn, err := provider.Authenticated(t.Context())
 			require.NoError(t, err)
 			assert.True(t, loggedIn)
+			assert.Empty(t, runner.CommandCalls(), "stored login status does not check the effective exec credential")
 		})
 	}
+}
+
+func TestCodex_Authentication_openaiApiKeyAloneDoesNotAuthenticate(t *testing.T) {
+	for _, key := range []string{"CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("OPENAI_API_KEY", "configured-credential")
+	provider := executor.NewCodex(fakeRunner("fail", writeFixture(t, []byte("Not logged in"))), executor.Opts{})
+	loggedIn, err := provider.Authenticated(t.Context())
+	require.NoError(t, err)
+	assert.False(t, loggedIn)
 }
 
 func TestCodex_Authentication_loggedOutOnStderr(t *testing.T) {

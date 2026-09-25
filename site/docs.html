@@ -222,8 +222,8 @@ codex plugin add revmux@revmux</pre>
 
         <h3>Model CLIs</h3>
         <p>
-          revmux drives the model CLIs as subprocesses, so whichever ones your profile names must already be
-          installed and authenticated. Which those are is a property of the profile, not a fixed pair:
+          revmux drives the model CLIs as subprocesses, so whichever ones your profile names must be
+          installed. Which those are is a property of the profile, not a fixed pair:
         </p>
         <ul>
           <li>
@@ -234,8 +234,10 @@ codex plugin add revmux@revmux</pre>
           <li><code>codex-only</code>: codex alone</li>
         </ul>
         <p>
-          <code>preflight.sh</code> in the shipped skill answers it for any profile and any invocation,
-          <code>--lenses</code> included.
+          <code>preflight.sh</code> in the shipped skill checks the required binaries for any profile and
+          invocation, <code>--lenses</code> included. Before a review round is claimed, revmux checks the
+          configured CLIs' authentication and starts their login flow when needed. Without a terminal,
+          it reports the command to run manually.
         </p>
         <p>
           <code>ANTHROPIC_API_KEY</code> is stripped from the child environment by default so

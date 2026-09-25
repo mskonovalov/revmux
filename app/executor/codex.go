@@ -53,9 +53,12 @@ func NewCodex(runner CommandRunner, opts Opts) *Codex {
 
 // Authenticated reads Codex's login status without starting a model request.
 func (c *Codex) Authenticated(ctx context.Context) (bool, error) {
+	if codexEnvCredentialAvailable() {
+		return true, nil
+	}
 	out, err := c.authCommand(ctx, "login", "status").CombinedOutput()
 	if strings.Contains(strings.ToLower(string(out)), "not logged in") {
-		return codexEnvCredentialAvailable(), nil
+		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("codex login status: %w", err)
@@ -66,9 +69,9 @@ func (c *Codex) Authenticated(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// Codex accepts these credentials from the environment even without a stored CLI login.
+// Codex exec accepts these credentials from the environment ahead of a stored CLI login.
 func codexEnvCredentialAvailable() bool {
-	for _, name := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
+	for _, name := range []string{"CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
 		if strings.TrimSpace(os.Getenv(name)) != "" {
 			return true
 		}

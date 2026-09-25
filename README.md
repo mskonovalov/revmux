@@ -106,7 +106,8 @@ revmux this branch, revmux pr 123, re-review after fixes. See [Agent skills](#ag
 revmux drives model CLIs as subprocesses. `preflight.sh` in the shipped skill checks which binaries
 an invocation needs. When a review starts, revmux checks authentication for the configured roster
 and enabled stages before claiming the round. It starts the required CLI login flow only when needed;
-a Codex environment credential does not require a stored login.
+a Codex environment credential does not require a stored login. A status check cannot validate
+an environment key against the API; a real request can still fail if the key is stale.
 
 `ANTHROPIC_API_KEY` is stripped from the child environment by default so `claude` uses interactive
 subscription auth; pass `--preserve-anthropic-api-key` if you authenticate by key.

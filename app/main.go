@@ -124,9 +124,8 @@ func run(o runOpts) int {
 		return 0
 	}
 
-	// the pipeline and authentication run under a signal-canceled context so an interrupt tears the
-	// agent process groups or interactive login down: children are started with Setsid, so the
-	// terminal never signals them and dying without canceling would leave model CLIs running
+	// authentication uses a signal-canceled context so an interrupt stops interactive login before
+	// the review round is claimed
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -136,6 +135,9 @@ func run(o runOpts) int {
 	}
 	defer review.archive.Close() // every artifact is already on disk, only the directory handles are left
 
+	// the pipeline runs under a signal-canceled context so an interrupt tears the agent process groups
+	// down: children are started with Setsid, so the terminal never signals them and dying without
+	// canceling would leave every model CLI and everything it spawned running unsupervised
 	rep, err := o.review(ctx, review)
 	if err != nil {
 		return o.fail(err)

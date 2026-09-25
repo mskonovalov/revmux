@@ -566,12 +566,17 @@ form: the decision is the user's, one task per call.
 
 ## Environment
 
-revmux drives the model CLIs as subprocesses, so both must already be installed and authenticated:
+revmux drives the model CLIs as subprocesses, so the configured ones must be installed:
 
 - `claude` — every lens agent and both model stages run on it by default
 - `codex` — needed when a profile, a roster entry or a stage names it in its `model:`. `claude-only`
   needs claude alone and `codex-only` needs codex alone; the other six shipped profiles need both.
-  `preflight.sh <profile>` answers it for the profile that will actually run
+  `preflight.sh <profile>` checks binaries for the profile that will actually run
+
+Before a review round is claimed, revmux checks authentication for the configured roster and enabled
+stages. If a CLI reports logged out, revmux starts its login flow on the terminal and checks again;
+without a terminal, it reports the command to run manually. An environment credential does not need
+a stored login, but its validity is only known when a real request runs.
 
 `ANTHROPIC_API_KEY` is stripped from the child environment by default so `claude` uses interactive
 subscription auth; `--preserve-anthropic-api-key` passes it through for key-based auth. `CLAUDECODE`
