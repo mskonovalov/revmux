@@ -96,7 +96,7 @@ Checks revmux plus every binary the invocation needs. Exits `1` naming what is m
 revmux [--profile <name>] [--lenses <names>] [--no-synthesis] [--no-verify] auth
 ```
 
-This checks each required Claude and Codex CLI once before a round exists. A logged-out provider starts
+This checks each required Claude and Codex CLI once before a round exists. A provider without stored login or a configured environment credential starts
 its own interactive login when a controlling terminal is available, then revmux checks its status again.
 In a headless shell without a terminal, stop and give the user the login command revmux reports; retry
 the same `revmux auth` command after they authenticate. Do not prepare a partial review or substitute a

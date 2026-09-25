@@ -59,6 +59,9 @@ func TestCodex_Authentication(t *testing.T) {
 		{"unexpected failure", "fail", "other failure", false, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
+				t.Setenv(key, "")
+			}
 			runner := fakeRunner(tt.mode, writeFixture(t, []byte(tt.output)))
 			provider := executor.NewCodex(runner, executor.Opts{})
 			got, err := provider.Authenticated(t.Context())
@@ -76,7 +79,25 @@ func TestCodex_Authentication(t *testing.T) {
 	}
 }
 
+func TestCodex_Authentication_envCredentialDoesNotTriggerLogin(t *testing.T) {
+	for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
+		t.Run(key, func(t *testing.T) {
+			for _, other := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
+				t.Setenv(other, "")
+			}
+			t.Setenv(key, "configured-credential")
+			provider := executor.NewCodex(fakeRunner("fail", writeFixture(t, []byte("Not logged in"))), executor.Opts{})
+			loggedIn, err := provider.Authenticated(t.Context())
+			require.NoError(t, err)
+			assert.True(t, loggedIn)
+		})
+	}
+}
+
 func TestCodex_Authentication_loggedOutOnStderr(t *testing.T) {
+	for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
+		t.Setenv(key, "")
+	}
 	runner := fakeRunner("fail", writeFixture(t, nil), writeFixture(t, []byte("Not logged in")))
 	provider := executor.NewCodex(runner, executor.Opts{})
 	loggedIn, err := provider.Authenticated(t.Context())

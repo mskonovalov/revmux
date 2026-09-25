@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -54,7 +55,7 @@ func NewCodex(runner CommandRunner, opts Opts) *Codex {
 func (c *Codex) Authenticated(ctx context.Context) (bool, error) {
 	out, err := c.authCommand(ctx, "login", "status").CombinedOutput()
 	if strings.Contains(strings.ToLower(string(out)), "not logged in") {
-		return false, nil
+		return codexEnvCredentialAvailable(), nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("codex login status: %w", err)
@@ -63,6 +64,16 @@ func (c *Codex) Authenticated(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("codex login status returned unexpected output: %q", strings.TrimSpace(string(out)))
 	}
 	return true, nil
+}
+
+// Codex accepts these credentials from the environment even without a stored CLI login.
+func codexEnvCredentialAvailable() bool {
+	for _, name := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // Login starts the provider's interactive flow on the controlling terminal.

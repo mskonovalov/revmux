@@ -105,7 +105,8 @@ revmux this branch, revmux pr 123, re-review after fixes. See [Agent skills](#ag
 
 revmux drives model CLIs as subprocesses. `preflight.sh` in the shipped skill checks which binaries
 an invocation needs; `revmux --profile <name> auth` checks the required Claude and Codex credentials
-and starts their login flows if needed. Run it before preparing a round. The review command checks
+and starts their login flows if needed. A Codex environment credential does not require a stored login.
+Run it before preparing a round. The review command checks
 again before claiming the round.
 
 `ANTHROPIC_API_KEY` is stripped from the child environment by default so `claude` uses interactive
