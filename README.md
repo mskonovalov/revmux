@@ -104,10 +104,9 @@ Install the skill through one marketplace only. If you previously copied or syml
 revmux this branch, revmux pr 123, re-review after fixes. See [Agent skills](#agent-skills) for what it does.
 
 revmux drives model CLIs as subprocesses. `preflight.sh` in the shipped skill checks which binaries
-an invocation needs; `revmux --profile <name> auth` checks the required Claude and Codex credentials
-and starts their login flows if needed. A Codex environment credential does not require a stored login.
-Run it before preparing a round. The review command checks
-again before claiming the round.
+an invocation needs. When a review starts, revmux checks authentication for the configured roster
+and enabled stages before claiming the round. It starts the required CLI login flow only when needed;
+a Codex environment credential does not require a stored login.
 
 `ANTHROPIC_API_KEY` is stripped from the child environment by default so `claude` uses interactive
 subscription auth; pass `--preserve-anthropic-api-key` if you authenticate by key.
@@ -312,11 +311,10 @@ the roster keys, the model grammar and what each of the thirteen lenses looks fo
 
 ## Subcommands
 
-The five data commands print JSON on stdout; `auth` reports login activity on the terminal and leaves report stdout empty.
+All five print JSON on stdout and exit before any review starts.
 
 | command | does |
 |---|---|
-| `revmux auth` | checks every required CLI for the selected profile and starts interactive login if needed, before any round is opened |
 | `revmux config` | reports the resolved configuration: knobs with their precedence layer, every profile, lens and stage, and the task store |
 | `revmux new` | creates a task, a round and its `input/`, and prints every path plus which of them it created |
 | `revmux init` | copies each prompt file down from the layer that won it, reporting which one that was, and writes the config from the shipped template |

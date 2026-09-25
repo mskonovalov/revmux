@@ -189,17 +189,13 @@
         </p>
 
         <h2 id="subcommands">Subcommands <a class="anchor" href="#subcommands">#</a></h2>
-        <p>The data subcommands print JSON on stdout. <code>revmux auth</code> checks login before any review and leaves report stdout empty. None uses exit <code>1</code> for findings.</p>
+        <p>All print JSON on stdout and exit before any review starts. None of them ever exits <code>1</code>.</p>
         <div class="scroll-x">
           <table class="tbl">
             <thead>
               <tr><th>command</th><th>does</th></tr>
             </thead>
             <tbody>
-              <tr>
-                <td>revmux auth</td>
-                <td class="prose">checks the selected profile’s Claude and Codex authentication, starts interactive login if no stored or environment credential is configured, and creates no round</td>
-              </tr>
               <tr>
                 <td>revmux config</td>
                 <td class="prose">
