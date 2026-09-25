@@ -40,6 +40,12 @@ const executorCodex = "codex"
 // It is a constant rather than a flag because there is nothing here a caller can calibrate better.
 const agentRetryDelay = 5 * time.Second
 
+// authenticator is owned by the startup gate that consumes the provider implementations.
+type authenticator interface {
+	Authenticated(context.Context) (bool, error)
+	Login(context.Context, io.ReadWriter) error
+}
+
 // runOpts is what run needs from its surroundings. Every one of them is injected so the whole entry
 // point is drivable from a test: no real terminal, no real clock, no writes to the process streams.
 type runOpts struct {
@@ -52,7 +58,7 @@ type runOpts struct {
 	stderr     io.Writer
 	openTTY    func() (*os.File, error)
 	newRunner  func(pipeline.RunnerSpec) pipeline.Runner
-	newAuth    func(string) executor.Authenticator
+	newAuth    func(string) authenticator
 	snapshot   func(reviewContext) []ui.InputDocument
 }
 
@@ -447,13 +453,13 @@ func (o runOpts) authenticate(ctx context.Context, rc reviewContext, set *prompt
 	return nil
 }
 
-func (o runOpts) authFactory(rc reviewContext) func(string) executor.Authenticator {
+func (o runOpts) authFactory(rc reviewContext) func(string) authenticator {
 	if o.newAuth != nil {
 		return o.newAuth
 	}
 	runner, eo := executor.NewRunner(), o.opts.executorOpts(rc, o.clock)
 	claude, codex := executor.NewClaude(runner, eo), executor.NewCodex(runner, eo)
-	return func(name string) executor.Authenticator {
+	return func(name string) authenticator {
 		if name == executorCodex {
 			return codex
 		}

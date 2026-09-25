@@ -267,7 +267,7 @@ func TestRun_authenticationBeforeArchive(t *testing.T) {
 		ro := r.opts()
 		checked := map[string]int{}
 		logins := map[string]int{}
-		ro.newAuth = func(name string) executor.Authenticator {
+		ro.newAuth = func(name string) authenticator {
 			return authProviderMock{
 				status: func() (bool, error) {
 					checked[name]++
@@ -293,7 +293,7 @@ func TestRun_authenticationBeforeArchive(t *testing.T) {
 	t.Run("a headless logged-out run names the login command before opening the round", func(t *testing.T) {
 		r := newRunOpts(t, newOptions(t))
 		ro := r.opts()
-		ro.newAuth = func(name string) executor.Authenticator {
+		ro.newAuth = func(name string) authenticator {
 			return authProviderMock{
 				status: func() (bool, error) { return name != "claude", nil },
 				login: func(terminal io.ReadWriter) error {
@@ -1233,7 +1233,7 @@ func (r *runHarness) opts() runOpts {
 		opts: r.o, clock: clk, stdout: r.stdout, stderr: r.stderr,
 		openTTY:   func() (*os.File, error) { return nil, errors.New("no tty in tests") },
 		newRunner: r.newRunner,
-		newAuth:   func(string) executor.Authenticator { return authenticatedProvider{} },
+		newAuth:   func(string) authenticator { return authenticatedProvider{} },
 	}
 }
 
