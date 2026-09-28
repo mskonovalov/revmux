@@ -133,7 +133,9 @@ func TestCodex_Authentication_customProviderWithoutOpenAIAuth(t *testing.T) {
 		name, doctor string
 		want         bool
 	}{
-		{"custom provider", `{"checks":{"auth.credentials":{"details":{"model provider requires OpenAI auth":"false"}}}}`, true},
+		// the array-valued detail is the shape a real doctor report carries in unrelated checks
+		{"custom provider", `{"checks":{"auth.credentials":{"details":{"model provider requires OpenAI auth":"false"}},` +
+			`"state.rollout_db_parity":{"details":{"rollout DB missing active sample":["id"]}}}}`, true},
 		{"OpenAI provider", `{"checks":{"auth.credentials":{"details":{"model provider requires OpenAI auth":"true"}}}}`, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

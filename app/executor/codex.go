@@ -61,13 +61,17 @@ func (c *Codex) Authenticated(ctx context.Context) (bool, error) {
 		// A custom model provider may not require OpenAI login. Doctor reports this from the
 		// effective Codex config even when unrelated checks make its command exit non-zero.
 		doctor, _ := c.authCommand(ctx, "doctor", "--json").Output()
+		// other checks carry non-string details, so only this one field is decoded
 		var report struct {
-			Checks map[string]struct {
-				Details map[string]string `json:"details"`
+			Checks struct {
+				Auth struct {
+					Details struct {
+						RequiresOpenAIAuth string `json:"model provider requires OpenAI auth"`
+					} `json:"details"`
+				} `json:"auth.credentials"`
 			} `json:"checks"`
 		}
-		if json.Unmarshal(doctor, &report) == nil &&
-			report.Checks["auth.credentials"].Details["model provider requires OpenAI auth"] == "false" {
+		if json.Unmarshal(doctor, &report) == nil && report.Checks.Auth.Details.RequiresOpenAIAuth == "false" {
 			return true, nil
 		}
 		return false, nil
