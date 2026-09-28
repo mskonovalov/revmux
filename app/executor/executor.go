@@ -72,6 +72,8 @@ type Opts struct {
 	WorkDir        string
 	PreserveAPIKey bool
 	Clock          Clock
+	// ClaudeSettings is passed to every claude process through --settings.
+	ClaudeSettings string
 	// GatewayCheck and GatewayLogin are command lines for an external model provider's credentials.
 	GatewayCheck string
 	GatewayLogin string

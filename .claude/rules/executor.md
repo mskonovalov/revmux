@@ -114,7 +114,10 @@ claude --print --output-format stream-json --verbose
   does not explain it.
   **`apiKeyHelper` has no such route** — it is a settings key rather than a variable, so the user layer's
   copy is dropped on both paths. A setup whose headless authentication lives only there loses it.
-  A helper the project layer does carry is still in effect.
+  `claude-settings` is the route back: it is passed as `--settings`, a flag layer the source selection
+  does not filter, so a file carrying only the helper and its `env` reaches every agent while the rest of
+  the user layer stays dropped. Measured: with it, `auth status` reports the gateway base URL and a
+  `--model opus` request resolves through the gateway's alias map.
   `auth status` reports such a helper as `loggedIn: true` without running it — measured with a helper
   that exits 1 — so `Claude.Authenticated` hands an `apiKeySource: apiKeyHelper` state to `gateway-check`.
 - The allowlist is what removes the edit tools from the agent's context — revmux never modifies source —

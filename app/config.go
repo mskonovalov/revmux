@@ -66,8 +66,10 @@ type options struct {
 	AutoExit      time.Duration `long:"auto-exit" ini-name:"auto-exit" default:"0s" description:"close the terminal UI this long after the report arrives; 0 never closes it"`
 	Profile       string        `long:"profile" ini-name:"profile" default:"comprehensive" description:"profile naming the roster to run"`
 	CodexSandbox  string        `long:"codex-sandbox" ini-name:"codex-sandbox" choice:"read-only" choice:"workspace-write" choice:"danger-full-access" default:"read-only" description:"sandbox codex agents run their commands under"`
-	GatewayCheck  string        `long:"gateway-check" ini-name:"gateway-check" description:"command that exits 0 while an external model provider's credentials are valid"`
-	GatewayLogin  string        `long:"gateway-login" ini-name:"gateway-login" description:"command that logs in to an external model provider"`
+
+	ClaudeSettings string `long:"claude-settings" ini-name:"claude-settings" description:"settings file or JSON passed to every claude agent through --settings, such as one naming a gateway apiKeyHelper"`
+	GatewayCheck   string `long:"gateway-check" ini-name:"gateway-check" description:"command that exits 0 while an external model provider's credentials are valid"`
+	GatewayLogin   string `long:"gateway-login" ini-name:"gateway-login" description:"command that logs in to an external model provider"`
 
 	ConfigDir    string `long:"config-dir" no-ini:"true" description:"directory holding the config file and the prompt tree"`
 	Init         bool   `long:"init" no-ini:"true" description:"materialize the resolved prompt tree and a config template into ./.revmux/"`
@@ -314,6 +316,7 @@ func (o options) executorOpts(rc reviewContext, clk executor.Clock) executor.Opt
 		CodexSandbox:   o.CodexSandbox,
 		WorkDir:        rc.WorkDir,
 		PreserveAPIKey: o.PreserveAPIKey,
+		ClaudeSettings: o.ClaudeSettings,
 		GatewayCheck:   o.GatewayCheck,
 		GatewayLogin:   o.GatewayLogin,
 		Clock:          clk,

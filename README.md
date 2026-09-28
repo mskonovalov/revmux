@@ -108,7 +108,7 @@ an invocation needs. When a review starts, revmux checks authentication for the 
 and enabled stages before claiming the round. It starts the required CLI login flow only when needed;
 a Codex environment credential does not require a stored login. A status check cannot validate
 an environment key against the API; a real request can still fail if the key is stale.
-When codex uses an external provider such as an AI gateway, or claude authenticates through an
+When codex uses an external provider such as an AI gateway, or `claude-settings` gives claude an
 `apiKeyHelper`, the `gateway-check` and `gateway-login` config keys name the commands that check and
 renew that provider's login instead.
 

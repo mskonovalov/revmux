@@ -55,7 +55,11 @@ func (c *Claude) Authenticated(ctx context.Context) (bool, error) {
 
 // statusCommand carries the reviewer's settings selection, so status describes the credentials a review uses.
 func (c *Claude) statusCommand(ctx context.Context) *exec.Cmd {
-	return c.authCommand(ctx, "--setting-sources", "project", "auth", "status", "--json")
+	args := []string{"--setting-sources", "project"}
+	if c.opts.ClaudeSettings != "" {
+		args = append(args, "--settings", c.opts.ClaudeSettings)
+	}
+	return c.authCommand(ctx, append(args, "auth", "status", "--json")...)
 }
 
 // Login starts the provider's interactive flow on the controlling terminal.
@@ -132,6 +136,9 @@ func (c *Claude) args(req Request) []string {
 		"--disable-slash-commands",
 		"--no-session-persistence",
 		"--include-partial-messages",
+	}
+	if c.opts.ClaudeSettings != "" {
+		argv = append(argv, "--settings", c.opts.ClaudeSettings)
 	}
 	if req.Model != "" {
 		argv = append(argv, "--model", req.Model)

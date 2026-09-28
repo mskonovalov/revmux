@@ -39,6 +39,10 @@
 # bubblewrap sandbox needs user namespaces and every command fails before it runs without them
 # codex-sandbox = read-only
 
+# settings file or JSON passed to every claude agent through --settings. agents skip the user settings
+# layer, so an apiKeyHelper routing claude through a gateway is named here, with the env it needs
+# claude-settings =
+
 # commands for an external model provider, such as an AI gateway, that an agent reaches without its own
 # CLI login: codex with a provider needing no OpenAI login, or claude with an apiKeyHelper. the check
 # exits 0 while its credentials are valid; the login runs on the terminal when it fails.

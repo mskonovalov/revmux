@@ -578,7 +578,7 @@ stages. If a CLI reports logged out, revmux starts its login flow on the termina
 without a terminal, it reports the command to run manually. An environment credential does not need
 a stored login, but its validity is only known when a real request runs.
 When codex uses an external provider such as an AI gateway, `codex login status` describes a login the
-provider never uses; the same holds for `claude auth status` when claude authenticates through an
+provider never uses; the same holds for `claude auth status` once `claude-settings` gives claude an
 `apiKeyHelper`. The `gateway-check` and `gateway-login` config keys name the commands that check and
 renew the provider's own login instead.
 

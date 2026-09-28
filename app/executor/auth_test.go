@@ -61,13 +61,14 @@ func TestClaude_Authentication_keyHelperUsesGatewayCheck(t *testing.T) {
 				}
 				return helperCmd(tt.mode, check)
 			}}
-			opts := executor.Opts{GatewayCheck: "ai-gateway token"}
+			opts := executor.Opts{ClaudeSettings: "/cfg/gateway.json", GatewayCheck: "ai-gateway token"}
 			loggedIn, err := executor.NewClaude(runner, opts).Authenticated(t.Context())
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, loggedIn, "status reports the helper as logged in without running it")
 			calls := runner.CommandCalls()
 			require.Len(t, calls, 2)
-			assert.Equal(t, []string{"--setting-sources", "project", "auth", "status", "--json"}, calls[0].Args)
+			assert.Equal(t, []string{"--setting-sources", "project", "--settings", "/cfg/gateway.json", "auth", "status", "--json"},
+				calls[0].Args)
 			assert.Equal(t, "ai-gateway", calls[1].Name)
 		})
 	}
