@@ -244,6 +244,13 @@ codex plugin add revmux@revmux</pre>
           always stripped, since a <code>claude</code> child refuses to start when it thinks it is a nested
           session.
         </p>
+        <p>
+          <code>claude</code> also runs with <code>--setting-sources project</code>, so your user
+          <code>settings.json</code> is not loaded, and an <code>apiKeyHelper</code> set there never reaches the
+          agents. Put the helper in the reviewed repo's <code>.claude/settings.json</code>, or put a
+          <code>claude</code> wrapper first on <code>PATH</code> that runs the real binary, by absolute path,
+          with <code>--settings &lt;file&gt;</code> added.
+        </p>
 
         <h2 id="quick-start">Quick start <a class="anchor" href="#quick-start">#</a></h2>
         <p>
