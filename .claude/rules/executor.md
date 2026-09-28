@@ -114,6 +114,9 @@ claude --print --output-format stream-json --verbose
   does not explain it.
   **`apiKeyHelper` has no such route** — it is a settings key rather than a variable, so the user layer's
   copy is dropped on both paths. A setup whose headless authentication lives only there loses it.
+  A helper the project layer does carry is still in effect.
+  `auth status` reports such a helper as `loggedIn: true` without running it — measured with a helper
+  that exits 1 — so `Claude.Authenticated` hands an `apiKeySource: apiKeyHelper` state to `gateway-check`.
 - The allowlist is what removes the edit tools from the agent's context — revmux never modifies source —
   and it removes `Task`, so a reviewer cannot fan out into subagents of its own.
   There is no `--disallowedTools`: naming `Edit,Write` in a denylist beside an allowlist that omits them

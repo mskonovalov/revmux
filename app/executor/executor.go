@@ -72,6 +72,9 @@ type Opts struct {
 	WorkDir        string
 	PreserveAPIKey bool
 	Clock          Clock
+	// GatewayCheck and GatewayLogin are command lines for an external model provider's credentials.
+	GatewayCheck string
+	GatewayLogin string
 }
 
 // Request carries everything that varies between runs of one executor.

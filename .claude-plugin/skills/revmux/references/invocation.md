@@ -577,6 +577,10 @@ Before a review round is claimed, revmux checks authentication for the configure
 stages. If a CLI reports logged out, revmux starts its login flow on the terminal and checks again;
 without a terminal, it reports the command to run manually. An environment credential does not need
 a stored login, but its validity is only known when a real request runs.
+When codex uses an external provider such as an AI gateway, `codex login status` describes a login the
+provider never uses; the same holds for `claude auth status` when claude authenticates through an
+`apiKeyHelper`. The `gateway-check` and `gateway-login` config keys name the commands that check and
+renew the provider's own login instead.
 
 `ANTHROPIC_API_KEY` is stripped from the child environment by default so `claude` uses interactive
 subscription auth; `--preserve-anthropic-api-key` passes it through for key-based auth. `CLAUDECODE`
