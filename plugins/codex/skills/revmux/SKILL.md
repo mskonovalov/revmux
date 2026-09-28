@@ -673,14 +673,29 @@ Never the embedded tree, which is inside the binary — unless the working direc
 repo, where the lens and profile text ships from `app/prompt/defaults/` and a local override would fork
 it from what ships.
 
-Materialize the local tree first — idempotent, and it is what prints the paths:
+**Only the file the change edits goes there, and only once he says apply.** Prompt files resolve one
+file at a time, so a file absent from `./.revmux/` keeps following the shipped text as revmux upgrades.
+`revmux init` writes every resolved file, which freezes the whole tree at this version to change one
+file of it — never run it here.
+
+The path is the file's place in the prompt tree, `lenses/<name>.md` or `prompts/profiles/<name>.md`.
+If `./.revmux/<path>` exists, edit it in place. Otherwise copy the text that resolves today — the
+user layer's file when it has one, the embedded one when not — and edit the copy:
 
 ```bash
-revmux init
+f=lenses/adversarial.md   # the file the change edits
+if [ ! -e ".revmux/$f" ]; then
+  mkdir -p ".revmux/$(dirname "$f")"
+  if [ -e "$HOME/.config/revmux/$f" ]; then
+    cp "$HOME/.config/revmux/$f" ".revmux/$f"
+  else
+    d=$(mktemp -d /tmp/revmux-defaults.XXXXXX) && revmux --dump-defaults "$d" && cp "$d/$f" ".revmux/$f"
+  fi
+fi
 ```
 
-It writes every prompt file as it currently **resolves**, so a user-layer override is what gets copied
-down. **Edit only the paths it printed.** When `.revmux/` is tracked in git, say so if he hesitates:
+`--dump-defaults` skips any file already present, so it goes into a new empty directory every time; a
+reused one can hold superseded text. When `.revmux/` is tracked in git, say so if he hesitates:
 `git checkout` reverts anything he regrets.
 
 ### Step S3: Say what it found, briefly
@@ -705,7 +720,7 @@ suggestion from four rounds is worse than saying there is nothing yet.
 
 One. The most supported, with:
 
-1. **what to change** — the file at the path `revmux init` printed, and the edit in concrete terms
+1. **what to change** — `./.revmux/<path>` as Step S2 describes it, and the edit in concrete terms
 2. **the number behind it** — the one the script printed, quoted
 3. **how you would know it worked** — the measurement that moves if it did, on the next round
 
@@ -776,7 +791,7 @@ User: "revmux self"
 → analyze-corpus.py → 24 rounds over 7 tasks, five numbered conclusions
 → say three of them in a sentence each: verification demotes 21 and rejects 2, so it is a severity
   corrector; adversarial rates 61% major+ and holds most of the attributable demotions; three quarters is minor
-→ revmux config → the roster actually running; revmux init → the paths an edit would go to
+→ revmux config → the roster actually running
 → propose one: the adversarial lens's severity text, quoting the 61%, measurable by whether the
   demotion count falls next round
 → request_user_input: apply / skip / stop. Then the next one, or stop.
