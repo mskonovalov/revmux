@@ -49,7 +49,7 @@ func (c *Claude) Login(ctx context.Context, terminal io.ReadWriter) error {
 	if terminal == nil {
 		return errors.New("run `claude auth login` in a terminal")
 	}
-	return c.login(ctx, terminal, "auth", "login")
+	return c.login(terminal, c.authCommand(ctx, "auth", "login"))
 }
 
 // Run executes one request and reports what happened. A non-zero exit or an idle timeout comes back on

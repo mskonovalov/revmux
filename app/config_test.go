@@ -151,6 +151,8 @@ func TestParseArgs_knobOriginsNameTheWinningLayer(t *testing.T) {
 		"auto-exit":       originDefault,
 		"verify-group-by": originDefault,
 		"codex-sandbox":   originDefault,
+		"gateway-check":   originDefault,
+		"gateway-login":   originDefault,
 	}
 	assert.Equal(t, want, o.knobOrigins)
 	assert.Len(t, o.knobOrigins, len(knobNames()), "every knob reports an origin")
@@ -288,7 +290,7 @@ func TestDefaultConfig_holdsEveryKnobCommentedOut(t *testing.T) {
 	}
 
 	for _, name := range knobNames() {
-		want := "# " + name + " = " + fields[name].Tag.Get("default")
+		want := strings.TrimSpace("# " + name + " = " + fields[name].Tag.Get("default"))
 		assert.Contains(t, body, want, "knob %s must appear in the template with its default", name)
 	}
 
@@ -303,10 +305,13 @@ func TestKnobNames_iniNameMatchesLongName(t *testing.T) {
 			continue
 		}
 		assert.Equal(t, f.Tag.Get("long"), f.Tag.Get("ini-name"), "field %s: a config key must match its flag", f.Name)
-		assert.NotEmpty(t, f.Tag.Get("default"), "field %s: a knob with no default resolves to a zero value", f.Name)
+		if f.Name != "GatewayCheck" && f.Name != "GatewayLogin" { // unset means no provider command runs
+			assert.NotEmpty(t, f.Tag.Get("default"), "field %s: a knob with no default resolves to a zero value", f.Name)
+		}
 	}
 	assert.Equal(t, []string{"idle-timeout", "hard-timeout", "stagger-delay", "max-parallel",
-		"verify-groups", "verify-group-by", "tasks-dir", "auto-exit", "profile", "codex-sandbox"}, knobNames())
+		"verify-groups", "verify-group-by", "tasks-dir", "auto-exit", "profile", "codex-sandbox",
+		"gateway-check", "gateway-login"}, knobNames())
 }
 
 func TestResolveContext_shapes(t *testing.T) {

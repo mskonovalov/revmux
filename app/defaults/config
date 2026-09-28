@@ -38,3 +38,9 @@
 # a container that is itself the isolation boundary sets danger-full-access, because codex's own
 # bubblewrap sandbox needs user namespaces and every command fails before it runs without them
 # codex-sandbox = read-only
+
+# commands for an external model provider, such as an AI gateway, that codex reaches without an OpenAI
+# login. the check exits 0 while its credentials are valid; the login runs on the terminal when it fails.
+# each is split on whitespace and runs with the agents' environment and working directory
+# gateway-check =
+# gateway-login =

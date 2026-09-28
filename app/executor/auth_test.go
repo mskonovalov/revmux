@@ -3,6 +3,7 @@ package executor_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os/exec"
 	"strings"
@@ -54,12 +55,12 @@ func TestClaude_Authentication_nonzeroStatusIsNotAuthenticated(t *testing.T) {
 func TestCodex_Authentication(t *testing.T) {
 	for _, tt := range []struct {
 		name, mode, output string
-		want, wantDoctor   bool
+		want               bool
 		wantErr            bool
 	}{
-		{"logged in", "emit", "Logged in using ChatGPT", true, false, false},
-		{"logged out", "fail", "Not logged in", false, true, false},
-		{"unexpected failure", "fail", "other failure", false, false, true},
+		{"logged in", "emit", "Logged in using ChatGPT", true, false},
+		{"logged out", "fail", "Not logged in", false, false},
+		{"unexpected failure", "fail", "other failure", false, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
@@ -75,16 +76,10 @@ func TestCodex_Authentication(t *testing.T) {
 			}
 			assert.Equal(t, tt.want, got)
 			calls := runner.CommandCalls()
-			if tt.wantDoctor {
-				require.Len(t, calls, 2)
-			} else {
-				require.Len(t, calls, 1)
-			}
+			require.Len(t, calls, 2)
 			assert.Equal(t, "codex", calls[0].Name)
-			assert.Equal(t, []string{"login", "status"}, calls[0].Args)
-			if tt.wantDoctor {
-				assert.Equal(t, []string{"doctor", "--json"}, calls[1].Args)
-			}
+			assert.Equal(t, []string{"doctor", "--json"}, calls[0].Args)
+			assert.Equal(t, []string{"login", "status"}, calls[1].Args)
 		})
 	}
 }
@@ -132,9 +127,10 @@ func TestCodex_Authentication_customProviderWithoutOpenAIAuth(t *testing.T) {
 	for _, tt := range []struct {
 		name, doctor string
 		want         bool
+		wantCalls    [][]string
 	}{
-		{"custom provider", `{"checks":{"auth.credentials":{"details":{"model provider requires OpenAI auth":"false"}}}}`, true},
-		{"OpenAI provider", `{"checks":{"auth.credentials":{"details":{"model provider requires OpenAI auth":"true"}}}}`, false},
+		{"custom provider", codexDoctor(false), true, [][]string{{"doctor", "--json"}}},
+		{"OpenAI provider", codexDoctor(true), false, [][]string{{"doctor", "--json"}, {"login", "status"}}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, key := range []string{"CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
@@ -153,23 +149,91 @@ func TestCodex_Authentication_customProviderWithoutOpenAIAuth(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, loggedIn)
 			calls := runner.CommandCalls()
-			require.Len(t, calls, 2)
-			assert.Equal(t, []string{"login", "status"}, calls[0].Args)
-			assert.Equal(t, []string{"doctor", "--json"}, calls[1].Args)
+			args := make([][]string, 0, len(calls))
+			for _, call := range calls {
+				args = append(args, call.Args)
+			}
+			assert.Equal(t, tt.wantCalls, args)
 		})
 	}
+}
+
+func TestCodex_Authentication_gatewayCheck(t *testing.T) {
+	for _, tt := range []struct {
+		name, mode string
+		want       bool
+	}{
+		{"valid credentials", "emit", true},
+		{"expired credentials", "fail", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, key := range []string{"CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
+				t.Setenv(key, "")
+			}
+			doctor := writeFixture(t, []byte(codexDoctor(false)))
+			check := writeFixture(t, nil)
+			runner := &mocks.CommandRunnerMock{CommandFunc: func(_ context.Context, name string, _ ...string) *exec.Cmd {
+				if name == "codex" {
+					return helperCmd("emit", doctor)
+				}
+				return helperCmd(tt.mode, check)
+			}}
+			provider := executor.NewCodex(runner, executor.Opts{GatewayCheck: "ai-gateway token"})
+			loggedIn, err := provider.Authenticated(t.Context())
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, loggedIn)
+			calls := runner.CommandCalls()
+			require.Len(t, calls, 2, "the stored ChatGPT login is never consulted")
+			assert.Equal(t, "ai-gateway", calls[1].Name)
+			assert.Equal(t, []string{"token"}, calls[1].Args)
+		})
+	}
+}
+
+func TestCodex_Login_gateway(t *testing.T) {
+	doctor := writeFixture(t, []byte(codexDoctor(false)))
+	login := writeFixture(t, []byte("Logged in"))
+	runner := &mocks.CommandRunnerMock{CommandFunc: func(_ context.Context, name string, _ ...string) *exec.Cmd {
+		if name == "codex" {
+			return helperCmd("emit", doctor)
+		}
+		return helperCmd("emit", login)
+	}}
+	require.ErrorContains(t, executor.NewCodex(runner, executor.Opts{}).Login(t.Context(), nil), "gateway-login")
+
+	provider := executor.NewCodex(runner, executor.Opts{GatewayLogin: "ai-gateway login"})
+	require.ErrorContains(t, provider.Login(t.Context(), nil), "ai-gateway login")
+	var output bytes.Buffer
+	terminal := struct {
+		io.Reader
+		io.Writer
+	}{Reader: strings.NewReader(""), Writer: &output}
+	require.NoError(t, provider.Login(t.Context(), terminal))
+	assert.Equal(t, "Logged in", output.String())
+	calls := runner.CommandCalls()
+	last := calls[len(calls)-1]
+	assert.Equal(t, "ai-gateway", last.Name)
+	assert.Equal(t, []string{"login"}, last.Args)
+}
+
+// the array-valued detail is the shape a real doctor report carries in unrelated checks
+func codexDoctor(requiresOpenAIAuth bool) string {
+	return fmt.Sprintf(`{"checks":{"auth.credentials":{"details":{"model provider requires OpenAI auth":"%t"}},`+
+		`"state.rollout_db_parity":{"details":{"rollout DB missing active sample":["id"]}}}}`, requiresOpenAIAuth)
 }
 
 func TestAuthenticators_Login(t *testing.T) {
 	for _, tt := range []struct {
 		name, command string
 		args          []string
+		calls         int
 		provider      func(executor.CommandRunner) func(context.Context, io.ReadWriter) error
 	}{
-		{"claude", "claude", []string{"auth", "login"}, func(r executor.CommandRunner) func(context.Context, io.ReadWriter) error {
+		{"claude", "claude", []string{"auth", "login"}, 1, func(r executor.CommandRunner) func(context.Context, io.ReadWriter) error {
 			return executor.NewClaude(r, executor.Opts{}).Login
 		}},
-		{"codex", "codex", []string{"login"}, func(r executor.CommandRunner) func(context.Context, io.ReadWriter) error {
+		// each codex login first asks doctor whether an external provider owns the credentials
+		{"codex", "codex", []string{"login"}, 3, func(r executor.CommandRunner) func(context.Context, io.ReadWriter) error {
 			return executor.NewCodex(r, executor.Opts{}).Login
 		}},
 	} {
@@ -185,9 +249,9 @@ func TestAuthenticators_Login(t *testing.T) {
 			require.NoError(t, login(t.Context(), terminal))
 			assert.Equal(t, "Login complete", output.String())
 			calls := runner.CommandCalls()
-			require.Len(t, calls, 1)
-			assert.Equal(t, tt.command, calls[0].Name)
-			assert.Equal(t, tt.args, calls[0].Args)
+			require.Len(t, calls, tt.calls)
+			assert.Equal(t, tt.command, calls[tt.calls-1].Name)
+			assert.Equal(t, tt.args, calls[tt.calls-1].Args)
 		})
 	}
 }
