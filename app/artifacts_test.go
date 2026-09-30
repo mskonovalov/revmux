@@ -73,7 +73,7 @@ func TestRun_projectProfileSnapshot(t *testing.T) {
 		r, root := archiveRun(t)
 		ro := r.opts()
 
-		review, err := ro.pipelineConfig()
+		review, err := ro.pipelineConfig(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, ro.materializeProfile(review.archive, review.context))
 		require.NoError(t, review.archive.Close())
@@ -106,7 +106,7 @@ func TestRun_projectProfileSnapshot(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(input, task.ProfileFile), []byte("# this round\n"), 0o600))
 		ro := r.opts()
 
-		review, err := ro.pipelineConfig()
+		review, err := ro.pipelineConfig(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, ro.materializeProfile(review.archive, review.context))
 		require.NoError(t, review.archive.Close())
@@ -124,7 +124,7 @@ func TestRun_projectProfileSnapshot(t *testing.T) {
 		r, root := archiveRun(t)
 		ro := r.opts()
 
-		review, err := ro.pipelineConfig()
+		review, err := ro.pipelineConfig(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, os.Remove(review.context.ProfileSource))
 
@@ -142,7 +142,7 @@ func TestRun_projectProfileSnapshot(t *testing.T) {
 		r, root := archiveRun(t)
 		ro := r.opts()
 
-		review, err := ro.pipelineConfig()
+		review, err := ro.pipelineConfig(t.Context())
 		require.NoError(t, err)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
@@ -254,6 +254,20 @@ func TestRun_archive(t *testing.T) {
 		require.NotNil(t, lens, "provenance answers which lens text raised a finding")
 		assert.Equal(t, prompt.LayerEmbedded, lens.Layer)
 		assert.Len(t, lens.Hash, 64, "a content hash tells two rounds of one task apart")
+	})
+
+	t.Run("the manifest names the claude settings keys passed, never their values", func(t *testing.T) {
+		userSettings(t, `{"apiKeyHelper":"/bin/key-helper","env":{"ANTHROPIC_BASE_URL":"https://gw"}}`)
+		r, root := archiveRun(t)
+		r.o.ClaudeUserSettings = "apiKeyHelper,env"
+		require.Equal(t, 1, run(r.opts()))
+
+		data, err := os.ReadFile(filepath.Join(root, "pr-1", "round-1", task.ManifestFile)) //nolint:gosec // path built from t.TempDir
+		require.NoError(t, err)
+		var got manifest
+		require.NoError(t, json.Unmarshal(data, &got))
+		assert.Equal(t, []string{"apiKeyHelper", "env"}, got.ClaudeUserSettings)
+		assert.NotContains(t, string(data), "https://gw", "the env values can carry gateway headers")
 	})
 
 	t.Run("a degraded agent keeps its roster entry in the manifest", func(t *testing.T) {

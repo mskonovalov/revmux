@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 	"time"
 
@@ -38,6 +40,12 @@ const executorCodex = "codex"
 // It is a constant rather than a flag because there is nothing here a caller can calibrate better.
 const agentRetryDelay = 5 * time.Second
 
+// authenticator is owned by the startup gate that consumes the provider implementations.
+type authenticator interface {
+	Authenticated(context.Context) (bool, error)
+	Login(context.Context, io.ReadWriter) error
+}
+
 // runOpts is what run needs from its surroundings. Every one of them is injected so the whole entry
 // point is drivable from a test: no real terminal, no real clock, no writes to the process streams.
 type runOpts struct {
@@ -50,7 +58,10 @@ type runOpts struct {
 	stderr     io.Writer
 	openTTY    func() (*os.File, error)
 	newRunner  func(pipeline.RunnerSpec) pipeline.Runner
+	newAuth    func(string) authenticator
 	snapshot   func(reviewContext) []ui.InputDocument
+	// claudeDir holds this run's claude-user-settings snapshots and is removed when the run ends.
+	claudeDir string
 }
 
 // configuredReview is everything one review resolved before it starts. Keeping the context beside the
@@ -121,7 +132,18 @@ func run(o runOpts) int {
 		return 0
 	}
 
-	review, err := o.pipelineConfig()
+	// authentication uses a signal-canceled context so an interrupt stops interactive login before
+	// the review round is claimed
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	removeClaudeDir, err := o.makeClaudeDir()
+	if err != nil {
+		return o.fail(err)
+	}
+	defer removeClaudeDir()
+
+	review, err := o.pipelineConfig(ctx)
 	if err != nil {
 		return o.fail(err)
 	}
@@ -130,9 +152,6 @@ func run(o runOpts) int {
 	// the pipeline runs under a signal-canceled context so an interrupt tears the agent process groups
 	// down: children are started with Setsid, so the terminal never signals them and dying without
 	// canceling would leave every model CLI and everything it spawned running unsupervised
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	rep, err := o.review(ctx, review)
 	if err != nil {
 		return o.fail(err)
@@ -172,7 +191,7 @@ func (o runOpts) writeJSON(payload any, what string) error {
 // pipelineConfig resolves everything the pipeline needs, plus the archive package main writes its own
 // artifacts through. The roster is resolved exactly once, here: the archive manifest and both
 // renderers take that same slice rather than re-deriving it.
-func (o runOpts) pipelineConfig() (configuredReview, error) {
+func (o runOpts) pipelineConfig(ctx context.Context) (configuredReview, error) {
 	if o.opts.Task == "" {
 		return configuredReview{}, errors.New("--task is required")
 	}
@@ -192,6 +211,18 @@ func (o runOpts) pipelineConfig() (configuredReview, error) {
 	roster, err := profile.Roster(o.opts.Lenses, set.LensNames())
 	if err != nil {
 		return configuredReview{}, fmt.Errorf("resolve roster: %w", err)
+	}
+
+	if rc.ClaudeSettings, err = o.opts.snapshotClaudeSettings(o.claudeDir); err != nil {
+		return configuredReview{}, err
+	}
+	if authErr := o.authenticate(ctx, rc, set, profile, roster); authErr != nil {
+		return configuredReview{}, authErr
+	}
+	// re-read after the gate: a gateway login rewrites these keys, and every reviewer of the round
+	// must run on the same copy
+	if rc.ClaudeSettings, err = o.opts.snapshotClaudeSettings(o.claudeDir); err != nil {
+		return configuredReview{}, err
 	}
 
 	// resolved before this round is claimed, so the round being written is never in its own inventory
@@ -381,6 +412,89 @@ func (o runOpts) runnerFactory(rc reviewContext) func(pipeline.RunnerSpec) pipel
 		}
 		return claude
 	}
+}
+
+// authenticate checks every executor this profile will run before the archive claims a round.
+// A logged-out CLI starts its own login flow on the controlling terminal, never on report stdout.
+func (o runOpts) authenticate(ctx context.Context, rc reviewContext, set *prompt.Set, profile *prompt.Profile, roster []prompt.AgentSpec) error {
+	needed := map[string]bool{}
+	for _, agent := range roster {
+		needed[agent.Executor] = true
+	}
+	for _, stage := range []struct {
+		name     string
+		disabled bool
+	}{{"synthesis", o.opts.NoSynthesis}, {"verify", o.opts.NoVerify}} {
+		if stage.disabled {
+			continue
+		}
+		selected, err := profile.Stage(set, stage.name)
+		if err != nil {
+			return fmt.Errorf("resolve %s runner: %w", stage.name, err)
+		}
+		needed[selected.Executor] = true
+	}
+
+	factory := o.authFactory(rc)
+	for _, name := range slices.Sorted(maps.Keys(needed)) {
+		auth := factory(name)
+		loggedIn, err := auth.Authenticated(ctx)
+		if err != nil {
+			return fmt.Errorf("check %s authentication: %w", name, err)
+		}
+		if loggedIn {
+			continue
+		}
+		if o.openTTY == nil {
+			return fmt.Errorf("%s is not authenticated: %w", name, auth.Login(ctx, nil))
+		}
+		terminal, err := o.openTTY()
+		if err != nil {
+			return fmt.Errorf("%s is not authenticated: %w", name, auth.Login(ctx, nil))
+		}
+		_, _ = fmt.Fprintf(o.stderr, "%s is not authenticated; starting login on the terminal\n", name)
+		loginErr := auth.Login(ctx, terminal)
+		_ = terminal.Close()
+		if loginErr != nil {
+			return fmt.Errorf("authenticate %s: %w", name, loginErr)
+		}
+		loggedIn, err = auth.Authenticated(ctx)
+		if err != nil {
+			return fmt.Errorf("recheck %s authentication: %w", name, err)
+		}
+		if !loggedIn {
+			return fmt.Errorf("%s login completed without authentication", name)
+		}
+	}
+	return nil
+}
+
+func (o runOpts) authFactory(rc reviewContext) func(string) authenticator {
+	if o.newAuth != nil {
+		return o.newAuth
+	}
+	runner, eo := executor.NewRunner(), o.opts.executorOpts(rc, o.clock)
+	claude, codex := executor.NewClaude(runner, eo), executor.NewCodex(runner, eo)
+	return func(name string) authenticator {
+		if name == executorCodex {
+			return codex
+		}
+		return claude
+	}
+}
+
+// makeClaudeDir creates the directory this run's claude-user-settings snapshots are written to, when any
+// keys are configured. The snapshots hold the user's gateway env, so the returned func removes them.
+func (o *runOpts) makeClaudeDir() (func(), error) {
+	if len(o.opts.claudeUserSettingsKeys()) == 0 {
+		return func() {}, nil
+	}
+	dir, err := os.MkdirTemp("", "revmux-claude-")
+	if err != nil {
+		return nil, fmt.Errorf("claude-user-settings: %w", err)
+	}
+	o.claudeDir = dir
+	return func() { _ = os.RemoveAll(dir) }, nil
 }
 
 // write puts the report on stdout, as JSON unless a human asked for the rendered form. JSON is the

@@ -896,8 +896,9 @@ roster receives, including what counts as critical, major and minor here.</pre>
               <p class="sec-note">
                 Two installs, and the second is the one that matters day to day: the binary runs the review,
                 the skill is what your coding agent uses to ask for one. revmux also drives the model CLIs as
-                subprocesses, so whichever ones the profile names must already be installed and authenticated.
-                The shipped <code>preflight.sh</code> answers that for any profile and any invocation.
+                subprocesses, so whichever ones the profile names must be installed. The shipped
+                <code>preflight.sh</code> checks those binaries. Before a review round is claimed, revmux
+                checks their authentication and starts the CLI login flow when needed.
               </p>
             </div>
           </div>

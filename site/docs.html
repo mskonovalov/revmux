@@ -222,8 +222,8 @@ codex plugin add revmux@revmux</pre>
 
         <h3>Model CLIs</h3>
         <p>
-          revmux drives the model CLIs as subprocesses, so whichever ones your profile names must already be
-          installed and authenticated. Which those are is a property of the profile, not a fixed pair:
+          revmux drives the model CLIs as subprocesses, so whichever ones your profile names must be
+          installed. Which those are is a property of the profile, not a fixed pair:
         </p>
         <ul>
           <li>
@@ -234,8 +234,10 @@ codex plugin add revmux@revmux</pre>
           <li><code>codex-only</code>: codex alone</li>
         </ul>
         <p>
-          <code>preflight.sh</code> in the shipped skill answers it for any profile and any invocation,
-          <code>--lenses</code> included.
+          <code>preflight.sh</code> in the shipped skill checks the required binaries for any profile and
+          invocation, <code>--lenses</code> included. Before a review round is claimed, revmux checks the
+          configured CLIs' authentication and starts their login flow when needed. Without a terminal,
+          it reports the command to run manually.
         </p>
         <p>
           <code>ANTHROPIC_API_KEY</code> is stripped from the child environment by default so
@@ -782,6 +784,9 @@ receives, including what counts as critical, major and minor here.</pre>
               <tr><td>--tasks-dir</td><td>./.revmux/tasks</td><td class="prose">root directory holding task directories</td></tr>
               <tr><td>--auto-exit</td><td>0s</td><td class="prose">close the terminal UI this long after the report arrives; 0 never closes it</td></tr>
               <tr><td>--codex-sandbox</td><td>read-only</td><td class="prose">sandbox codex agents run their commands under: read-only, workspace-write or danger-full-access. danger-full-access is for a container that is itself the isolation boundary, where codex&#39;s own bubblewrap sandbox cannot start, so every command fails before it runs while the agent still returns schema-valid empty findings</td></tr>
+              <tr><td>--claude-user-settings</td><td></td><td class="prose">comma-separated top-level keys of the user&#39;s claude <code>settings.json</code> copied to every claude agent through <code>--settings</code>, such as <code>apiKeyHelper,env</code>. Agents skip the user settings layer, so this is how a gateway helper and the <code>env</code> it needs reach them; the keys are read on every run, and a missing one stops the run. Without it a claude agent authenticates with the stored claude.ai login alone</td></tr>
+              <tr><td>--gateway-check</td><td></td><td class="prose">command that exits 0 while an external model provider&#39;s credentials are valid, such as <code>ai-gateway token</code>. Run before a review in place of the CLI&#39;s own login status when codex uses a provider that needs no OpenAI login, or claude has an <code>apiKeyHelper</code>; split on whitespace. <code>codex login status</code> and <code>claude auth status</code> both report a login the provider never checks, so without this check an expired provider login is only found when the review runs</td></tr>
+              <tr><td>--gateway-login</td><td></td><td class="prose">command that logs in to that provider on the terminal when the check fails, such as <code>ai-gateway login</code>; split on whitespace. Without a terminal, revmux reports the command to run instead</td></tr>
               <tr><td>--profile</td><td>comprehensive</td><td class="prose">profile naming the roster to run</td></tr>
             </tbody>
           </table>

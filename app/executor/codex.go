@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -48,6 +49,66 @@ type Codex struct {
 // composition root assembles Opts from flags that carry no clock at all.
 func NewCodex(runner CommandRunner, opts Opts) *Codex {
 	return &Codex{proc: newProc("codex", runner, opts)}
+}
+
+// Authenticated reads Codex's login status without starting a model request.
+func (c *Codex) Authenticated(ctx context.Context) (bool, error) {
+	if codexEnvCredentialAvailable() {
+		return true, nil
+	}
+	// login status reports the stored ChatGPT login even when an external provider never uses it
+	if c.externalProvider(ctx) {
+		return c.gatewayAuthenticated(ctx)
+	}
+	out, err := c.authCommand(ctx, "login", "status").CombinedOutput()
+	if strings.Contains(strings.ToLower(string(out)), "not logged in") {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("codex login status: %w", err)
+	}
+	if !strings.Contains(string(out), "Logged in") {
+		return false, fmt.Errorf("codex login status returned unexpected output: %q", strings.TrimSpace(string(out)))
+	}
+	return true, nil
+}
+
+// externalProvider reports whether the effective model provider needs no OpenAI login. Doctor reports
+// this from the effective Codex config even when unrelated checks make its command exit non-zero.
+func (c *Codex) externalProvider(ctx context.Context) bool {
+	doctor, _ := c.authCommand(ctx, "doctor", "--json").Output()
+	// other checks carry non-string details, so only this one field is decoded
+	var report struct {
+		Checks struct {
+			Auth struct {
+				Details struct {
+					RequiresOpenAIAuth string `json:"model provider requires OpenAI auth"`
+				} `json:"details"`
+			} `json:"auth.credentials"`
+		} `json:"checks"`
+	}
+	return json.Unmarshal(doctor, &report) == nil && report.Checks.Auth.Details.RequiresOpenAIAuth == "false"
+}
+
+// Codex exec accepts these credentials from the environment ahead of a stored CLI login.
+func codexEnvCredentialAvailable() bool {
+	for _, name := range []string{"CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// Login starts the provider's interactive flow on the controlling terminal.
+func (c *Codex) Login(ctx context.Context, terminal io.ReadWriter) error {
+	if c.externalProvider(ctx) {
+		return c.gatewayLogin(ctx, terminal)
+	}
+	if terminal == nil {
+		return errors.New("run `codex login` in a terminal")
+	}
+	return c.login(terminal, c.authCommand(ctx, "login"))
 }
 
 // Run executes one request. A non-zero exit or an idle timeout comes back on the Result rather than as

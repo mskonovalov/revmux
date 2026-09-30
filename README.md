@@ -103,10 +103,14 @@ Install the skill through one marketplace only. If you previously copied or syml
 `~/.codex/skills/revmux`, remove that copy after installing the plugin. Then ask for a review in words:
 revmux this branch, revmux pr 123, re-review after fixes. See [Agent skills](#agent-skills) for what it does.
 
-revmux drives the model CLIs as subprocesses, so whichever ones your profile names must already be installed
-and authenticated: both for `comprehensive`, `focused`, `final`, `grill-me`, `triage` and `expert`, claude
-alone for `claude-only`, codex alone for `codex-only`. `preflight.sh` in the shipped skill answers it for any
-profile and any invocation.
+revmux drives model CLIs as subprocesses. `preflight.sh` in the shipped skill checks which binaries
+an invocation needs. When a review starts, revmux checks authentication for the configured roster
+and enabled stages before claiming the round. It starts the required CLI login flow only when needed;
+a Codex environment credential does not require a stored login. A status check cannot validate
+an environment key against the API; a real request can still fail if the key is stale.
+When codex uses an external provider such as an AI gateway, or `claude-user-settings` passes
+claude its `apiKeyHelper`, the `gateway-check` and `gateway-login` config keys name the commands
+that check and renew that provider's login instead.
 
 `ANTHROPIC_API_KEY` is stripped from the child environment by default so `claude` uses interactive
 subscription auth; pass `--preserve-anthropic-api-key` if you authenticate by key.

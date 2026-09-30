@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -118,6 +119,19 @@ func TestClaude_args(t *testing.T) {
 	assert.NotContains(t, call.Args, "--mcp-config", "--strict-mcp-config with no --mcp-config is what drops every server")
 }
 
+func TestClaude_args_claudeSettings(t *testing.T) {
+	runner := fakeRunner("emit", writeFixture(t, cleanCapture(t)))
+	c := executor.NewClaude(runner, executor.Opts{ClaudeSettings: "/cfg/gateway.json"})
+	_, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, discardSink())
+	require.NoError(t, err)
+
+	args := runner.CommandCalls()[0].Args
+	i := slices.Index(args, "--settings")
+	require.GreaterOrEqual(t, i, 0)
+	assert.Equal(t, "/cfg/gateway.json", args[i+1])
+	assert.Contains(t, args, "project", "--settings adds a layer; the user layer stays dropped")
+}
+
 func TestClaude_args_optionalFlagsOmitted(t *testing.T) {
 	path := writeFixture(t, cleanCapture(t))
 	runner := fakeRunner("emit", path)
@@ -130,6 +144,7 @@ func TestClaude_args_optionalFlagsOmitted(t *testing.T) {
 	assert.NotContains(t, args, "--model")
 	assert.NotContains(t, args, "--effort")
 	assert.NotContains(t, args, "--json-schema")
+	assert.NotContains(t, args, "--settings")
 	assert.Contains(t, args, "--disable-slash-commands")
 	assert.Contains(t, args, "--include-partial-messages",
 		"the watchdog's only liveness while the model composes a large StructuredOutput call")

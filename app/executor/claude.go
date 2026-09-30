@@ -3,7 +3,10 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
+	"os/exec"
 	"strings"
 )
 
@@ -11,6 +14,9 @@ import (
 // vocabulary is allowed / allowed_warning / rejected, and allowed_warning rides along on a successful
 // response once utilization passes a threshold — treating it as a limit throws away a completed run.
 const rateLimitRejected = "rejected"
+
+// claudeKeyHelper is the auth status apiKeySource for a key produced by a settings apiKeyHelper.
+const claudeKeyHelper = "apiKeyHelper"
 
 // Claude runs the claude CLI in print mode and decodes its stream-json output.
 type Claude struct {
@@ -21,6 +27,54 @@ type Claude struct {
 // composition root assembles Opts from flags that carry no clock at all.
 func NewClaude(runner CommandRunner, opts Opts) *Claude {
 	return &Claude{proc: newProc("claude", runner, opts)}
+}
+
+// Authenticated asks Claude for the state used by a review. The project settings selection matches
+// the reviewer process; a user-only apiKeyHelper must not make an otherwise unauthenticated run pass.
+func (c *Claude) Authenticated(ctx context.Context) (bool, error) {
+	out, err := c.statusCommand(ctx).Output()
+	var state struct {
+		LoggedIn     *bool  `json:"loggedIn"`
+		APIKeySource string `json:"apiKeySource"`
+	}
+	if json.Unmarshal(out, &state) == nil && state.LoggedIn != nil {
+		// status reports a configured apiKeyHelper as logged in even when the helper fails
+		if state.APIKeySource == claudeKeyHelper {
+			return c.gatewayAuthenticated(ctx)
+		}
+		if *state.LoggedIn && err != nil {
+			return false, fmt.Errorf("claude auth status: %w", err)
+		}
+		return *state.LoggedIn, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("claude auth status: %w", err)
+	}
+	return false, errors.New("claude auth status returned no loggedIn value")
+}
+
+// statusCommand carries the reviewer's settings selection, so status describes the credentials a review uses.
+func (c *Claude) statusCommand(ctx context.Context) *exec.Cmd {
+	args := []string{"--setting-sources", "project"}
+	if c.opts.ClaudeSettings != "" {
+		args = append(args, "--settings", c.opts.ClaudeSettings)
+	}
+	return c.authCommand(ctx, append(args, "auth", "status", "--json")...)
+}
+
+// Login starts the provider's interactive flow on the controlling terminal.
+func (c *Claude) Login(ctx context.Context, terminal io.ReadWriter) error {
+	out, _ := c.statusCommand(ctx).Output()
+	var state struct {
+		APIKeySource string `json:"apiKeySource"`
+	}
+	if json.Unmarshal(out, &state) == nil && state.APIKeySource == claudeKeyHelper {
+		return c.gatewayLogin(ctx, terminal)
+	}
+	if terminal == nil {
+		return errors.New("run `claude auth login` in a terminal")
+	}
+	return c.login(terminal, c.authCommand(ctx, "auth", "login"))
 }
 
 // Run executes one request and reports what happened. A non-zero exit or an idle timeout comes back on
@@ -82,6 +136,9 @@ func (c *Claude) args(req Request) []string {
 		"--disable-slash-commands",
 		"--no-session-persistence",
 		"--include-partial-messages",
+	}
+	if c.opts.ClaudeSettings != "" {
+		argv = append(argv, "--settings", c.opts.ClaudeSettings)
 	}
 	if req.Model != "" {
 		argv = append(argv, "--model", req.Model)
