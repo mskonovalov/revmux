@@ -308,7 +308,7 @@ func TestKnobNames_iniNameMatchesLongName(t *testing.T) {
 			continue
 		}
 		assert.Equal(t, f.Tag.Get("long"), f.Tag.Get("ini-name"), "field %s: a config key must match its flag", f.Name)
-		if !slices.Contains([]string{"StripEnv", "ClaudeUserSettings", "GatewayCheck", "GatewayLogin"}, f.Name) { // unset adds nothing
+		if !slices.Contains([]string{"ClaudeUserSettings", "GatewayCheck", "GatewayLogin"}, f.Name) { // unset adds nothing
 			assert.NotEmpty(t, f.Tag.Get("default"), "field %s: a knob with no default resolves to a zero value", f.Name)
 		}
 	}
@@ -577,11 +577,11 @@ func TestOptions_executorOpts(t *testing.T) {
 	clk := &mocks.ClockMock{}
 	o := options{IdleTimeout: time.Minute, HardTimeout: time.Hour, PreserveAPIKey: true, WorkDir: "/ignored", CodexSandbox: "danger-full-access"}
 
-	o.StripEnv = " CLAUDE_CODE_ENTRYPOINT , FOO,"
+	o.StripEnv = " CLAUDECODE, ANTHROPIC_API_KEY , CLAUDE_CODE_ENTRYPOINT,"
 	got := o.executorOpts(reviewContext{WorkDir: "/resolved", ClaudeSettings: "/tmp/snapshot.json"}, clk)
 	assert.Equal(t, executor.Opts{IdleTimeout: time.Minute, HardTimeout: time.Hour, CodexSandbox: "danger-full-access",
-		WorkDir: "/resolved", PreserveAPIKey: true, ClaudeSettings: "/tmp/snapshot.json",
-		StripEnv: []string{"CLAUDE_CODE_ENTRYPOINT", "FOO"}, Clock: clk}, got,
+		WorkDir: "/resolved", ClaudeSettings: "/tmp/snapshot.json",
+		StripEnv: []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"}, Clock: clk}, got,
 		"the subprocess runs where {{WORKDIR}} points, never where the raw flag does")
 }
 

@@ -113,9 +113,9 @@ claude its `apiKeyHelper`, the `gateway-check` and `gateway-login` config keys n
 that check and renew that provider's login instead.
 
 `ANTHROPIC_API_KEY` is stripped from the child environment by default so `claude` uses interactive
-subscription auth; pass `--preserve-anthropic-api-key` if you authenticate by key. `strip-env` removes
-further variables, such as the Claude desktop app's `CLAUDE_CODE_ENTRYPOINT`, which makes `claude`
-reject an `apiKeyHelper` key.
+subscription auth; pass `--preserve-anthropic-api-key` if you authenticate by key. The stripped list is
+the `strip-env` config key (default `CLAUDECODE,ANTHROPIC_API_KEY`); launched from the Claude desktop app,
+add `CLAUDE_CODE_ENTRYPOINT`, which makes `claude` reject an `apiKeyHelper` key.
 `claude` also runs with `--setting-sources project`, so your user `settings.json` is not loaded, and an
 `apiKeyHelper` set there never reaches the agents. Put the helper in the reviewed repo's
 `.claude/settings.json`, or put a `claude` wrapper first on PATH that runs the real binary, by absolute path,

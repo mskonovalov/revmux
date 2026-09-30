@@ -163,17 +163,19 @@ claude --print --output-format stream-json --verbose
 
 ### Child environment
 
+- **The stripped variables are the `strip-env` knob, default `CLAUDECODE,ANTHROPIC_API_KEY`**, and
+  `proc.childEnv` holds no names of its own. The list is a knob because which launch-host variables
+  misroute a child depends on where revmux is launched from.
 - **Always strip `CLAUDECODE` from the child environment.**
   revmux is often launched from inside an AI coding session, so the variable is inherited
   and the child refuses to start as a nested session.
-  There is no case where passing it through is correct.
-- **`strip-env` removes further variables a launch host sets.**
-  The Claude desktop app exports `CLAUDE_CODE_ENTRYPOINT=claude-desktop` into every session it runs,
-  and a claude child inheriting it rejects its `apiKeyHelper` key with "Invalid API key · Fix external
-  API key" — measured: the same reviewer request fails with that variable and succeeds without it.
-  It is a knob rather than a second fixed entry because which host variables misroute a child depends
-  on where revmux is launched from; `CLAUDECODE` stays fixed because no launch is correct with it.
-- Strip `ANTHROPIC_API_KEY` by default so the child uses the interactive subscription auth rather than per-token billing.
+  There is no case where passing it through is correct, so a user overriding `strip-env` must keep it.
+- **The Claude desktop app's `CLAUDE_CODE_ENTRYPOINT` belongs on that list when launching from it.**
+  The app exports `CLAUDE_CODE_ENTRYPOINT=claude-desktop` into every session it runs, and a claude
+  child inheriting it rejects its `apiKeyHelper` key with "Invalid API key · Fix external API key" —
+  measured: the same reviewer request fails with that variable and succeeds without it.
+- Strip `ANTHROPIC_API_KEY` by default so the child uses the interactive subscription auth rather than per-token billing;
+  `--preserve-anthropic-api-key` takes it off the resolved `strip-env` list.
   Expose a `--preserve-anthropic-api-key` escape hatch for users who authenticate by API key.
 - Never pass `--bare`. It forces API-key auth and skips project-instruction discovery,
   which changes billing and strips the project context every lens agent depends on.

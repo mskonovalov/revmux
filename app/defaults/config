@@ -39,10 +39,11 @@
 # bubblewrap sandbox needs user namespaces and every command fails before it runs without them
 # codex-sandbox = read-only
 
-# comma-separated environment variables removed from every agent's environment, on top of CLAUDECODE.
-# a launch host can set variables that misroute a child: the claude desktop app's CLAUDE_CODE_ENTRYPOINT
-# makes a claude agent reject its apiKeyHelper key
-# strip-env =
+# comma-separated environment variables removed from every agent's environment. keep CLAUDECODE when
+# overriding it: a claude agent refuses to start as a nested session. ANTHROPIC_API_KEY goes so claude
+# uses subscription auth; --preserve-anthropic-api-key keeps it. a launch host can set more: the claude
+# desktop app's CLAUDE_CODE_ENTRYPOINT makes a claude agent reject its apiKeyHelper key
+# strip-env = CLAUDECODE,ANTHROPIC_API_KEY
 
 # comma-separated top-level keys of the user's claude settings.json (under CLAUDE_CONFIG_DIR when set)
 # copied to every claude agent, e.g. apiKeyHelper,env for a gateway. agents skip the user settings
