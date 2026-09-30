@@ -152,6 +152,7 @@ func TestParseArgs_knobOriginsNameTheWinningLayer(t *testing.T) {
 		"auto-exit":            originDefault,
 		"verify-group-by":      originDefault,
 		"codex-sandbox":        originDefault,
+		"strip-env":            originDefault,
 		"claude-user-settings": originDefault,
 		"gateway-check":        originDefault,
 		"gateway-login":        originDefault,
@@ -313,7 +314,7 @@ func TestKnobNames_iniNameMatchesLongName(t *testing.T) {
 	}
 	assert.Equal(t, []string{"idle-timeout", "hard-timeout", "stagger-delay", "max-parallel",
 		"verify-groups", "verify-group-by", "tasks-dir", "auto-exit", "profile", "codex-sandbox",
-		"claude-user-settings", "gateway-check", "gateway-login"}, knobNames())
+		"strip-env", "claude-user-settings", "gateway-check", "gateway-login"}, knobNames())
 }
 
 func TestResolveContext_shapes(t *testing.T) {
@@ -576,9 +577,11 @@ func TestOptions_executorOpts(t *testing.T) {
 	clk := &mocks.ClockMock{}
 	o := options{IdleTimeout: time.Minute, HardTimeout: time.Hour, PreserveAPIKey: true, WorkDir: "/ignored", CodexSandbox: "danger-full-access"}
 
+	o.StripEnv = " CLAUDECODE, ANTHROPIC_API_KEY , CLAUDE_CODE_ENTRYPOINT,"
 	got := o.executorOpts(reviewContext{WorkDir: "/resolved", ClaudeSettings: "/tmp/snapshot.json"}, clk)
 	assert.Equal(t, executor.Opts{IdleTimeout: time.Minute, HardTimeout: time.Hour, CodexSandbox: "danger-full-access",
-		WorkDir: "/resolved", PreserveAPIKey: true, ClaudeSettings: "/tmp/snapshot.json", Clock: clk}, got,
+		WorkDir: "/resolved", ClaudeSettings: "/tmp/snapshot.json",
+		StripEnv: []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"}, Clock: clk}, got,
 		"the subprocess runs where {{WORKDIR}} points, never where the raw flag does")
 }
 

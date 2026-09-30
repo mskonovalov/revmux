@@ -585,7 +585,9 @@ renew the provider's own login instead.
 `ANTHROPIC_API_KEY` is stripped from the child environment by default so `claude` uses interactive
 subscription auth; `--preserve-anthropic-api-key` passes it through for key-based auth. `CLAUDECODE`
 is always stripped — a `claude` child refuses to start when it believes it is a nested session, which
-is exactly the situation when an agent invokes revmux.
+is exactly the situation when an agent invokes revmux. Both come from the `strip-env` config key
+(default `CLAUDECODE,ANTHROPIC_API_KEY`); launched from the Claude desktop app, add
+`CLAUDE_CODE_ENTRYPOINT`, under which a `claude` child rejects its `apiKeyHelper` key with "Invalid API key".
 
 Agent processes start in their own session, so the terminal never signals them directly; revmux tears
 each process group down itself rather than leaving model CLIs running unsupervised after it exits.

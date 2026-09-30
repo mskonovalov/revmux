@@ -68,12 +68,13 @@ type Opts struct {
 	IdleTimeout time.Duration
 	HardTimeout time.Duration
 	// CodexSandbox selects the codex --sandbox policy; empty means read-only.
-	CodexSandbox   string
-	WorkDir        string
-	PreserveAPIKey bool
-	Clock          Clock
+	CodexSandbox string
+	WorkDir      string
+	Clock        Clock
 	// ClaudeSettings is passed to every claude process through --settings.
 	ClaudeSettings string
+	// StripEnv names the variables removed from every child's environment.
+	StripEnv []string
 	// GatewayCheck and GatewayLogin are command lines for an external model provider's credentials.
 	GatewayCheck string
 	GatewayLogin string

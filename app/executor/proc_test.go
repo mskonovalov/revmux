@@ -97,8 +97,8 @@ func TestClaude_Run_scrubsChildEnv(t *testing.T) {
 	t.Setenv("CLAUDECODE", "1")
 	t.Setenv("ANTHROPIC_API_KEY", "secret-key")
 
-	t.Run("stripped by default", func(t *testing.T) {
-		c := executor.NewClaude(fakeRunner("env", "-"), executor.Opts{})
+	t.Run("the listed variables are stripped", func(t *testing.T) {
+		c := executor.NewClaude(fakeRunner("env", "-"), executor.Opts{StripEnv: []string{"CLAUDECODE", "ANTHROPIC_API_KEY"}})
 		res, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, discardSink())
 		require.NoError(t, err)
 		assert.NotContains(t, res.Raw, "CLAUDECODE=")
@@ -106,12 +106,12 @@ func TestClaude_Run_scrubsChildEnv(t *testing.T) {
 		assert.Contains(t, res.Raw, "PATH=", "the rest of the environment is passed through")
 	})
 
-	t.Run("api key preserved on request", func(t *testing.T) {
-		c := executor.NewClaude(fakeRunner("env", "-"), executor.Opts{PreserveAPIKey: true})
+	t.Run("a variable left off the list is passed through", func(t *testing.T) {
+		c := executor.NewClaude(fakeRunner("env", "-"), executor.Opts{StripEnv: []string{"CLAUDECODE"}})
 		res, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, discardSink())
 		require.NoError(t, err)
 		assert.Contains(t, res.Raw, "ANTHROPIC_API_KEY=secret-key")
-		assert.NotContains(t, res.Raw, "CLAUDECODE=", "never passed through")
+		assert.NotContains(t, res.Raw, "CLAUDECODE=")
 	})
 }
 

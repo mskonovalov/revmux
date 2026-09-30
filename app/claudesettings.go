@@ -10,13 +10,18 @@ import (
 
 // claudeUserSettingsKeys splits the claude-user-settings knob into the top-level keys it names.
 func (o options) claudeUserSettingsKeys() []string {
-	var keys []string
-	for key := range strings.SplitSeq(o.ClaudeUserSettings, ",") {
-		if key = strings.TrimSpace(key); key != "" {
-			keys = append(keys, key)
+	return commaList(o.ClaudeUserSettings)
+}
+
+// commaList splits a comma-separated knob into its trimmed, non-empty items.
+func commaList(value string) []string {
+	var items []string
+	for item := range strings.SplitSeq(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			items = append(items, item)
 		}
 	}
-	return keys
+	return items
 }
 
 // snapshotClaudeSettings copies the configured top-level keys of the user's Claude settings into a
