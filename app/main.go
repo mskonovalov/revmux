@@ -60,6 +60,8 @@ type runOpts struct {
 	newRunner  func(pipeline.RunnerSpec) pipeline.Runner
 	newAuth    func(string) authenticator
 	snapshot   func(reviewContext) []ui.InputDocument
+	// claudeDir holds this run's claude-user-settings snapshots and is removed when the run ends.
+	claudeDir string
 }
 
 // configuredReview is everything one review resolved before it starts. Keeping the context beside the
@@ -135,6 +137,12 @@ func run(o runOpts) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	removeClaudeDir, err := o.makeClaudeDir()
+	if err != nil {
+		return o.fail(err)
+	}
+	defer removeClaudeDir()
+
 	review, err := o.pipelineConfig(ctx)
 	if err != nil {
 		return o.fail(err)
@@ -205,8 +213,16 @@ func (o runOpts) pipelineConfig(ctx context.Context) (configuredReview, error) {
 		return configuredReview{}, fmt.Errorf("resolve roster: %w", err)
 	}
 
+	if rc.ClaudeSettings, err = o.opts.snapshotClaudeSettings(o.claudeDir); err != nil {
+		return configuredReview{}, err
+	}
 	if authErr := o.authenticate(ctx, rc, set, profile, roster); authErr != nil {
 		return configuredReview{}, authErr
+	}
+	// re-read after the gate: a gateway login rewrites these keys, and every reviewer of the round
+	// must run on the same copy
+	if rc.ClaudeSettings, err = o.opts.snapshotClaudeSettings(o.claudeDir); err != nil {
+		return configuredReview{}, err
 	}
 
 	// resolved before this round is claimed, so the round being written is never in its own inventory
@@ -465,6 +481,20 @@ func (o runOpts) authFactory(rc reviewContext) func(string) authenticator {
 		}
 		return claude
 	}
+}
+
+// makeClaudeDir creates the directory this run's claude-user-settings snapshots are written to, when any
+// keys are configured. The snapshots hold the user's gateway env, so the returned func removes them.
+func (o *runOpts) makeClaudeDir() (func(), error) {
+	if len(o.opts.claudeUserSettingsKeys()) == 0 {
+		return func() {}, nil
+	}
+	dir, err := os.MkdirTemp("", "revmux-claude-")
+	if err != nil {
+		return nil, fmt.Errorf("claude-user-settings: %w", err)
+	}
+	o.claudeDir = dir
+	return func() { _ = os.RemoveAll(dir) }, nil
 }
 
 // write puts the report on stdout, as JSON unless a human asked for the rendered form. JSON is the

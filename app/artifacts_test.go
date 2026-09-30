@@ -256,6 +256,20 @@ func TestRun_archive(t *testing.T) {
 		assert.Len(t, lens.Hash, 64, "a content hash tells two rounds of one task apart")
 	})
 
+	t.Run("the manifest names the claude settings keys passed, never their values", func(t *testing.T) {
+		userSettings(t, `{"apiKeyHelper":"/bin/key-helper","env":{"ANTHROPIC_BASE_URL":"https://gw"}}`)
+		r, root := archiveRun(t)
+		r.o.ClaudeUserSettings = "apiKeyHelper,env"
+		require.Equal(t, 1, run(r.opts()))
+
+		data, err := os.ReadFile(filepath.Join(root, "pr-1", "round-1", task.ManifestFile)) //nolint:gosec // path built from t.TempDir
+		require.NoError(t, err)
+		var got manifest
+		require.NoError(t, json.Unmarshal(data, &got))
+		assert.Equal(t, []string{"apiKeyHelper", "env"}, got.ClaudeUserSettings)
+		assert.NotContains(t, string(data), "https://gw", "the env values can carry gateway headers")
+	})
+
 	t.Run("a degraded agent keeps its roster entry in the manifest", func(t *testing.T) {
 		r, root := archiveRun(t)
 		// the whole focused roster: a claude lens agent plus a codex peer. No stagger, since the mock

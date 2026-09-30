@@ -31,6 +31,8 @@ type manifest struct {
 	Degraded   []string             `json:"degraded"`
 	Prompts    []prompt.FileOrigin  `json:"prompts"`
 	Stages     []finding.StageRun   `json:"stages"`
+	// the claude-user-settings keys every claude agent received, never their values
+	ClaudeUserSettings []string `json:"claude_user_settings,omitempty"`
 }
 
 // archiveRun writes the run's own artifacts into the archive, before the report reaches either the
@@ -110,6 +112,7 @@ func (o runOpts) manifest(cfg pipeline.Config, rep finding.Report) manifest {
 		DurationMS: rep.Stats.DurationMS, Tokens: rep.Stats.Tokens,
 		Agents: agents, Degraded: rep.Sources.DegradedSources,
 		Prompts: cfg.Set.Provenance(), Stages: rep.Stats.Stages,
+		ClaudeUserSettings: o.opts.claudeUserSettingsKeys(),
 	}
 }
 

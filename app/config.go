@@ -67,9 +67,9 @@ type options struct {
 	Profile       string        `long:"profile" ini-name:"profile" default:"comprehensive" description:"profile naming the roster to run"`
 	CodexSandbox  string        `long:"codex-sandbox" ini-name:"codex-sandbox" choice:"read-only" choice:"workspace-write" choice:"danger-full-access" default:"read-only" description:"sandbox codex agents run their commands under"`
 
-	ClaudeSettings string `long:"claude-settings" ini-name:"claude-settings" description:"settings file or JSON passed to every claude agent through --settings, such as one naming a gateway apiKeyHelper"`
-	GatewayCheck   string `long:"gateway-check" ini-name:"gateway-check" description:"command that exits 0 while an external model provider's credentials are valid"`
-	GatewayLogin   string `long:"gateway-login" ini-name:"gateway-login" description:"command that logs in to an external model provider"`
+	ClaudeUserSettings string `long:"claude-user-settings" ini-name:"claude-user-settings" description:"comma-separated top-level keys of the user's claude settings.json passed to every claude agent, such as apiKeyHelper,env"`
+	GatewayCheck       string `long:"gateway-check" ini-name:"gateway-check" description:"command that exits 0 while an external model provider's credentials are valid"`
+	GatewayLogin       string `long:"gateway-login" ini-name:"gateway-login" description:"command that logs in to an external model provider"`
 
 	ConfigDir    string `long:"config-dir" no-ini:"true" description:"directory holding the config file and the prompt tree"`
 	Init         bool   `long:"init" no-ini:"true" description:"materialize the resolved prompt tree and a config template into ./.revmux/"`
@@ -114,6 +114,10 @@ type reviewContext struct {
 	// Profile then names this run's snapshot rather than a path outside the round, so the archive
 	// stays self-contained when the project file later changes.
 	ProfileSource string
+
+	// the snapshot of the claude-user-settings keys every claude process gets through --settings;
+	// empty when none are configured.
+	ClaudeSettings string
 }
 
 // parseArgs parses the command line, then layers the project and user INI files underneath it, and
@@ -316,7 +320,7 @@ func (o options) executorOpts(rc reviewContext, clk executor.Clock) executor.Opt
 		CodexSandbox:   o.CodexSandbox,
 		WorkDir:        rc.WorkDir,
 		PreserveAPIKey: o.PreserveAPIKey,
-		ClaudeSettings: o.ClaudeSettings,
+		ClaudeSettings: rc.ClaudeSettings,
 		GatewayCheck:   o.GatewayCheck,
 		GatewayLogin:   o.GatewayLogin,
 		Clock:          clk,
