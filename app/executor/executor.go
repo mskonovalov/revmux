@@ -74,6 +74,8 @@ type Opts struct {
 	Clock          Clock
 	// ClaudeSettings is passed to every claude process through --settings.
 	ClaudeSettings string
+	// StripEnv names variables removed from every child's environment on top of CLAUDECODE.
+	StripEnv []string
 	// GatewayCheck and GatewayLogin are command lines for an external model provider's credentials.
 	GatewayCheck string
 	GatewayLogin string

@@ -152,6 +152,7 @@ func TestParseArgs_knobOriginsNameTheWinningLayer(t *testing.T) {
 		"auto-exit":            originDefault,
 		"verify-group-by":      originDefault,
 		"codex-sandbox":        originDefault,
+		"strip-env":            originDefault,
 		"claude-user-settings": originDefault,
 		"gateway-check":        originDefault,
 		"gateway-login":        originDefault,
@@ -307,13 +308,13 @@ func TestKnobNames_iniNameMatchesLongName(t *testing.T) {
 			continue
 		}
 		assert.Equal(t, f.Tag.Get("long"), f.Tag.Get("ini-name"), "field %s: a config key must match its flag", f.Name)
-		if !slices.Contains([]string{"ClaudeUserSettings", "GatewayCheck", "GatewayLogin"}, f.Name) { // unset adds nothing
+		if !slices.Contains([]string{"StripEnv", "ClaudeUserSettings", "GatewayCheck", "GatewayLogin"}, f.Name) { // unset adds nothing
 			assert.NotEmpty(t, f.Tag.Get("default"), "field %s: a knob with no default resolves to a zero value", f.Name)
 		}
 	}
 	assert.Equal(t, []string{"idle-timeout", "hard-timeout", "stagger-delay", "max-parallel",
 		"verify-groups", "verify-group-by", "tasks-dir", "auto-exit", "profile", "codex-sandbox",
-		"claude-user-settings", "gateway-check", "gateway-login"}, knobNames())
+		"strip-env", "claude-user-settings", "gateway-check", "gateway-login"}, knobNames())
 }
 
 func TestResolveContext_shapes(t *testing.T) {
@@ -576,9 +577,11 @@ func TestOptions_executorOpts(t *testing.T) {
 	clk := &mocks.ClockMock{}
 	o := options{IdleTimeout: time.Minute, HardTimeout: time.Hour, PreserveAPIKey: true, WorkDir: "/ignored", CodexSandbox: "danger-full-access"}
 
+	o.StripEnv = " CLAUDE_CODE_ENTRYPOINT , FOO,"
 	got := o.executorOpts(reviewContext{WorkDir: "/resolved", ClaudeSettings: "/tmp/snapshot.json"}, clk)
 	assert.Equal(t, executor.Opts{IdleTimeout: time.Minute, HardTimeout: time.Hour, CodexSandbox: "danger-full-access",
-		WorkDir: "/resolved", PreserveAPIKey: true, ClaudeSettings: "/tmp/snapshot.json", Clock: clk}, got,
+		WorkDir: "/resolved", PreserveAPIKey: true, ClaudeSettings: "/tmp/snapshot.json",
+		StripEnv: []string{"CLAUDE_CODE_ENTRYPOINT", "FOO"}, Clock: clk}, got,
 		"the subprocess runs where {{WORKDIR}} points, never where the raw flag does")
 }
 

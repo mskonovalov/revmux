@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -197,6 +198,8 @@ func (p *proc) readLines(ctx context.Context, r io.Reader, handler func(string))
 
 // childEnv drops the variables that break or misroute a child model CLI. CLAUDECODE always goes:
 // revmux normally runs inside an AI coding session and the child refuses to start as a nested one.
+// Opts.StripEnv adds the ones only some launch hosts set, such as the desktop app's
+// CLAUDE_CODE_ENTRYPOINT, under which a child ignores an apiKeyHelper key.
 func (p *proc) childEnv() []string {
 	src := os.Environ()
 	out := make([]string, 0, len(src))
@@ -204,6 +207,7 @@ func (p *proc) childEnv() []string {
 		switch name, _, _ := strings.Cut(kv, "="); {
 		case name == "CLAUDECODE":
 		case name == "ANTHROPIC_API_KEY" && !p.opts.PreserveAPIKey:
+		case slices.Contains(p.opts.StripEnv, name):
 		default:
 			out = append(out, kv)
 		}

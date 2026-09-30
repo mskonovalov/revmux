@@ -106,6 +106,15 @@ func TestClaude_Run_scrubsChildEnv(t *testing.T) {
 		assert.Contains(t, res.Raw, "PATH=", "the rest of the environment is passed through")
 	})
 
+	t.Run("configured variables are stripped too", func(t *testing.T) {
+		t.Setenv("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")
+		c := executor.NewClaude(fakeRunner("env", "-"), executor.Opts{StripEnv: []string{"CLAUDE_CODE_ENTRYPOINT"}})
+		res, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, discardSink())
+		require.NoError(t, err)
+		assert.NotContains(t, res.Raw, "CLAUDE_CODE_ENTRYPOINT=")
+		assert.NotContains(t, res.Raw, "CLAUDECODE=", "on top of, not instead of, the fixed list")
+	})
+
 	t.Run("api key preserved on request", func(t *testing.T) {
 		c := executor.NewClaude(fakeRunner("env", "-"), executor.Opts{PreserveAPIKey: true})
 		res, err := c.Run(context.Background(), executor.Request{Prompt: "x"}, discardSink())

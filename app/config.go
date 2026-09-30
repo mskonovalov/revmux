@@ -67,6 +67,7 @@ type options struct {
 	Profile       string        `long:"profile" ini-name:"profile" default:"comprehensive" description:"profile naming the roster to run"`
 	CodexSandbox  string        `long:"codex-sandbox" ini-name:"codex-sandbox" choice:"read-only" choice:"workspace-write" choice:"danger-full-access" default:"read-only" description:"sandbox codex agents run their commands under"`
 
+	StripEnv           string `long:"strip-env" ini-name:"strip-env" description:"comma-separated environment variables removed from every agent's environment, on top of CLAUDECODE"`
 	ClaudeUserSettings string `long:"claude-user-settings" ini-name:"claude-user-settings" description:"comma-separated top-level keys of the user's claude settings.json passed to every claude agent, such as apiKeyHelper,env"`
 	GatewayCheck       string `long:"gateway-check" ini-name:"gateway-check" description:"command that exits 0 while an external model provider's credentials are valid"`
 	GatewayLogin       string `long:"gateway-login" ini-name:"gateway-login" description:"command that logs in to an external model provider"`
@@ -321,6 +322,7 @@ func (o options) executorOpts(rc reviewContext, clk executor.Clock) executor.Opt
 		WorkDir:        rc.WorkDir,
 		PreserveAPIKey: o.PreserveAPIKey,
 		ClaudeSettings: rc.ClaudeSettings,
+		StripEnv:       commaList(o.StripEnv),
 		GatewayCheck:   o.GatewayCheck,
 		GatewayLogin:   o.GatewayLogin,
 		Clock:          clk,

@@ -167,6 +167,12 @@ claude --print --output-format stream-json --verbose
   revmux is often launched from inside an AI coding session, so the variable is inherited
   and the child refuses to start as a nested session.
   There is no case where passing it through is correct.
+- **`strip-env` removes further variables a launch host sets.**
+  The Claude desktop app exports `CLAUDE_CODE_ENTRYPOINT=claude-desktop` into every session it runs,
+  and a claude child inheriting it rejects its `apiKeyHelper` key with "Invalid API key · Fix external
+  API key" — measured: the same reviewer request fails with that variable and succeeds without it.
+  It is a knob rather than a second fixed entry because which host variables misroute a child depends
+  on where revmux is launched from; `CLAUDECODE` stays fixed because no launch is correct with it.
 - Strip `ANTHROPIC_API_KEY` by default so the child uses the interactive subscription auth rather than per-token billing.
   Expose a `--preserve-anthropic-api-key` escape hatch for users who authenticate by API key.
 - Never pass `--bare`. It forces API-key auth and skips project-instruction discovery,

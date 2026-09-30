@@ -39,6 +39,11 @@
 # bubblewrap sandbox needs user namespaces and every command fails before it runs without them
 # codex-sandbox = read-only
 
+# comma-separated environment variables removed from every agent's environment, on top of CLAUDECODE.
+# a launch host can set variables that misroute a child: the claude desktop app's CLAUDE_CODE_ENTRYPOINT
+# makes a claude agent reject its apiKeyHelper key
+# strip-env =
+
 # comma-separated top-level keys of the user's claude settings.json (under CLAUDE_CONFIG_DIR when set)
 # copied to every claude agent, e.g. apiKeyHelper,env for a gateway. agents skip the user settings
 # layer otherwise; the keys are read fresh on each run and a missing one stops the run
