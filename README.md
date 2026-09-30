@@ -117,7 +117,8 @@ subscription auth; pass `--preserve-anthropic-api-key` if you authenticate by ke
 `claude` also runs with `--setting-sources project`, so your user `settings.json` is not loaded, and an
 `apiKeyHelper` set there never reaches the agents. Put the helper in the reviewed repo's
 `.claude/settings.json`, or put a `claude` wrapper first on PATH that runs the real binary, by absolute path,
-with `--settings <file>` added.
+with `--settings <file>` added. Or list the keys in `claude-user-settings` (e.g. `apiKeyHelper,env`),
+and revmux copies them from your user `settings.json` into every agent on each run.
 
 ## Quick start
 
