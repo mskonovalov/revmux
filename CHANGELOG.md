@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.6
+
+**Improvements**
+- run codex agents on gpt-6.1-sol e6fb2ea
+- copy one file in self mode instead of revmux init 8dc925c
+- note that claude agents skip the user settings file 04d35a0
+
 ## v0.2.5
 
 **Improvements**
