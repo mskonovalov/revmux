@@ -330,7 +330,9 @@ func (o options) executorOpts(rc reviewContext, clk executor.Clock) executor.Opt
 }
 
 // stripEnv resolves the strip-env list; --preserve-anthropic-api-key takes ANTHROPIC_API_KEY off it, so a
-// user who authenticates by key keeps it without restating the rest of the list.
+// user who authenticates by key keeps it without restating the rest of the list. CLAUDECODE is on the
+// default list because revmux normally runs inside an AI coding session and a child refuses to start as
+// a nested one.
 func (o options) stripEnv() []string {
 	names := commaList(o.StripEnv)
 	if o.PreserveAPIKey {
