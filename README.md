@@ -123,6 +123,19 @@ add `CLAUDE_CODE_ENTRYPOINT`, which makes `claude` reject an `apiKeyHelper` key.
 with `--settings <file>` added. Or list the keys in `claude-user-settings` (e.g. `apiKeyHelper,env`),
 and revmux copies them from your user `settings.json` into every agent on each run.
 
+**Cursor `agent` CLI authentication:** Run `agent login` once on the machine (browser or device link flow).
+This uses the same Cursor session login as the desktop IDE, **not** a `CURSOR_API_KEY` or `CURSOR_AUTH_TOKEN`.
+The sandbox `CURSOR_AUTH_TOKEN` JWT (type session) is not agent-CLI login; unset it when invoking revmux or
+the agent CLI, or it overrides `~/.cursor/auth.json` and breaks the CLI even after a real login:
+
+```bash
+env -u CURSOR_AUTH_TOKEN revmux --task pr-123 --profile lite --run initial
+```
+
+The Cursor executor passes `-f` (force-allow workspace trust) because revmux already chose the workdir, and
+model IDs as-is without `[effort=...]` brackets—the current CLI rejects bracket syntax. Use effort-suffixed
+model IDs when needed (e.g. `gpt-5.3-codex-low`).
+
 ## Quick start
 
 `revmux new` creates the round and prints every path you write to, so nothing constructs a path by hand:
@@ -277,7 +290,7 @@ codex mix inside one review.
 | `final` | `bugs+impl` plus the codex peer, nothing below major reported |
 | `claude-only` | the same four lens splits on claude, for a machine with no codex |
 | `codex-only` | the same splits on codex, and synthesis and verify with them |
-| `lite` | lightweight cursor-only review with `bugs` and `impl` lenses |
+| `lite` | lightweight cursor-only (`composer-2.5:low`) review with `bugs` and `impl` lenses |
 | `medium` | balanced cursor-only review with four lenses |
 | `deep` | thorough cursor-only review with five lenses and higher effort |
 | `grill-me` | two lens splits, each run once on claude and once on codex |

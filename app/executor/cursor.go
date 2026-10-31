@@ -10,6 +10,17 @@ import (
 )
 
 // Cursor runs the Cursor agent CLI in print mode and decodes its stream-json output.
+//
+// Authentication: The agent CLI uses the same Cursor session login as the desktop IDE (agent login),
+// stored in ~/.cursor/auth.json. It does NOT use CURSOR_API_KEY or CURSOR_AUTH_TOKEN environment
+// variables. In fact, CURSOR_AUTH_TOKEN (type session JWT) overrides the stored login and breaks
+// the CLI even after a real login, so it must be unset when invoking revmux or the agent CLI.
+//
+// Model IDs: The Cursor CLI uses effort-suffixed model names (e.g. gpt-5.3-codex-low) rather than
+// bracket syntax like model[effort=high]. Model strings from the profile are passed as-is to --model.
+//
+// Output format: The agent CLI returns stream-json, but findings are embedded in the result text field
+// rather than a separate structured_output field. The parseStream method extracts JSON from that text.
 type Cursor struct {
 	proc
 }
