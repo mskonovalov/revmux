@@ -99,7 +99,7 @@ func (c *CursorCloud) Run(ctx context.Context, req Request, sink EventSink) (Res
 
 	// Create agent run
 	c.emit(sink, Event{Kind: EventInfo, Text: "creating cloud agent run"})
-	agentID, runID, err := c.createAgent(ctx, apiKey, prompt, req.Model, req.Effort, repoURL, prURL)
+	agentID, _, err := c.createAgent(ctx, apiKey, prompt, req.Model, req.Effort, repoURL, prURL)
 	if err != nil {
 		return Result{RequestedModel: req.Model}, err
 	}
@@ -108,7 +108,7 @@ func (c *CursorCloud) Run(ctx context.Context, req Request, sink EventSink) (Res
 	c.emit(sink, Event{Kind: EventProgress, Text: "waiting for completion"})
 
 	// Poll for completion
-	res, err := c.pollCompletion(ctx, apiKey, agentID, runID, sink)
+	res, err := c.pollCompletion(ctx, apiKey, agentID, sink)
 	res.RequestedModel = req.Model
 	return res, err
 }
@@ -206,7 +206,7 @@ func (c *CursorCloud) createAgent(ctx context.Context, apiKey, prompt, model, ef
 }
 
 // pollCompletion polls the agent status until terminal, with backoff.
-func (c *CursorCloud) pollCompletion(ctx context.Context, apiKey, agentID, runID string, sink EventSink) (Result, error) {
+func (c *CursorCloud) pollCompletion(ctx context.Context, apiKey, agentID string, sink EventSink) (Result, error) {
 	backoff := []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 15 * time.Second}
 	attempt := 0
 
@@ -291,7 +291,7 @@ func (c *CursorCloud) checkStatus(ctx context.Context, apiKey, agentID string) (
 		return "", false, nil, "", fmt.Errorf("cursor-cloud: decode status: %w", err)
 	}
 
-	// Run status: CREATING, RUNNING, WAITING_FOR_BACKGROUND_WORK, FINISHED, ERROR, CANCELLED, EXPIRED
+	//nolint:misspell // Run status values from API: CREATING, RUNNING, WAITING_FOR_BACKGROUND_WORK, FINISHED, ERROR, CANCELLED, EXPIRED
 	// Check if terminal - compare case-insensitively to handle both spellings
 	statusUpper := strings.ToUpper(result.Status)
 	//nolint:misspell // API uses CANCELLED (British spelling) as status value

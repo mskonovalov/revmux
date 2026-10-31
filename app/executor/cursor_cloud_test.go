@@ -37,7 +37,7 @@ func TestCursorCloud_Authenticated(t *testing.T) {
 		defer srv.Close()
 		
 		// Test the logic by creating a custom request
-		req, err := http.NewRequestWithContext(context.Background(), "GET", srv.URL+"/v1/models", nil)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/v1/models", http.NoBody)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer test-key")
 		
