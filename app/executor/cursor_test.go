@@ -55,8 +55,8 @@ func TestCursor_args(t *testing.T) {
 	assert.Contains(t, argv, "--mode")
 	assert.Contains(t, argv, "ask")
 	assert.Contains(t, argv, "--model")
-	// Cursor CLI uses effort-suffixed model ids; model string passed as-is
-	assert.Contains(t, argv, "claude-sonnet-4.5")
+	// Cursor CLI uses effort-suffixed model ids; effort is appended to model name
+	assert.Contains(t, argv, "claude-sonnet-4.5-high")
 	assert.NotContains(t, argv, "--effort")
 	assert.NotContains(t, argv, "[effort=")
 }

@@ -11,9 +11,6 @@ import (
 	"strings"
 )
 
-// rateLimitRejected is the one rate_limit_event status that means the request was refused.
-const rateLimitRejected = "rejected"
-
 // Cursor runs the Cursor agent CLI in print mode and decodes its stream-json output.
 //
 // Authentication: The agent CLI uses the same Cursor session login as the desktop IDE (agent login),

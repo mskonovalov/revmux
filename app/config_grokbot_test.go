@@ -10,14 +10,11 @@ import (
 
 func TestParseArgs_GrokBotDefaultProfile(t *testing.T) {
 	t.Run("default profile is cursor-regular on Grok Bot", func(t *testing.T) {
-		// Set Grok Bot environment
+		dir := isolate(t)
+		// Set Grok Bot environment after isolate() so it takes precedence
 		t.Setenv("HOME", "/home/box")
 		t.Setenv("USER", "box")
-		t.Setenv("SAND_BOX_CLUSTER", "")
-		t.Setenv("SAND_BOX_ID", "")
-		t.Setenv("SAND_BOX_STORE_ID", "")
 
-		dir := isolate(t)
 		o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir})
 		require.NoError(t, err)
 
@@ -26,14 +23,9 @@ func TestParseArgs_GrokBotDefaultProfile(t *testing.T) {
 	})
 
 	t.Run("default profile is comprehensive off Grok Bot", func(t *testing.T) {
-		// Set regular environment
-		t.Setenv("HOME", "/home/alice")
-		t.Setenv("USER", "alice")
-		t.Setenv("SAND_BOX_CLUSTER", "")
-		t.Setenv("SAND_BOX_ID", "")
-		t.Setenv("SAND_BOX_STORE_ID", "")
-
 		dir := isolate(t)
+		// isolate() already clears Grok Bot signals and sets USER=tester, HOME to temp dir
+
 		o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir})
 		require.NoError(t, err)
 
@@ -42,14 +34,11 @@ func TestParseArgs_GrokBotDefaultProfile(t *testing.T) {
 	})
 
 	t.Run("explicit --profile flag wins on Grok Bot", func(t *testing.T) {
-		// Set Grok Bot environment
+		dir := isolate(t)
+		// Set Grok Bot environment after isolate()
 		t.Setenv("HOME", "/home/box")
 		t.Setenv("USER", "box")
-		t.Setenv("SAND_BOX_CLUSTER", "")
-		t.Setenv("SAND_BOX_ID", "")
-		t.Setenv("SAND_BOX_STORE_ID", "")
 
-		dir := isolate(t)
 		o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir, "--profile", "focused"})
 		require.NoError(t, err)
 
@@ -58,14 +47,11 @@ func TestParseArgs_GrokBotDefaultProfile(t *testing.T) {
 	})
 
 	t.Run("INI profile setting wins on Grok Bot", func(t *testing.T) {
-		// Set Grok Bot environment
+		dir := isolate(t)
+		// Set Grok Bot environment after isolate()
 		t.Setenv("HOME", "/home/box")
 		t.Setenv("USER", "box")
-		t.Setenv("SAND_BOX_CLUSTER", "")
-		t.Setenv("SAND_BOX_ID", "")
-		t.Setenv("SAND_BOX_STORE_ID", "")
 
-		dir := isolate(t)
 		user := filepath.Join(dir, "user")
 		writeConfig(t, user, "profile = comprehensive\n")
 
@@ -87,21 +73,15 @@ func TestPromptSet_GrokBotProfileAliases(t *testing.T) {
 		expectedResolved string
 	}{
 		{
-			name:           "light resolves to cursor-light on Grok Bot",
-			isGrokBot:      true,
-			profileArg:     "light",
-			expectedResolved: "cursor-light",
-		},
-		{
-			name:           "regular resolves to cursor-regular on Grok Bot",
-			isGrokBot:      true,
-			profileArg:     "regular",
-			expectedResolved: "cursor-regular",
-		},
-		{
-			name:           "deep resolves to cursor-deep on Grok Bot",
+			name:           "explicit deep unchanged on Grok Bot (ships as deep.md)",
 			isGrokBot:      true,
 			profileArg:     "deep",
+			expectedResolved: "deep",
+		},
+		{
+			name:           "explicit cursor-deep works on Grok Bot",
+			isGrokBot:      true,
+			profileArg:     "cursor-deep",
 			expectedResolved: "cursor-deep",
 		},
 		{
@@ -140,15 +120,15 @@ func TestPromptSet_GrokBotProfileAliases(t *testing.T) {
 			o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir, "--profile", tt.profileArg})
 			require.NoError(t, err)
 
-			// promptSet should resolve the profile successfully
+			// promptSet should resolve the profile successfully.
+			// Since --profile is an explicit flag, no alias is applied (origin is originFlag).
 			set, err := o.promptSet()
 			require.NoError(t, err)
 
-			// Verify the aliased profile is accessible
-			profileName := grokBotProfileAlias(o.Profile)
-			assert.Equal(t, tt.expectedResolved, profileName)
+			// Explicit flags don't get aliased, so we expect the profile arg as-is
+			assert.Equal(t, tt.expectedResolved, o.Profile)
 
-			profile, err := set.Profile(profileName)
+			profile, err := set.Profile(o.Profile)
 			require.NoError(t, err)
 			assert.NotNil(t, profile)
 		})
@@ -157,14 +137,11 @@ func TestPromptSet_GrokBotProfileAliases(t *testing.T) {
 
 func TestCatalog_GrokBotReportsCorrectProfile(t *testing.T) {
 	t.Run("catalog reports cursor-regular default on Grok Bot", func(t *testing.T) {
-		// Set Grok Bot environment
+		dir := isolate(t)
+		// Set Grok Bot environment after isolate() so it takes precedence
 		t.Setenv("HOME", "/home/box")
 		t.Setenv("USER", "box")
-		t.Setenv("SAND_BOX_CLUSTER", "")
-		t.Setenv("SAND_BOX_ID", "")
-		t.Setenv("SAND_BOX_STORE_ID", "")
 
-		dir := isolate(t)
 		o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir})
 		require.NoError(t, err)
 
@@ -183,14 +160,9 @@ func TestCatalog_GrokBotReportsCorrectProfile(t *testing.T) {
 	})
 
 	t.Run("catalog reports comprehensive default off Grok Bot", func(t *testing.T) {
-		// Set regular environment
-		t.Setenv("HOME", "/home/alice")
-		t.Setenv("USER", "alice")
-		t.Setenv("SAND_BOX_CLUSTER", "")
-		t.Setenv("SAND_BOX_ID", "")
-		t.Setenv("SAND_BOX_STORE_ID", "")
-
 		dir := isolate(t)
+		// isolate() already clears Grok Bot signals and sets USER=tester, HOME to temp dir
+
 		o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir})
 		require.NoError(t, err)
 
