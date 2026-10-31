@@ -65,8 +65,8 @@ func TestDefaults_EveryProfileResolvesItsRoster(t *testing.T) {
 	set, err := Load(LoadOpts{})
 	require.NoError(t, err)
 	known := set.LensNames()
-	require.Len(t, set.ProfileNames(), 8,
-		"the shipped set is comprehensive, focused, final, claude-only, codex-only, grill-me, triage and expert")
+	require.Len(t, set.ProfileNames(), 11,
+		"the shipped set is comprehensive, focused, final, claude-only, codex-only, grill-me, triage, expert, lite, medium, and deep")
 
 	for _, name := range set.ProfileNames() {
 		p, err := set.Profile(name)

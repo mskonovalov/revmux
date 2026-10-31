@@ -28,8 +28,11 @@ import (
 
 var revision = "unknown"
 
-// executorCodex is the one roster executor that is not claude, which is also the default.
+// executorCodex is one roster executor whose output is prose rather than stream-json.
 const executorCodex = "codex"
+
+// executorCursor is the cursor agent CLI executor.
+const executorCursor = "cursor"
 
 // agentRetryDelay is the floor an agent waits before its one retry, which the pipeline jitters up to
 // twice that. A relaunch in the same millisecond band as the failure meets whatever transient condition
@@ -398,19 +401,23 @@ func (o runOpts) tty() *os.File {
 }
 
 // runnerFactory builds the per-spec executor factory. A caller-supplied one wins, so a test drives
-// the whole slice without spawning a model CLI. Both executors are built once and shared: each holds
+// the whole slice without spawning a model CLI. All executors are built once and shared: each holds
 // immutable configuration only, and the roster runs them concurrently.
 func (o runOpts) runnerFactory(rc reviewContext) func(pipeline.RunnerSpec) pipeline.Runner {
 	if o.newRunner != nil {
 		return o.newRunner
 	}
 	runner, eo := executor.NewRunner(), o.opts.executorOpts(rc, o.clock)
-	claude, codex := executor.NewClaude(runner, eo), executor.NewCodex(runner, eo)
+	claude, codex, cursor := executor.NewClaude(runner, eo), executor.NewCodex(runner, eo), executor.NewCursor(runner, eo)
 	return func(spec pipeline.RunnerSpec) pipeline.Runner {
-		if spec.Executor == executorCodex {
+		switch spec.Executor {
+		case executorCodex:
 			return codex
+		case executorCursor:
+			return cursor
+		default:
+			return claude
 		}
-		return claude
 	}
 }
 
@@ -474,12 +481,16 @@ func (o runOpts) authFactory(rc reviewContext) func(string) authenticator {
 		return o.newAuth
 	}
 	runner, eo := executor.NewRunner(), o.opts.executorOpts(rc, o.clock)
-	claude, codex := executor.NewClaude(runner, eo), executor.NewCodex(runner, eo)
+	claude, codex, cursor := executor.NewClaude(runner, eo), executor.NewCodex(runner, eo), executor.NewCursor(runner, eo)
 	return func(name string) authenticator {
-		if name == executorCodex {
+		switch name {
+		case executorCodex:
 			return codex
+		case executorCursor:
+			return cursor
+		default:
+			return claude
 		}
-		return claude
 	}
 }
 

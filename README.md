@@ -4,8 +4,8 @@
 
 **[revmux.com](https://revmux.com)** · [Documentation](https://revmux.com/docs) · [Reference](https://revmux.com/reference) · [Releases](https://github.com/umputun/revmux/releases)
 
-revmux runs a structured multi-agent review. It spawns and supervises `claude --print` and `codex exec`
-subprocesses, then returns findings on stdout as JSON or markdown.
+revmux runs a structured multi-agent review. It spawns and supervises `claude --print`, `codex exec` and
+Cursor `agent` subprocesses, then returns findings on stdout as JSON or markdown.
 
 **It is normally launched by a coding agent rather than typed by you.** The [shipped skill](#agent-skills)
 works out what is under review, writes the context to disk, runs revmux and reads the report back. To that
@@ -276,16 +276,23 @@ codex mix inside one review.
 | `final` | `bugs+impl` plus the codex peer, nothing below major reported |
 | `claude-only` | the same four lens splits on claude, for a machine with no codex |
 | `codex-only` | the same splits on codex, and synthesis and verify with them |
+| `lite` | lightweight cursor-only review with `bugs` and `impl` lenses |
+| `medium` | balanced cursor-only review with four lenses |
+| `deep` | thorough cursor-only review with five lenses and higher effort |
 | `grill-me` | two lens splits, each run once on claude and once on codex |
 | `expert` | two agents at xhigh, each carrying all eight code lenses |
 | `triage` | a four-way panel over a filed item rather than a diff |
 
-**The eight are starting points, not the menu.** A profile is a file under `prompts/profiles/`, so dropping
+**The eleven are starting points, not the menu.** A profile is a file under `prompts/profiles/`, so dropping
 `.revmux/prompts/profiles/release.md` into a project makes `--profile release` work with no registration step
 anywhere. Its roster can be as wide as you are willing to pay for, each entry carries whatever lenses the job
 needs, and any entry can leave the profile's model for its own. Lenses resolve the same way, so a roster
 naming `payments` picks up `.revmux/lenses/payments.md`, written by whoever knows what goes wrong in that
 code.
+
+**Binary requirements:** Most profiles need both `claude` and `codex`. The `claude-only`, `codex-only`, `lite`,
+`medium`, and `deep` profiles need only their named executor. Cursor profiles (`lite`, `medium`, `deep`) require
+the Cursor `agent` CLI.
 
 ```yaml
 ---
