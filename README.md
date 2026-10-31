@@ -125,23 +125,19 @@ and revmux copies them from your user `settings.json` into every agent on each r
 
 **Cursor `agent` CLI authentication:** Run `agent login` once on the machine (browser or device link flow).
 This uses the same Cursor session login as the desktop IDE, **not** a `CURSOR_API_KEY` or `CURSOR_AUTH_TOKEN`.
-The sandbox `CURSOR_AUTH_TOKEN` JWT (type session) is not agent-CLI login; unset it when invoking revmux or
-the agent CLI, or it overrides `~/.cursor/auth.json` and breaks the CLI even after a real login:
-
-```bash
-env -u CURSOR_AUTH_TOKEN revmux --task pr-123 --profile lite --run initial
-```
+The sandbox `CURSOR_AUTH_TOKEN` JWT (type session) is not agent-CLI login, and it overrides `~/.cursor/auth.json`
+and breaks the CLI even after a real login. revmux strips `CURSOR_AUTH_TOKEN` from cursor agents automatically
+(via `--strip-env`, default `CLAUDECODE,ANTHROPIC_API_KEY,CURSOR_AUTH_TOKEN`) so no manual unset is required
 
 The Cursor executor passes `-f` (force-allow workspace trust) because revmux already chose the workdir, and
 model IDs as-is without `[effort=...]` brackets—the current CLI rejects bracket syntax. Use effort-suffixed
 model IDs when needed (e.g. `gpt-5.3-codex-low`).
 
 **On Grok Bot / Sand box environments:** When revmux detects it's running on Grok Bot (via `HOME=/home/box`,
-`USER=box`, or Sand box environment variables), the default profile is `cursor-regular` instead of
-`comprehensive`, and profile names `light`, `regular`, and `deep` automatically resolve to `cursor-light`,
-`cursor-regular`, and `cursor-deep` respectively. This makes Cursor multi-family profiles (Kimi, Composer,
-Gemini, GLM) the default without changing behavior for other environments. Explicit `--profile` flags and
-INI config settings still win as usual.
+`USER=box`, or Sand box environment variables), the bare default profile is `cursor-regular` instead of
+`comprehensive`. This makes Cursor multi-family profiles (Kimi, Composer, Gemini, GLM) the default on Grok
+without changing behavior for other environments. Explicit `--profile` flags (including `--profile deep` for
+the shipped `deep.md` profile) and INI config settings are used as-is, so all shipped profiles remain reachable.
 
 ## Quick start
 

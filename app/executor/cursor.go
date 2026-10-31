@@ -6,15 +6,21 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 )
+
+// rateLimitRejected is the one rate_limit_event status that means the request was refused.
+const rateLimitRejected = "rejected"
 
 // Cursor runs the Cursor agent CLI in print mode and decodes its stream-json output.
 //
 // Authentication: The agent CLI uses the same Cursor session login as the desktop IDE (agent login),
 // stored in ~/.cursor/auth.json. It does NOT use CURSOR_API_KEY or CURSOR_AUTH_TOKEN environment
 // variables. In fact, CURSOR_AUTH_TOKEN (type session JWT) overrides the stored login and breaks
-// the CLI even after a real login, so it must be unset when invoking revmux or the agent CLI.
+// the CLI even after a real login. revmux strips CURSOR_AUTH_TOKEN from cursor agents automatically
+// via --strip-env (default includes CLAUDECODE, ANTHROPIC_API_KEY, CURSOR_AUTH_TOKEN).
 //
 // Model IDs: The Cursor CLI uses effort-suffixed model names (e.g. gpt-5.3-codex-low) rather than
 // bracket syntax like model[effort=high]. Model strings from the profile are passed as-is to --model.
@@ -31,16 +37,35 @@ func NewCursor(runner CommandRunner, opts Opts) *Cursor {
 	return &Cursor{proc: newProc("agent", runner, opts)}
 }
 
-// Authenticated asks Cursor for the auth state. The agent CLI currently doesn't have a separate
-// auth status command, so we assume authentication if the binary is available.
+// Authenticated asks Cursor for the auth state. The agent CLI stores login credentials in
+// ~/.cursor/auth.json (or ~/.config/cursor/auth.json), so we check for the presence of that file
+// as a proxy for being logged in.
 func (c *Cursor) Authenticated(ctx context.Context) (bool, error) {
-	// The agent CLI doesn't have a dedicated auth status command yet.
-	// Check if the binary exists and is executable.
+	// Check if the agent binary is available first
 	cmd := c.runner.Command(ctx, "agent", "--version")
 	if err := cmd.Run(); err != nil {
 		return false, fmt.Errorf("cursor agent binary not available: %w", err)
 	}
-	return true, nil
+
+	// Check for auth file in standard locations
+	home := os.Getenv("HOME")
+	if home == "" {
+		return false, fmt.Errorf("HOME not set, cannot locate cursor auth")
+	}
+
+	authPaths := []string{
+		filepath.Join(home, ".cursor", "auth.json"),
+		filepath.Join(home, ".config", "cursor", "auth.json"),
+	}
+
+	for _, path := range authPaths {
+		info, err := os.Stat(path)
+		if err == nil && info.Size() > 0 {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // Login starts the provider's interactive flow on the controlling terminal.
@@ -88,10 +113,14 @@ func (c *Cursor) args(req Request) []string {
 		"--output-format", "stream-json",
 		"--mode", "ask", // read-only mode for reviews
 	}
-	// Cursor CLI uses effort-suffixed model ids (e.g. gpt-5.3-codex-low) rather than brackets.
-	// Pass the model string as-is; effort should be encoded in the model id itself.
+	// Cursor CLI uses effort-suffixed model ids (e.g. composer-2.5-low, kimi-k3-high).
+	// If the model name doesn't already end with the effort level, append it.
 	if req.Model != "" {
-		argv = append(argv, "--model", req.Model)
+		modelID := req.Model
+		if req.Effort != "" && !strings.HasSuffix(strings.ToLower(req.Model), "-"+strings.ToLower(req.Effort)) {
+			modelID = req.Model + "-" + req.Effort
+		}
+		argv = append(argv, "--model", modelID)
 	}
 	return argv
 }
@@ -126,12 +155,15 @@ func (c *Cursor) parseStream(ctx context.Context, r io.Reader, sink EventSink) R
 			res.ActualModel = ev.actualModel()
 			res.Tokens = ev.tokens()
 			res.TTFTMs = ev.TTFTMs
-		case "rate_limit":
-			// Handle rate limit events if present
+		case "rate_limit_event":
+			// Handle rate limit events. Only status "rejected" means the request failed;
+			// "allowed_warning" rides along on successful responses.
 			if ev.RateLimitInfo != nil {
 				res.RateLimit = *ev.RateLimitInfo
-				res.RateLimited = true
-				c.emit(sink, Event{Kind: EventRateLimit, Text: "rate limited"})
+				res.RateLimited = ev.RateLimitInfo.Status == rateLimitRejected
+				if res.RateLimited {
+					c.emit(sink, Event{Kind: EventRateLimit, Text: "rate limited"})
+				}
 			}
 		}
 	})

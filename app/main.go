@@ -207,8 +207,12 @@ func (o runOpts) pipelineConfig(ctx context.Context) (configuredReview, error) {
 	if err != nil {
 		return configuredReview{}, err
 	}
-	// Apply Grok Bot profile aliases (light -> cursor-light, etc.)
-	profileName := grokBotProfileAlias(o.opts.Profile)
+	// Apply Grok Bot profile aliases (light -> cursor-light, etc.) only when the profile
+	// came from the default layer. Explicit --profile flags and INI settings are used as-is.
+	profileName := o.opts.Profile
+	if o.opts.knobOrigins["profile"] == originDefault {
+		profileName = grokBotProfileAlias(o.opts.Profile)
+	}
 	profile, err := set.Profile(profileName)
 	if err != nil {
 		return configuredReview{}, fmt.Errorf("resolve profile: %w", err)
