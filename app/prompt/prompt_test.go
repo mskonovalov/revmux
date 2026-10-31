@@ -25,7 +25,7 @@ func TestLoad_EmbeddedDefaults(t *testing.T) {
 	set, err := Load(LoadOpts{})
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"claude-only", "codex-only", "comprehensive", "deep", "expert", "final", "focused", "grill-me", "lite", "medium", "triage"}, set.ProfileNames())
+	assert.Equal(t, []string{"claude-only", "codex-only", "comprehensive", "cursor-deep", "cursor-light", "cursor-regular", "deep", "expert", "final", "focused", "grill-me", "lite", "medium", "triage"}, set.ProfileNames())
 	for _, l := range set.Lenses() {
 		assert.NotEmpty(t, l.Description, "lens %s", l.Name)
 	}
@@ -45,7 +45,7 @@ func TestLoad_EmbeddedDefaults(t *testing.T) {
 func TestLoad_MissingDirsAreAbsentLayers(t *testing.T) {
 	set, err := Load(LoadOpts{ProjectDir: filepath.Join(t.TempDir(), "nope"), UserDir: filepath.Join(t.TempDir(), "also-nope")})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"claude-only", "codex-only", "comprehensive", "deep", "expert", "final", "focused", "grill-me", "lite", "medium", "triage"}, set.ProfileNames())
+	assert.Equal(t, []string{"claude-only", "codex-only", "comprehensive", "cursor-deep", "cursor-light", "cursor-regular", "deep", "expert", "final", "focused", "grill-me", "lite", "medium", "triage"}, set.ProfileNames())
 
 	for _, o := range set.Provenance() {
 		assert.Equal(t, LayerEmbedded, o.Layer, o.Path)

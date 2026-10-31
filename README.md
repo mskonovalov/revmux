@@ -293,11 +293,14 @@ codex mix inside one review.
 | `lite` | lightweight cursor-only (`composer-2.5:low`) review with `bugs` and `impl` lenses |
 | `medium` | balanced cursor-only review with four lenses |
 | `deep` | thorough cursor-only review with five lenses and higher effort |
+| `cursor-light` | low-cost multi-family (Kimi, Composer, Gemini, GLM) with four agents |
+| `cursor-regular` | balanced multi-family (Kimi, Composer, Gemini, GLM) with full lens coverage |
+| `cursor-deep` | quality-first multi-family (Kimi, Composer, Gemini, GLM) at higher effort |
 | `grill-me` | two lens splits, each run once on claude and once on codex |
 | `expert` | two agents at xhigh, each carrying all eight code lenses |
 | `triage` | a four-way panel over a filed item rather than a diff |
 
-**The eleven are starting points, not the menu.** A profile is a file under `prompts/profiles/`, so dropping
+**The fourteen are starting points, not the menu.** A profile is a file under `prompts/profiles/`, so dropping
 `.revmux/prompts/profiles/release.md` into a project makes `--profile release` work with no registration step
 anywhere. Its roster can be as wide as you are willing to pay for, each entry carries whatever lenses the job
 needs, and any entry can leave the profile's model for its own. Lenses resolve the same way, so a roster
@@ -305,8 +308,8 @@ naming `payments` picks up `.revmux/lenses/payments.md`, written by whoever know
 code.
 
 **Binary requirements:** Most profiles need both `claude` and `codex`. The `claude-only`, `codex-only`, `lite`,
-`medium`, and `deep` profiles need only their named executor. Cursor profiles (`lite`, `medium`, `deep`) require
-the Cursor `agent` CLI.
+`medium`, and `deep` profiles need only their named executor. Cursor profiles (`lite`, `medium`, `deep`,
+`cursor-light`, `cursor-regular`, `cursor-deep`) require the Cursor `agent` CLI.
 
 ```yaml
 ---
