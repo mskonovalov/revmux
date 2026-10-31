@@ -136,6 +136,13 @@ The Cursor executor passes `-f` (force-allow workspace trust) because revmux alr
 model IDs as-is without `[effort=...]` brackets—the current CLI rejects bracket syntax. Use effort-suffixed
 model IDs when needed (e.g. `gpt-5.3-codex-low`).
 
+**On Grok Bot / Sand box environments:** When revmux detects it's running on Grok Bot (via `HOME=/home/box`,
+`USER=box`, or Sand box environment variables), the default profile is `cursor-regular` instead of
+`comprehensive`, and profile names `light`, `regular`, and `deep` automatically resolve to `cursor-light`,
+`cursor-regular`, and `cursor-deep` respectively. This makes Cursor multi-family profiles (Kimi, Composer,
+Gemini, GLM) the default without changing behavior for other environments. Explicit `--profile` flags and
+INI config settings still win as usual.
+
 ## Quick start
 
 `revmux new` creates the round and prints every path you write to, so nothing constructs a path by hand:

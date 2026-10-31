@@ -165,6 +165,12 @@ func parseArgs(args []string) (options, error) {
 		}
 	}
 	o.knobOrigins = origins
+	
+	// On Grok Bot, use cursor-regular as the default profile instead of comprehensive
+	if runningOnGrokBot() && origins["profile"] == originDefault {
+		o.Profile = grokBotDefaultProfile()
+	}
+	
 	return o, nil
 }
 
@@ -347,7 +353,11 @@ func (o options) promptSet() (*prompt.Set, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load prompts: %w", err)
 	}
-	if _, err := set.Profile(o.Profile); err != nil {
+	
+	// Apply Grok Bot profile aliases (light -> cursor-light, etc.)
+	profileName := grokBotProfileAlias(o.Profile)
+	
+	if _, err := set.Profile(profileName); err != nil {
 		return nil, fmt.Errorf("resolve profile: %w", err)
 	}
 	return set, nil

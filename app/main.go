@@ -207,7 +207,9 @@ func (o runOpts) pipelineConfig(ctx context.Context) (configuredReview, error) {
 	if err != nil {
 		return configuredReview{}, err
 	}
-	profile, err := set.Profile(o.opts.Profile)
+	// Apply Grok Bot profile aliases (light -> cursor-light, etc.)
+	profileName := grokBotProfileAlias(o.opts.Profile)
+	profile, err := set.Profile(profileName)
 	if err != nil {
 		return configuredReview{}, fmt.Errorf("resolve profile: %w", err)
 	}
