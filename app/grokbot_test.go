@@ -120,10 +120,16 @@ func TestGrokBotProfileAlias(t *testing.T) {
 	// Save original environment
 	originalHome := os.Getenv("HOME")
 	originalUser := os.Getenv("USER")
+	originalCluster := os.Getenv("SAND_BOX_CLUSTER")
+	originalID := os.Getenv("SAND_BOX_ID")
+	originalStoreID := os.Getenv("SAND_BOX_STORE_ID")
 	
 	defer func() {
 		os.Setenv("HOME", originalHome)
 		os.Setenv("USER", originalUser)
+		os.Setenv("SAND_BOX_CLUSTER", originalCluster)
+		os.Setenv("SAND_BOX_ID", originalID)
+		os.Setenv("SAND_BOX_STORE_ID", originalStoreID)
 	}()
 
 	tests := []struct {
