@@ -3,7 +3,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +15,8 @@ import (
 )
 
 const (
-	cursorAPIBase      = "https://api.cursor.com"
+	cursorAPIBase = "https://api.cursor.com"
+	//nolint:gosec // G101: cursorAPIKeyEnv is the environment variable name, not a credential
 	cursorAPIKeyEnv    = "CURSOR_API_KEY"
 	cursorCloudRepoEnv = "REVMUX_CURSOR_CLOUD_REPO"
 	cursorCloudPREnv   = "REVMUX_CURSOR_CLOUD_PR"
@@ -50,7 +50,7 @@ func (c *CursorCloud) Authenticated(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", cursorAPIBase+"/v1/models", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cursorAPIBase+"/v1/models", http.NoBody)
 	if err != nil {
 		return false, fmt.Errorf("cursor-cloud auth: %w", err)
 	}
@@ -104,7 +104,7 @@ func (c *CursorCloud) Run(ctx context.Context, req Request, sink EventSink) (Res
 		return Result{RequestedModel: req.Model}, err
 	}
 
-	c.emit(sink, Event{Kind: EventInfo, Text: fmt.Sprintf("agent: %s", agentID)})
+	c.emit(sink, Event{Kind: EventInfo, Text: "agent: " + agentID})
 	c.emit(sink, Event{Kind: EventProgress, Text: "waiting for completion"})
 
 	// Poll for completion
@@ -140,7 +140,7 @@ func (c *CursorCloud) resolveRepo(ctx context.Context) (repoURL, prURL string, e
 
 // createAgent calls POST /v1/agents to start a review run.
 func (c *CursorCloud) createAgent(ctx context.Context, apiKey, prompt, model, effort, repoURL, prURL string) (agentID, runID string, err error) {
-	body := map[string]interface{}{
+	body := map[string]any{
 		"prompt": map[string]string{
 			"text": prompt,
 		},
@@ -159,7 +159,7 @@ func (c *CursorCloud) createAgent(ctx context.Context, apiKey, prompt, model, ef
 	}
 
 	if model != "" {
-		modelConfig := map[string]interface{}{
+		modelConfig := map[string]any{
 			"id": model,
 		}
 		// Map effort to model params if supported (placeholder - adjust per docs)
@@ -176,7 +176,7 @@ func (c *CursorCloud) createAgent(ctx context.Context, apiKey, prompt, model, ef
 		return "", "", fmt.Errorf("cursor-cloud: marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", cursorAPIBase+"/v1/agents", bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cursorAPIBase+"/v1/agents", bytes.NewReader(jsonBody))
 	if err != nil {
 		return "", "", fmt.Errorf("cursor-cloud: build request: %w", err)
 	}
@@ -213,11 +213,11 @@ func (c *CursorCloud) pollCompletion(ctx context.Context, apiKey, agentID, runID
 	for {
 		select {
 		case <-ctx.Done():
-			return Result{}, ctx.Err()
+			return Result{}, fmt.Errorf("cursor-cloud wait: %w", ctx.Err())
 		default:
 		}
 
-		status, finished, output, actualModel, err := c.checkStatus(ctx, apiKey, agentID, runID)
+		status, finished, output, actualModel, err := c.checkStatus(ctx, apiKey, agentID)
 		if err != nil {
 			return Result{}, err
 		}
@@ -251,7 +251,7 @@ func (c *CursorCloud) pollCompletion(ctx context.Context, apiKey, agentID, runID
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return Result{}, ctx.Err()
+			return Result{}, fmt.Errorf("cursor-cloud wait: %w", ctx.Err())
 		case <-time.After(delay):
 			// Continue polling
 		}
@@ -259,12 +259,11 @@ func (c *CursorCloud) pollCompletion(ctx context.Context, apiKey, agentID, runID
 }
 
 // checkStatus queries the agent/run status and extracts output if complete.
-func (c *CursorCloud) checkStatus(ctx context.Context, apiKey, agentID, runID string) (status string, finished bool, output json.RawMessage, model string, err error) {
-	// Placeholder: actual endpoint depends on API docs
-	// This might be GET /v1/agents/{id} or GET /v1/agents/{id}/runs/{runId}
+func (c *CursorCloud) checkStatus(ctx context.Context, apiKey, agentID string) (status string, finished bool, output json.RawMessage, model string, err error) {
+	// GET /v1/agents/{id} returns the agent with its latest run status
 	url := fmt.Sprintf("%s/v1/agents/%s", cursorAPIBase, agentID)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return "", false, nil, "", fmt.Errorf("cursor-cloud: build status request: %w", err)
 	}
@@ -286,31 +285,24 @@ func (c *CursorCloud) checkStatus(ctx context.Context, apiKey, agentID, runID st
 		Model  struct {
 			ID string `json:"id"`
 		} `json:"model"`
-		// Placeholder structure - adjust based on actual API response
-		Conversation []struct {
-			Role    string          `json:"role"`
-			Content json.RawMessage `json:"content"`
-		} `json:"conversation"`
+		Result json.RawMessage `json:"result"` // Final output when run is FINISHED
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", false, nil, "", fmt.Errorf("cursor-cloud: decode status: %w", err)
 	}
 
-	// Check if terminal
-	terminal := result.Status == "completed" || result.Status == "failed" || result.Status == "cancelled"
+	// Run status: CREATING, RUNNING, WAITING_FOR_BACKGROUND_WORK, FINISHED, ERROR, CANCELLED, EXPIRED
+	// Check if terminal - compare case-insensitively to handle both spellings
+	statusUpper := strings.ToUpper(result.Status)
+	//nolint:misspell // API uses CANCELLED (British spelling) as status value
+	terminal := statusUpper == "FINISHED" || statusUpper == "ERROR" || statusUpper == "CANCELLED" || statusUpper == "CANCELED" || statusUpper == "EXPIRED"
 
-	// Extract structured output from conversation if finished
+	// Extract structured output from result field if finished
 	var structuredOutput json.RawMessage
-	if terminal && len(result.Conversation) > 0 {
-		// Look for JSON in the last assistant message
-		for i := len(result.Conversation) - 1; i >= 0; i-- {
-			if result.Conversation[i].Role == "assistant" {
-				content := string(result.Conversation[i].Content)
-				if extracted := c.extractJSON(content); extracted != nil {
-					structuredOutput = extracted
-					break
-				}
-			}
+	if terminal && len(result.Result) > 0 {
+		// Try to extract JSON from the result field
+		if extracted := c.extractJSON(string(result.Result)); extracted != nil {
+			structuredOutput = extracted
 		}
 	}
 
@@ -340,16 +332,4 @@ func (c *CursorCloud) emit(sink EventSink, ev Event) {
 	if sink != nil {
 		sink.Emit(ev)
 	}
-}
-
-// authCommand builds a command with the Basic auth header (unused for cursor-cloud, kept for interface consistency).
-func (c *CursorCloud) authCommand(ctx context.Context, args ...string) *http.Request {
-	apiKey := strings.TrimSpace(os.Getenv(cursorAPIKeyEnv))
-	if apiKey == "" {
-		return nil
-	}
-	auth := base64.StdEncoding.EncodeToString([]byte(apiKey + ":"))
-	req, _ := http.NewRequestWithContext(ctx, "GET", cursorAPIBase+"/v1/models", nil)
-	req.Header.Set("Authorization", "Basic "+auth)
-	return req
 }

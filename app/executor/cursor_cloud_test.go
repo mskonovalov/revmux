@@ -16,7 +16,7 @@ import (
 
 func TestCursorCloud_Authenticated(t *testing.T) {
 	t.Run("no API key", func(t *testing.T) {
-		os.Unsetenv(cursorAPIKeyEnv)
+		require.NoError(t, os.Unsetenv(cursorAPIKeyEnv))
 		c := NewCursorCloud(Opts{})
 		authed, err := c.Authenticated(context.Background())
 		require.NoError(t, err)
@@ -73,7 +73,7 @@ func TestCursorCloud_Login(t *testing.T) {
 }
 
 func TestCursorCloud_Run_MissingAPIKey(t *testing.T) {
-	os.Unsetenv(cursorAPIKeyEnv)
+	require.NoError(t, os.Unsetenv(cursorAPIKeyEnv))
 	c := NewCursorCloud(Opts{WorkDir: t.TempDir()})
 
 	req := Request{
@@ -95,9 +95,9 @@ func TestCursorCloud_Run_Success(t *testing.T) {
 	callCount := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == "POST" && r.URL.Path == "/v1/agents":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/agents":
 			// Create agent
-			var body map[string]interface{}
+			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			assert.Contains(t, body, "prompt")
 			assert.Contains(t, body, "repos")
@@ -106,23 +106,18 @@ func TestCursorCloud_Run_Success(t *testing.T) {
 			resp := map[string]string{"agentId": agentID, "runId": runID}
 			_ = json.NewEncoder(w).Encode(resp)
 
-		case r.Method == "GET" && r.URL.Path == "/v1/agents/"+agentID:
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents/"+agentID:
 			// Poll status
 			callCount++
-			status := "running"
+			status := "RUNNING"
 			if callCount >= 2 {
-				status = "completed"
+				status = "FINISHED"
 			}
 
-			resp := map[string]interface{}{
+			resp := map[string]any{
 				"status": status,
 				"model":  map[string]string{"id": "claude-opus-4"},
-				"conversation": []map[string]interface{}{
-					{
-						"role":    "assistant",
-						"content": string(findings),
-					},
-				},
+				"result": string(findings),
 			}
 			_ = json.NewEncoder(w).Encode(resp)
 
@@ -219,7 +214,7 @@ func TestCursorCloud_ResolveRepo(t *testing.T) {
 	})
 
 	t.Run("no repo available", func(t *testing.T) {
-		os.Unsetenv(cursorCloudRepoEnv)
+		require.NoError(t, os.Unsetenv(cursorCloudRepoEnv))
 		c := NewCursorCloud(Opts{WorkDir: t.TempDir()})
 
 		_, _, err := c.resolveRepo(context.Background())
@@ -284,8 +279,8 @@ func TestCursorCloud_PromptWithSchema(t *testing.T) {
 
 func ExampleCursorCloud_usage() {
 	// Set up authentication
-	os.Setenv(cursorAPIKeyEnv, "your-api-key")
-	os.Setenv(cursorCloudRepoEnv, "https://github.com/your/repo")
+	_ = os.Setenv(cursorAPIKeyEnv, "your-api-key")
+	_ = os.Setenv(cursorCloudRepoEnv, "https://github.com/your/repo")
 
 	// Create executor
 	c := NewCursorCloud(Opts{WorkDir: "/path/to/repo"})
