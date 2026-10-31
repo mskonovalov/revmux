@@ -4,8 +4,8 @@
 
 **[revmux.com](https://revmux.com)** · [Documentation](https://revmux.com/docs) · [Reference](https://revmux.com/reference) · [Releases](https://github.com/umputun/revmux/releases)
 
-revmux runs a structured multi-agent review. It spawns and supervises `claude --print` and `codex exec`
-subprocesses, then returns findings on stdout as JSON or markdown.
+revmux runs a structured multi-agent review. It spawns and supervises `claude --print`, `codex exec`
+and Cursor Cloud Agent API calls as subprocesses, then returns findings on stdout as JSON or markdown.
 
 **It is normally launched by a coding agent rather than typed by you.** The [shipped skill](#agent-skills)
 works out what is under review, writes the context to disk, runs revmux and reads the report back. To that
@@ -103,14 +103,18 @@ Install the skill through one marketplace only. If you previously copied or syml
 `~/.codex/skills/revmux`, remove that copy after installing the plugin. Then ask for a review in words:
 revmux this branch, revmux pr 123, re-review after fixes. See [Agent skills](#agent-skills) for what it does.
 
-revmux drives model CLIs as subprocesses. `preflight.sh` in the shipped skill checks which binaries
-an invocation needs. When a review starts, revmux checks authentication for the configured roster
-and enabled stages before claiming the round. It starts the required CLI login flow only when needed;
-a Codex environment credential does not require a stored login. A status check cannot validate
+revmux drives model CLIs as subprocesses and calls the Cursor Cloud Agents API. `preflight.sh` in the shipped 
+skill checks which binaries an invocation needs. When a review starts, revmux checks authentication for the 
+configured roster and enabled stages before claiming the round. It starts the required CLI login flow only when 
+needed; a Codex environment credential does not require a stored login. A status check cannot validate
 an environment key against the API; a real request can still fail if the key is stale.
 When codex uses an external provider such as an AI gateway, or `claude-user-settings` passes
 claude its `apiKeyHelper`, the `gateway-check` and `gateway-login` config keys name the commands
 that check and renew that provider's login instead.
+
+For `cursor-cloud`, set `CURSOR_API_KEY` to your API key from https://cursor.com/settings/api-keys.
+Optionally set `REVMUX_CURSOR_CLOUD_REPO` to the repository URL and `REVMUX_CURSOR_CLOUD_PR` to a PR URL;
+if unset, the repo URL is derived from `git remote get-url origin`.
 
 `ANTHROPIC_API_KEY` is stripped from the child environment by default so `claude` uses interactive
 subscription auth; pass `--preserve-anthropic-api-key` if you authenticate by key. The stripped list is
@@ -266,8 +270,17 @@ independently agreed".
 ## Profiles
 
 A profile is roster front matter plus a body that is the shared preamble and severity bar. Every roster entry
-composes lenses, and one `model:` string selects the binary, the model and the effort together, so claude and
-codex mix inside one review.
+composes lenses, and one `model:` string selects the binary, the model and the effort together, so claude, 
+codex and cursor-cloud mix inside one review.
+
+**Model string format:** `<binary>[/<model>][:<effort>]`
+- `claude`, `claude/opus:high`, `claude/sonnet:low`
+- `codex/gpt-6.1-sol:xhigh`, `codex/gpt-5.6-sol:high`
+- `cursor-cloud/<model-id>[:effort]` — e.g., `cursor-cloud/claude-opus-4:high`
+
+The `cursor-cloud` executor runs reviews via the Cursor Cloud Agents API (public beta). It is **asynchronous** 
+and polls for completion, **costs API quota**, requires a connected SCM repository, and is **not a substitute** 
+for the local stream-json CLI. Use it when you want managed cloud execution or when local CLIs are unavailable.
 
 | profile | roster |
 |---|---|

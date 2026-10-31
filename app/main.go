@@ -29,7 +29,10 @@ import (
 var revision = "unknown"
 
 // executorCodex is the one roster executor that is not claude, which is also the default.
-const executorCodex = "codex"
+const (
+	executorCodex       = "codex"
+	executorCursorCloud = "cursor-cloud"
+)
 
 // agentRetryDelay is the floor an agent waits before its one retry, which the pipeline jitters up to
 // twice that. A relaunch in the same millisecond band as the failure meets whatever transient condition
@@ -398,7 +401,7 @@ func (o runOpts) tty() *os.File {
 }
 
 // runnerFactory builds the per-spec executor factory. A caller-supplied one wins, so a test drives
-// the whole slice without spawning a model CLI. Both executors are built once and shared: each holds
+// the whole slice without spawning a model CLI. All executors are built once and shared: each holds
 // immutable configuration only, and the roster runs them concurrently.
 func (o runOpts) runnerFactory(rc reviewContext) func(pipeline.RunnerSpec) pipeline.Runner {
 	if o.newRunner != nil {
@@ -406,11 +409,16 @@ func (o runOpts) runnerFactory(rc reviewContext) func(pipeline.RunnerSpec) pipel
 	}
 	runner, eo := executor.NewRunner(), o.opts.executorOpts(rc, o.clock)
 	claude, codex := executor.NewClaude(runner, eo), executor.NewCodex(runner, eo)
+	cursorCloud := executor.NewCursorCloud(eo)
 	return func(spec pipeline.RunnerSpec) pipeline.Runner {
-		if spec.Executor == executorCodex {
+		switch spec.Executor {
+		case executorCodex:
 			return codex
+		case executorCursorCloud:
+			return cursorCloud
+		default:
+			return claude
 		}
-		return claude
 	}
 }
 
@@ -475,11 +483,16 @@ func (o runOpts) authFactory(rc reviewContext) func(string) authenticator {
 	}
 	runner, eo := executor.NewRunner(), o.opts.executorOpts(rc, o.clock)
 	claude, codex := executor.NewClaude(runner, eo), executor.NewCodex(runner, eo)
+	cursorCloud := executor.NewCursorCloud(eo)
 	return func(name string) authenticator {
-		if name == executorCodex {
+		switch name {
+		case executorCodex:
 			return codex
+		case executorCursorCloud:
+			return cursorCloud
+		default:
+			return claude
 		}
-		return claude
 	}
 }
 
