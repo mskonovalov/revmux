@@ -299,6 +299,12 @@ scale numbers are what Step 4's one-line announcement is built from.
 | `comprehensive` (default) | `bugs+impl`, `arch+quality`, `docs+tests`, codex peer | real change, real risk |
 | `focused` | one `bugs` agent plus codex peer | small or time-boxed |
 | `final` | `bugs+impl` plus codex peer, nothing below major | pre-merge |
+| `lite` | `bugs`, `impl`, Cursor `composer-2.5:low` | lightweight Cursor-only, quick iteration |
+| `medium` | `bugs+impl`, `arch+quality`, `docs+tests`, Cursor `composer-2.5` | balanced Cursor-only, mid-tier |
+| `deep` | `bugs+impl`, `arch+quality`, `docs+tests+comments`, `adversarial`, Cursor | thorough Cursor-only, high effort |
+| `cursor-light` | Cursor only, Composer low effort | Grok Bot default alias for quick iteration |
+| `cursor-regular` | Cursor multi-family (Kimi, Composer, Gemini, GLM) | Grok Bot default, balanced |
+| `cursor-deep` | Cursor multi-family, high effort | Grok Bot thorough, higher cost |
 | `claude-only` | the same four lens splits, all on claude | no codex available |
 | `codex-only` | the same four lens splits on codex, and synthesis and verify with them | no claude available |
 | `grill-me` | `bugs+impl` and `architecture+quality`, each once on claude and once on codex, all reading against the change | the user wants it torn apart |
@@ -318,11 +324,14 @@ fails the run.
 
 | the user says | profile |
 |---|---|
-| full, everything, deep, thorough, the works | `comprehensive` |
-| short, quick, fast, light, small, time-boxed | `focused` |
+| full, everything, thorough, the works | `comprehensive` |
+| short, quick, fast, light, small, time-boxed, lightweight | `focused` or `lite` (cursor-only) |
+| mid, middle, balanced, medium | `medium` (cursor-only) |
+| deep, thorough cursor review | `deep` or `cursor-deep` (multi-family) |
 | last, pre-merge, before merge, strict | `final` |
 | claude only, no codex, skip codex | `claude-only` |
 | codex only, no claude, codex alone | `codex-only` |
+| cursor only, no claude, cursor alone | `lite`, `medium`, or `deep` depending on thoroughness |
 | grill me, tear it apart, be brutal, no mercy, adversarial | `grill-me` |
 | expert, best models, highest effort, spare no expense, use astra and fable | `expert` — and only on words like these, never inferred from the subject |
 | triage this, is this worth doing, should we accept this, should I close this | `triage`, and the subject is a filed item rather than a diff — `references/triage.md`, which owns the flags it needs |

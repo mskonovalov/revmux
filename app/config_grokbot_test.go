@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -10,32 +9,13 @@ import (
 )
 
 func TestParseArgs_GrokBotDefaultProfile(t *testing.T) {
-	// Save original environment
-	originalHome := os.Getenv("HOME")
-	originalUser := os.Getenv("USER")
-	originalCluster := os.Getenv("SAND_BOX_CLUSTER")
-	originalID := os.Getenv("SAND_BOX_ID")
-	originalStoreID := os.Getenv("SAND_BOX_STORE_ID")
-	
-	defer func() {
-		os.Setenv("HOME", originalHome)
-		os.Setenv("USER", originalUser)
-		os.Setenv("SAND_BOX_CLUSTER", originalCluster)
-		os.Setenv("SAND_BOX_ID", originalID)
-		os.Setenv("SAND_BOX_STORE_ID", originalStoreID)
-	}()
-
 	t.Run("default profile is cursor-regular on Grok Bot", func(t *testing.T) {
-		// Clear all detection signals first
-		os.Unsetenv("HOME")
-		os.Unsetenv("USER")
-		os.Unsetenv("SAND_BOX_CLUSTER")
-		os.Unsetenv("SAND_BOX_ID")
-		os.Unsetenv("SAND_BOX_STORE_ID")
-		
 		// Set Grok Bot environment
-		os.Setenv("HOME", "/home/box")
-		os.Setenv("USER", "box")
+		t.Setenv("HOME", "/home/box")
+		t.Setenv("USER", "box")
+		t.Setenv("SAND_BOX_CLUSTER", "")
+		t.Setenv("SAND_BOX_ID", "")
+		t.Setenv("SAND_BOX_STORE_ID", "")
 
 		dir := isolate(t)
 		o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir})
@@ -46,16 +26,12 @@ func TestParseArgs_GrokBotDefaultProfile(t *testing.T) {
 	})
 
 	t.Run("default profile is comprehensive off Grok Bot", func(t *testing.T) {
-		// Clear all detection signals first
-		os.Unsetenv("HOME")
-		os.Unsetenv("USER")
-		os.Unsetenv("SAND_BOX_CLUSTER")
-		os.Unsetenv("SAND_BOX_ID")
-		os.Unsetenv("SAND_BOX_STORE_ID")
-		
 		// Set regular environment
-		os.Setenv("HOME", "/home/alice")
-		os.Setenv("USER", "alice")
+		t.Setenv("HOME", "/home/alice")
+		t.Setenv("USER", "alice")
+		t.Setenv("SAND_BOX_CLUSTER", "")
+		t.Setenv("SAND_BOX_ID", "")
+		t.Setenv("SAND_BOX_STORE_ID", "")
 
 		dir := isolate(t)
 		o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir})
@@ -66,16 +42,12 @@ func TestParseArgs_GrokBotDefaultProfile(t *testing.T) {
 	})
 
 	t.Run("explicit --profile flag wins on Grok Bot", func(t *testing.T) {
-		// Clear all detection signals first
-		os.Unsetenv("HOME")
-		os.Unsetenv("USER")
-		os.Unsetenv("SAND_BOX_CLUSTER")
-		os.Unsetenv("SAND_BOX_ID")
-		os.Unsetenv("SAND_BOX_STORE_ID")
-		
 		// Set Grok Bot environment
-		os.Setenv("HOME", "/home/box")
-		os.Setenv("USER", "box")
+		t.Setenv("HOME", "/home/box")
+		t.Setenv("USER", "box")
+		t.Setenv("SAND_BOX_CLUSTER", "")
+		t.Setenv("SAND_BOX_ID", "")
+		t.Setenv("SAND_BOX_STORE_ID", "")
 
 		dir := isolate(t)
 		o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir, "--profile", "focused"})
@@ -86,16 +58,12 @@ func TestParseArgs_GrokBotDefaultProfile(t *testing.T) {
 	})
 
 	t.Run("INI profile setting wins on Grok Bot", func(t *testing.T) {
-		// Clear all detection signals first
-		os.Unsetenv("HOME")
-		os.Unsetenv("USER")
-		os.Unsetenv("SAND_BOX_CLUSTER")
-		os.Unsetenv("SAND_BOX_ID")
-		os.Unsetenv("SAND_BOX_STORE_ID")
-		
 		// Set Grok Bot environment
-		os.Setenv("HOME", "/home/box")
-		os.Setenv("USER", "box")
+		t.Setenv("HOME", "/home/box")
+		t.Setenv("USER", "box")
+		t.Setenv("SAND_BOX_CLUSTER", "")
+		t.Setenv("SAND_BOX_ID", "")
+		t.Setenv("SAND_BOX_STORE_ID", "")
 
 		dir := isolate(t)
 		user := filepath.Join(dir, "user")
@@ -110,21 +78,6 @@ func TestParseArgs_GrokBotDefaultProfile(t *testing.T) {
 }
 
 func TestPromptSet_GrokBotProfileAliases(t *testing.T) {
-	// Save original environment
-	originalHome := os.Getenv("HOME")
-	originalUser := os.Getenv("USER")
-	originalCluster := os.Getenv("SAND_BOX_CLUSTER")
-	originalID := os.Getenv("SAND_BOX_ID")
-	originalStoreID := os.Getenv("SAND_BOX_STORE_ID")
-	
-	defer func() {
-		os.Setenv("HOME", originalHome)
-		os.Setenv("USER", originalUser)
-		os.Setenv("SAND_BOX_CLUSTER", originalCluster)
-		os.Setenv("SAND_BOX_ID", originalID)
-		os.Setenv("SAND_BOX_STORE_ID", originalStoreID)
-	}()
-
 	dir := isolate(t)
 
 	tests := []struct {
@@ -173,18 +126,16 @@ func TestPromptSet_GrokBotProfileAliases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Clear all detection signals first
-			os.Unsetenv("HOME")
-			os.Unsetenv("USER")
-			os.Unsetenv("SAND_BOX_CLUSTER")
-			os.Unsetenv("SAND_BOX_ID")
-			os.Unsetenv("SAND_BOX_STORE_ID")
-
+			// Set environment based on test case
 			if tt.isGrokBot {
-				os.Setenv("HOME", "/home/box")
+				t.Setenv("HOME", "/home/box")
 			} else {
-				os.Setenv("HOME", "/home/alice")
+				t.Setenv("HOME", "/home/alice")
 			}
+			t.Setenv("USER", "alice")
+			t.Setenv("SAND_BOX_CLUSTER", "")
+			t.Setenv("SAND_BOX_ID", "")
+			t.Setenv("SAND_BOX_STORE_ID", "")
 
 			o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir, "--profile", tt.profileArg})
 			require.NoError(t, err)
@@ -205,32 +156,13 @@ func TestPromptSet_GrokBotProfileAliases(t *testing.T) {
 }
 
 func TestCatalog_GrokBotReportsCorrectProfile(t *testing.T) {
-	// Save original environment
-	originalHome := os.Getenv("HOME")
-	originalUser := os.Getenv("USER")
-	originalCluster := os.Getenv("SAND_BOX_CLUSTER")
-	originalID := os.Getenv("SAND_BOX_ID")
-	originalStoreID := os.Getenv("SAND_BOX_STORE_ID")
-	
-	defer func() {
-		os.Setenv("HOME", originalHome)
-		os.Setenv("USER", originalUser)
-		os.Setenv("SAND_BOX_CLUSTER", originalCluster)
-		os.Setenv("SAND_BOX_ID", originalID)
-		os.Setenv("SAND_BOX_STORE_ID", originalStoreID)
-	}()
-
 	t.Run("catalog reports cursor-regular default on Grok Bot", func(t *testing.T) {
-		// Clear all detection signals first
-		os.Unsetenv("HOME")
-		os.Unsetenv("USER")
-		os.Unsetenv("SAND_BOX_CLUSTER")
-		os.Unsetenv("SAND_BOX_ID")
-		os.Unsetenv("SAND_BOX_STORE_ID")
-		
 		// Set Grok Bot environment
-		os.Setenv("HOME", "/home/box")
-		os.Setenv("USER", "box")
+		t.Setenv("HOME", "/home/box")
+		t.Setenv("USER", "box")
+		t.Setenv("SAND_BOX_CLUSTER", "")
+		t.Setenv("SAND_BOX_ID", "")
+		t.Setenv("SAND_BOX_STORE_ID", "")
 
 		dir := isolate(t)
 		o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir})
@@ -251,16 +183,12 @@ func TestCatalog_GrokBotReportsCorrectProfile(t *testing.T) {
 	})
 
 	t.Run("catalog reports comprehensive default off Grok Bot", func(t *testing.T) {
-		// Clear all detection signals first
-		os.Unsetenv("HOME")
-		os.Unsetenv("USER")
-		os.Unsetenv("SAND_BOX_CLUSTER")
-		os.Unsetenv("SAND_BOX_ID")
-		os.Unsetenv("SAND_BOX_STORE_ID")
-		
 		// Set regular environment
-		os.Setenv("HOME", "/home/alice")
-		os.Setenv("USER", "alice")
+		t.Setenv("HOME", "/home/alice")
+		t.Setenv("USER", "alice")
+		t.Setenv("SAND_BOX_CLUSTER", "")
+		t.Setenv("SAND_BOX_ID", "")
+		t.Setenv("SAND_BOX_STORE_ID", "")
 
 		dir := isolate(t)
 		o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir})
