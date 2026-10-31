@@ -54,9 +54,9 @@ func TestCursor_args(t *testing.T) {
 	assert.Contains(t, argv, "--mode")
 	assert.Contains(t, argv, "ask")
 	assert.Contains(t, argv, "--model")
-	assert.Contains(t, argv, "claude-sonnet-4.5")
-	assert.Contains(t, argv, "--effort")
-	assert.Contains(t, argv, "high")
+	// Effort should be folded into the model string
+	assert.Contains(t, argv, "claude-sonnet-4.5[effort=high]")
+	assert.NotContains(t, argv, "--effort")
 }
 
 func TestCursor_argsMinimal(t *testing.T) {
@@ -78,7 +78,66 @@ func TestCursor_argsMinimal(t *testing.T) {
 	assert.Contains(t, argv, "--mode")
 	assert.Contains(t, argv, "ask")
 	assert.NotContains(t, argv, "--model")
-	assert.NotContains(t, argv, "--effort")
+}
+
+func TestCursor_modelWithEffort(t *testing.T) {
+	tests := []struct {
+		name   string
+		model  string
+		effort string
+		want   string
+	}{
+		{
+			name:   "simple model with effort",
+			model:  "claude-opus-4-8",
+			effort: "high",
+			want:   "claude-opus-4-8[effort=high]",
+		},
+		{
+			name:   "model with existing brackets",
+			model:  "claude-opus-4-8[context=1m]",
+			effort: "high",
+			want:   "claude-opus-4-8[context=1m,effort=high]",
+		},
+		{
+			name:   "model with multiple existing params",
+			model:  "claude-opus-4-8[context=1m,fast=false]",
+			effort: "xhigh",
+			want:   "claude-opus-4-8[context=1m,fast=false,effort=xhigh]",
+		},
+		{
+			name:   "no effort leaves model unchanged",
+			model:  "composer-2",
+			effort: "",
+			want:   "composer-2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeCursorFixture(t, cursorCleanCapture())
+			runner := fakeRunner("emit", path)
+			c := executor.NewCursor(runner, executor.Opts{})
+
+			req := executor.Request{Prompt: "review", Model: tt.model, Effort: tt.effort}
+			_, err := c.Run(context.Background(), req, discardSink())
+			require.NoError(t, err)
+
+			require.Len(t, runner.CommandCalls(), 1)
+			call := runner.CommandCalls()[0]
+
+			// Find the model argument
+			modelIdx := -1
+			for i, arg := range call.Args {
+				if arg == "--model" && i+1 < len(call.Args) {
+					modelIdx = i + 1
+					break
+				}
+			}
+			require.NotEqual(t, -1, modelIdx, "should have --model flag")
+			assert.Equal(t, tt.want, call.Args[modelIdx])
+		})
+	}
 }
 
 func TestCursor_parseStreamActivity(t *testing.T) {

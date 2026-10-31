@@ -77,13 +77,26 @@ func (c *Cursor) args(req Request) []string {
 		"--mode", "ask", // read-only mode for reviews
 	}
 	if req.Model != "" {
-		argv = append(argv, "--model", req.Model)
-	}
-	// Cursor agent uses --effort for reasoning effort levels
-	if req.Effort != "" {
-		argv = append(argv, "--effort", req.Effort)
+		model := req.Model
+		// Cursor CLI encodes effort in the model string via brackets: claude-opus-4-8[effort=high]
+		if req.Effort != "" {
+			model = c.modelWithEffort(req.Model, req.Effort)
+		}
+		argv = append(argv, "--model", model)
 	}
 	return argv
+}
+
+// modelWithEffort folds effort into the model string using Cursor's bracket syntax.
+// If the model already has brackets, the effort parameter is appended; otherwise new brackets are added.
+func (c *Cursor) modelWithEffort(model, effort string) string {
+	// Check if model already has bracket parameters
+	if strings.Contains(model, "[") {
+		// Model like "claude-opus-4-8[context=1m]" becomes "claude-opus-4-8[context=1m,effort=high]"
+		return strings.Replace(model, "]", ",effort="+effort+"]", 1)
+	}
+	// Model like "claude-opus-4-8" becomes "claude-opus-4-8[effort=high]"
+	return model + "[effort=" + effort + "]"
 }
 
 // parseStream consumes the stream and returns what it learned. A line that fails to decode is skipped:
