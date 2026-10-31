@@ -73,30 +73,16 @@ func CursorOutputContract(schema json.RawMessage) string {
 func (c *Cursor) args(req Request) []string {
 	argv := []string{
 		"-p", // --print mode
+		"-f", // force-allow workspace trust (revmux already chose the workdir)
 		"--output-format", "stream-json",
 		"--mode", "ask", // read-only mode for reviews
 	}
+	// Cursor CLI uses effort-suffixed model ids (e.g. gpt-5.3-codex-low) rather than brackets.
+	// Pass the model string as-is; effort should be encoded in the model id itself.
 	if req.Model != "" {
-		model := req.Model
-		// Cursor CLI encodes effort in the model string via brackets: claude-opus-4-8[effort=high]
-		if req.Effort != "" {
-			model = c.modelWithEffort(req.Model, req.Effort)
-		}
-		argv = append(argv, "--model", model)
+		argv = append(argv, "--model", req.Model)
 	}
 	return argv
-}
-
-// modelWithEffort folds effort into the model string using Cursor's bracket syntax.
-// If the model already has brackets, the effort parameter is appended; otherwise new brackets are added.
-func (c *Cursor) modelWithEffort(model, effort string) string {
-	// Check if model already has bracket parameters
-	if strings.Contains(model, "[") {
-		// Model like "claude-opus-4-8[context=1m]" becomes "claude-opus-4-8[context=1m,effort=high]"
-		return strings.Replace(model, "]", ",effort="+effort+"]", 1)
-	}
-	// Model like "claude-opus-4-8" becomes "claude-opus-4-8[effort=high]"
-	return model + "[effort=" + effort + "]"
 }
 
 // parseStream consumes the stream and returns what it learned. A line that fails to decode is skipped:
@@ -120,6 +106,12 @@ func (c *Cursor) parseStream(ctx context.Context, r io.Reader, sink EventSink) R
 		case "result":
 			// Extract structured output and model info from result events
 			res.StructuredOutput = ev.StructuredOutput
+			// Cursor agent CLI embeds findings in the result text field when structured_output is empty
+			if len(res.StructuredOutput) == 0 && ev.Result != "" {
+				if out, err := c.extract(ev.Result); err == nil {
+					res.StructuredOutput = out
+				}
+			}
 			res.ActualModel = ev.actualModel()
 			res.Tokens = ev.tokens()
 			res.TTFTMs = ev.TTFTMs
@@ -133,6 +125,26 @@ func (c *Cursor) parseStream(ctx context.Context, r io.Reader, sink EventSink) R
 		}
 	})
 	return res
+}
+
+// extract pulls the findings JSON out of result text that may carry prose around it. Decoding starts at
+// each brace in turn, and an incomplete tail ends the search rather than continuing into it: a nested
+// object inside a truncated answer would otherwise come back looking like the whole answer.
+func (c *Cursor) extract(result string) (json.RawMessage, error) {
+	for i, ch := range result {
+		if ch != '{' {
+			continue
+		}
+		var out json.RawMessage
+		err := json.NewDecoder(strings.NewReader(result[i:])).Decode(&out)
+		if err == nil {
+			return out, nil
+		}
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			break
+		}
+	}
+	return nil, errors.New("no JSON object in cursor result text")
 }
 
 func (c *Cursor) event(line string) (streamEvent, bool) {

@@ -5,7 +5,8 @@
 **[revmux.com](https://revmux.com)** · [Documentation](https://revmux.com/docs) · [Reference](https://revmux.com/reference) · [Releases](https://github.com/umputun/revmux/releases)
 
 revmux runs a structured multi-agent review. It spawns and supervises `claude --print`, `codex exec` and
-Cursor `agent` subprocesses, then returns findings on stdout as JSON or markdown.
+Cursor `agent` subprocesses, then returns findings on stdout as JSON or markdown. The Cursor executor runs
+`agent -p -f` (force-allow workspace trust) because revmux already chose the workdir.
 
 **It is normally launched by a coding agent rather than typed by you.** The [shipped skill](#agent-skills)
 works out what is under review, writes the context to disk, runs revmux and reads the report back. To that

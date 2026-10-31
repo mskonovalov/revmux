@@ -21,6 +21,7 @@ type streamEvent struct {
 	Type             string                `json:"type"`
 	Subtype          string                `json:"subtype"`
 	StructuredOutput json.RawMessage       `json:"structured_output"`
+	Result           string                `json:"result"` // Cursor agent CLI embeds findings here
 	ModelUsage       map[string]modelUsage `json:"modelUsage"`
 	Usage            *tokenUsage           `json:"usage"`
 	TTFTMs           int                   `json:"ttft_ms"`

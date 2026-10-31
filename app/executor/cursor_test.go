@@ -49,14 +49,16 @@ func TestCursor_args(t *testing.T) {
 
 	argv := call.Args
 	assert.Contains(t, argv, "-p")
+	assert.Contains(t, argv, "-f")
 	assert.Contains(t, argv, "--output-format")
 	assert.Contains(t, argv, "stream-json")
 	assert.Contains(t, argv, "--mode")
 	assert.Contains(t, argv, "ask")
 	assert.Contains(t, argv, "--model")
-	// Effort should be folded into the model string
-	assert.Contains(t, argv, "claude-sonnet-4.5[effort=high]")
+	// Cursor CLI uses effort-suffixed model ids; model string passed as-is
+	assert.Contains(t, argv, "claude-sonnet-4.5")
 	assert.NotContains(t, argv, "--effort")
+	assert.NotContains(t, argv, "[effort=")
 }
 
 func TestCursor_argsMinimal(t *testing.T) {
@@ -73,71 +75,12 @@ func TestCursor_argsMinimal(t *testing.T) {
 	argv := call.Args
 
 	assert.Contains(t, argv, "-p")
+	assert.Contains(t, argv, "-f")
 	assert.Contains(t, argv, "--output-format")
 	assert.Contains(t, argv, "stream-json")
 	assert.Contains(t, argv, "--mode")
 	assert.Contains(t, argv, "ask")
 	assert.NotContains(t, argv, "--model")
-}
-
-func TestCursor_modelWithEffort(t *testing.T) {
-	tests := []struct {
-		name   string
-		model  string
-		effort string
-		want   string
-	}{
-		{
-			name:   "simple model with effort",
-			model:  "claude-opus-4-8",
-			effort: "high",
-			want:   "claude-opus-4-8[effort=high]",
-		},
-		{
-			name:   "model with existing brackets",
-			model:  "claude-opus-4-8[context=1m]",
-			effort: "high",
-			want:   "claude-opus-4-8[context=1m,effort=high]",
-		},
-		{
-			name:   "model with multiple existing params",
-			model:  "claude-opus-4-8[context=1m,fast=false]",
-			effort: "xhigh",
-			want:   "claude-opus-4-8[context=1m,fast=false,effort=xhigh]",
-		},
-		{
-			name:   "no effort leaves model unchanged",
-			model:  "composer-2",
-			effort: "",
-			want:   "composer-2",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			path := writeCursorFixture(t, cursorCleanCapture())
-			runner := fakeRunner("emit", path)
-			c := executor.NewCursor(runner, executor.Opts{})
-
-			req := executor.Request{Prompt: "review", Model: tt.model, Effort: tt.effort}
-			_, err := c.Run(context.Background(), req, discardSink())
-			require.NoError(t, err)
-
-			require.Len(t, runner.CommandCalls(), 1)
-			call := runner.CommandCalls()[0]
-
-			// Find the model argument
-			modelIdx := -1
-			for i, arg := range call.Args {
-				if arg == "--model" && i+1 < len(call.Args) {
-					modelIdx = i + 1
-					break
-				}
-			}
-			require.NotEqual(t, -1, modelIdx, "should have --model flag")
-			assert.Equal(t, tt.want, call.Args[modelIdx])
-		})
-	}
 }
 
 func TestCursor_parseStreamActivity(t *testing.T) {
@@ -165,6 +108,61 @@ func TestCursor_parseStreamActivity(t *testing.T) {
 	assert.Equal(t, "claude-sonnet-4.5", res.ActualModel)
 	assert.Equal(t, 150, res.Tokens) // 100 input + 50 output
 	assert.Equal(t, 250, res.TTFTMs)
+}
+
+func TestCursor_extractFromResultText(t *testing.T) {
+	// Simulate real Cursor agent CLI output with JSON in the result field
+	resultWithProseAndJSON := []byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"Checking the code"}]}}
+{"type":"result","subtype":"success","result":"I reviewed the code and found the following:\n\n{\n  \"findings\": [{\"title\": \"extracted finding\", \"severity\": \"major\", \"lenses\": [\"bugs\"]}]\n}","usage":{"input_tokens":120,"output_tokens":60},"ttft_ms":300}
+`)
+	path := writeCursorFixture(t, resultWithProseAndJSON)
+	runner := fakeRunner("emit", path)
+	c := executor.NewCursor(runner, executor.Opts{})
+
+	req := executor.Request{Prompt: "review"}
+	res, err := c.Run(context.Background(), req, discardSink())
+	require.NoError(t, err)
+
+	// Should have extracted structured output from the result text
+	require.NotNil(t, res.StructuredOutput)
+	var out struct {
+		Findings []struct {
+			Title    string `json:"title"`
+			Severity string `json:"severity"`
+		} `json:"findings"`
+	}
+	require.NoError(t, json.Unmarshal(res.StructuredOutput, &out))
+	require.Len(t, out.Findings, 1)
+	assert.Equal(t, "extracted finding", out.Findings[0].Title)
+	assert.Equal(t, "major", out.Findings[0].Severity)
+
+	// Should have captured model stats
+	assert.Equal(t, 180, res.Tokens) // 120 input + 60 output
+	assert.Equal(t, 300, res.TTFTMs)
+}
+
+func TestCursor_extractFromResultWithFencedJSON(t *testing.T) {
+	// Simulate Cursor output with JSON in fenced code blocks
+	resultFenced := []byte(`{"type":"result","subtype":"success","result":"Analysis complete.\n\n` + "```" + `json\n{\"findings\": [{\"title\": \"fenced finding\", \"severity\": \"minor\", \"lenses\": [\"impl\"]}]}\n` + "```" + `","usage":{"input_tokens":100,"output_tokens":40}}
+`)
+	path := writeCursorFixture(t, resultFenced)
+	runner := fakeRunner("emit", path)
+	c := executor.NewCursor(runner, executor.Opts{})
+
+	req := executor.Request{Prompt: "review"}
+	res, err := c.Run(context.Background(), req, discardSink())
+	require.NoError(t, err)
+
+	// Should extract JSON even when fenced
+	require.NotNil(t, res.StructuredOutput)
+	var out struct {
+		Findings []struct {
+			Title string `json:"title"`
+		} `json:"findings"`
+	}
+	require.NoError(t, json.Unmarshal(res.StructuredOutput, &out))
+	require.Len(t, out.Findings, 1)
+	assert.Equal(t, "fenced finding", out.Findings[0].Title)
 }
 
 func TestCursor_parseStreamTruncated(t *testing.T) {

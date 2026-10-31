@@ -1,6 +1,6 @@
 ---
 description: lightweight Cursor-only review for quick iteration
-model: cursor/composer-2:low
+model: cursor/composer-2.5:low
 agents:
   - {name: bugs, lenses: [bugs], color: cyan}
   - {name: impl, lenses: [impl], color: magenta}
