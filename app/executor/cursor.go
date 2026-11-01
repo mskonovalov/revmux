@@ -101,7 +101,7 @@ func (c *Cursor) isValidAuthFile(path string) bool {
 	}
 
 	// Basic structure validation - should have some auth-related fields
-	authMap, ok := auth.(map[string]interface{})
+	authMap, ok := auth.(map[string]any)
 	return ok && len(authMap) > 0
 }
 
