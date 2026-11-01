@@ -1,29 +1,12 @@
 package main
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestRunningOnGrokBot(t *testing.T) {
-	// Save original environment
-	originalHome := os.Getenv("HOME")
-	originalUser := os.Getenv("USER")
-	originalCluster := os.Getenv("SAND_BOX_CLUSTER")
-	originalID := os.Getenv("SAND_BOX_ID")
-	originalStoreID := os.Getenv("SAND_BOX_STORE_ID")
-	
-	defer func() {
-		// Restore original environment
-		os.Setenv("HOME", originalHome)
-		os.Setenv("USER", originalUser)
-		os.Setenv("SAND_BOX_CLUSTER", originalCluster)
-		os.Setenv("SAND_BOX_ID", originalID)
-		os.Setenv("SAND_BOX_STORE_ID", originalStoreID)
-	}()
-
 	tests := []struct {
 		name        string
 		home        string
@@ -82,28 +65,20 @@ func TestRunningOnGrokBot(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Clear all env vars first
-			os.Unsetenv("HOME")
-			os.Unsetenv("USER")
-			os.Unsetenv("SAND_BOX_CLUSTER")
-			os.Unsetenv("SAND_BOX_ID")
-			os.Unsetenv("SAND_BOX_STORE_ID")
-
-			// Set test environment
 			if tt.home != "" {
-				os.Setenv("HOME", tt.home)
+				t.Setenv("HOME", tt.home)
 			}
 			if tt.user != "" {
-				os.Setenv("USER", tt.user)
+				t.Setenv("USER", tt.user)
 			}
 			if tt.cluster != "" {
-				os.Setenv("SAND_BOX_CLUSTER", tt.cluster)
+				t.Setenv("SAND_BOX_CLUSTER", tt.cluster)
 			}
 			if tt.sandboxID != "" {
-				os.Setenv("SAND_BOX_ID", tt.sandboxID)
+				t.Setenv("SAND_BOX_ID", tt.sandboxID)
 			}
 			if tt.storeID != "" {
-				os.Setenv("SAND_BOX_STORE_ID", tt.storeID)
+				t.Setenv("SAND_BOX_STORE_ID", tt.storeID)
 			}
 
 			got := runningOnGrokBot()
@@ -117,21 +92,6 @@ func TestGrokBotDefaultProfile(t *testing.T) {
 }
 
 func TestGrokBotProfileAlias(t *testing.T) {
-	// Save original environment
-	originalHome := os.Getenv("HOME")
-	originalUser := os.Getenv("USER")
-	originalCluster := os.Getenv("SAND_BOX_CLUSTER")
-	originalID := os.Getenv("SAND_BOX_ID")
-	originalStoreID := os.Getenv("SAND_BOX_STORE_ID")
-	
-	defer func() {
-		os.Setenv("HOME", originalHome)
-		os.Setenv("USER", originalUser)
-		os.Setenv("SAND_BOX_CLUSTER", originalCluster)
-		os.Setenv("SAND_BOX_ID", originalID)
-		os.Setenv("SAND_BOX_STORE_ID", originalStoreID)
-	}()
-
 	tests := []struct {
 		name      string
 		isGrokBot bool
@@ -196,17 +156,10 @@ func TestGrokBotProfileAlias(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Set up environment for test
-			os.Unsetenv("HOME")
-			os.Unsetenv("USER")
-			os.Unsetenv("SAND_BOX_CLUSTER")
-			os.Unsetenv("SAND_BOX_ID")
-			os.Unsetenv("SAND_BOX_STORE_ID")
-
 			if tt.isGrokBot {
-				os.Setenv("HOME", "/home/box")
+				t.Setenv("HOME", "/home/box")
 			} else {
-				os.Setenv("HOME", "/home/alice")
+				t.Setenv("HOME", "/home/alice")
 			}
 
 			got := grokBotProfileAlias(tt.input)

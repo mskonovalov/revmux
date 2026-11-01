@@ -47,7 +47,7 @@ func (c *Cursor) Authenticated(ctx context.Context) (bool, error) {
 	// Check for auth file in standard locations
 	home := os.Getenv("HOME")
 	if home == "" {
-		return false, fmt.Errorf("HOME not set, cannot locate cursor auth")
+		return false, errors.New("HOME not set, cannot locate cursor auth")
 	}
 
 	authPaths := []string{
@@ -56,7 +56,8 @@ func (c *Cursor) Authenticated(ctx context.Context) (bool, error) {
 	}
 
 	for _, path := range authPaths {
-		info, err := os.Stat(path)
+		cleanPath := filepath.Clean(path)
+		info, err := os.Stat(cleanPath)
 		if err == nil && info.Size() > 0 {
 			return true, nil
 		}
