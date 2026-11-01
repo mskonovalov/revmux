@@ -53,33 +53,30 @@ func TestRunningOnGrokBot(t *testing.T) {
 			name:        "not Grok Bot - regular user",
 			home:        "/home/alice",
 			user:        "alice",
+			cluster:     "",
+			sandboxID:   "",
+			storeID:     "",
 			wantGrokBot: false,
 		},
 		{
 			name:        "not Grok Bot - no indicators",
 			home:        "/Users/dev",
 			user:        "dev",
+			cluster:     "",
+			sandboxID:   "",
+			storeID:     "",
 			wantGrokBot: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.home != "" {
-				t.Setenv("HOME", tt.home)
-			}
-			if tt.user != "" {
-				t.Setenv("USER", tt.user)
-			}
-			if tt.cluster != "" {
-				t.Setenv("SAND_BOX_CLUSTER", tt.cluster)
-			}
-			if tt.sandboxID != "" {
-				t.Setenv("SAND_BOX_ID", tt.sandboxID)
-			}
-			if tt.storeID != "" {
-				t.Setenv("SAND_BOX_STORE_ID", tt.storeID)
-			}
+			// Always set all env vars to ensure isolation, even on a real Grok Bot box
+			t.Setenv("HOME", tt.home)
+			t.Setenv("USER", tt.user)
+			t.Setenv("SAND_BOX_CLUSTER", tt.cluster)
+			t.Setenv("SAND_BOX_ID", tt.sandboxID)
+			t.Setenv("SAND_BOX_STORE_ID", tt.storeID)
 
 			got := runningOnGrokBot()
 			assert.Equal(t, tt.wantGrokBot, got)
@@ -156,10 +153,15 @@ func TestGrokBotProfileAlias(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Always set all env vars to ensure isolation, even on a real Grok Bot box
 			if tt.isGrokBot {
 				t.Setenv("HOME", "/home/box")
 			} else {
 				t.Setenv("HOME", "/home/alice")
+				t.Setenv("USER", "")
+				t.Setenv("SAND_BOX_CLUSTER", "")
+				t.Setenv("SAND_BOX_ID", "")
+				t.Setenv("SAND_BOX_STORE_ID", "")
 			}
 
 			got := grokBotProfileAlias(tt.input)

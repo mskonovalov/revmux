@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/umputun/revmux/app/executor"
+	"github.com/umputun/revmux/app/executor/mocks"
 )
 
 // cursorCleanCapture returns a minimal valid Cursor agent stream-json output.
@@ -239,9 +241,79 @@ func TestCursor_parseStreamTruncated(t *testing.T) {
 }
 
 func TestCursor_authenticated(t *testing.T) {
-	// Authentication check assumes binary is available - detailed testing
-	// would require mocking the entire command execution flow
-	t.Skip("Authentication testing requires live binary or complex mocking")
+	tests := []struct {
+		name           string
+		authFileExists bool
+		authFileContent string
+		wantAuth       bool
+		wantErr        bool
+	}{
+		{
+			name:           "valid auth file",
+			authFileExists: true,
+			authFileContent: `{"token":"test-token","user":"test@example.com"}`,
+			wantAuth:       true,
+		},
+		{
+			name:           "empty auth file",
+			authFileExists: true,
+			authFileContent: "",
+			wantAuth:       false,
+		},
+		{
+			name:           "invalid JSON in auth file",
+			authFileExists: true,
+			authFileContent: "not json",
+			wantAuth:       false,
+		},
+		{
+			name:           "no auth file",
+			authFileExists: false,
+			wantAuth:       false,
+		},
+		{
+			name:           "HOME not set",
+			authFileExists: false,
+			wantAuth:       false,
+			wantErr:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.name != "HOME not set" {
+				tmpDir := t.TempDir()
+				t.Setenv("HOME", tmpDir)
+
+				if tt.authFileExists {
+					authDir := filepath.Join(tmpDir, ".cursor")
+					require.NoError(t, os.MkdirAll(authDir, 0755))
+					authPath := filepath.Join(authDir, "auth.json")
+					require.NoError(t, os.WriteFile(authPath, []byte(tt.authFileContent), 0600))
+				}
+			} else {
+				t.Setenv("HOME", "")
+			}
+
+			// Use a mock that fails binary check (offline mode)
+			runner := &mocks.CommandRunnerMock{
+				CommandFunc: func(_ context.Context, _ string, _ ...string) *exec.Cmd {
+					cmd := exec.Command("nonexistent-binary-that-will-fail")
+					return cmd
+				},
+			}
+
+			c := executor.NewCursor(runner, executor.Opts{})
+			got, err := c.Authenticated(context.Background())
+			
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantAuth, got)
+			}
+		})
+	}
 }
 
 func TestCursor_outputContract(t *testing.T) {
