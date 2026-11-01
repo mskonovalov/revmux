@@ -16,7 +16,7 @@ func runningOnGrokBot() bool {
 	// Check for box user and home directory
 	home := os.Getenv("HOME")
 	user := os.Getenv("USER")
-	
+
 	if home == "/home/box" || user == "box" {
 		return true
 	}

@@ -83,6 +83,63 @@ func TestCursor_argsMinimal(t *testing.T) {
 	assert.NotContains(t, argv, "--model")
 }
 
+func TestCursor_argsComposerNoEffort(t *testing.T) {
+	path := writeCursorFixture(t, cursorCleanCapture())
+	runner := fakeRunner("emit", path)
+	c := executor.NewCursor(runner, executor.Opts{})
+
+	tests := []struct {
+		name      string
+		model     string
+		effort    string
+		wantModel string
+	}{
+		{
+			name:      "composer-2.5 with medium effort should not append",
+			model:     "composer-2.5",
+			effort:    "medium",
+			wantModel: "composer-2.5",
+		},
+		{
+			name:      "composer-2.5-fast with low effort should not append",
+			model:     "composer-2.5-fast",
+			effort:    "low",
+			wantModel: "composer-2.5-fast",
+		},
+		{
+			name:      "Composer-2.5 uppercase with high effort should not append",
+			model:     "Composer-2.5",
+			effort:    "high",
+			wantModel: "Composer-2.5",
+		},
+		{
+			name:      "kimi-k3 with high effort should append",
+			model:     "kimi-k3",
+			effort:    "high",
+			wantModel: "kimi-k3-high",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := executor.Request{
+				Prompt: "review this",
+				Model:  tt.model,
+				Effort: tt.effort,
+			}
+			_, err := c.Run(context.Background(), req, discardSink())
+			require.NoError(t, err)
+
+			require.NotEmpty(t, runner.CommandCalls())
+			call := runner.CommandCalls()[len(runner.CommandCalls())-1]
+			argv := call.Args
+
+			assert.Contains(t, argv, "--model")
+			assert.Contains(t, argv, tt.wantModel)
+		})
+	}
+}
+
 func TestCursor_parseStreamActivity(t *testing.T) {
 	path := writeCursorFixture(t, cursorCleanCapture())
 	runner := fakeRunner("emit", path)

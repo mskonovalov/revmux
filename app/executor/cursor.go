@@ -111,11 +111,13 @@ func (c *Cursor) args(req Request) []string {
 		"--output-format", "stream-json",
 		"--mode", "ask", // read-only mode for reviews
 	}
-	// Cursor CLI uses effort-suffixed model ids (e.g. composer-2.5-low, kimi-k3-high).
-	// If the model name doesn't already end with the effort level, append it.
+	// Cursor CLI uses effort-suffixed model ids (e.g. kimi-k3-high, glm-5.2-low).
+	// Composer models are the exception: the catalog has only composer-2.5 and composer-2.5-fast,
+	// with no effort variants, so appending -medium or -low produces a model id the CLI rejects.
 	if req.Model != "" {
 		modelID := req.Model
-		if req.Effort != "" && !strings.HasSuffix(strings.ToLower(req.Model), "-"+strings.ToLower(req.Effort)) {
+		isComposer := strings.HasPrefix(strings.ToLower(req.Model), "composer-")
+		if req.Effort != "" && !isComposer && !strings.HasSuffix(strings.ToLower(req.Model), "-"+strings.ToLower(req.Effort)) {
 			modelID = req.Model + "-" + req.Effort
 		}
 		argv = append(argv, "--model", modelID)

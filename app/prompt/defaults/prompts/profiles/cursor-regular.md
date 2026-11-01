@@ -3,7 +3,7 @@ description: balanced Cursor multi-family full review (Kimi, Composer, Gemini, G
 model: cursor/kimi-k3-high:high
 agents:
   - {name: bugs+impl-kimi, lenses: [bugs, impl], color: cyan}
-  - {name: arch+quality-composer, lenses: [architecture, quality], model: cursor/composer-2.5:medium, color: magenta}
+  - {name: arch+quality-composer, lenses: [architecture, quality], model: cursor/composer-2.5, color: magenta}
   - {name: docs+tests-gemini, lenses: [docs, tests, comments], model: cursor/gemini-4-argon-medium:medium, color: green}
   - {name: adversarial-glm, lenses: [adversarial], model: cursor/glm-5.2-high:high, color: yellow}
 ---

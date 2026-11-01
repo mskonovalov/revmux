@@ -4,7 +4,7 @@ model: cursor/kimi-k3-max:max
 agents:
   - {name: bugs+impl-kimi, lenses: [bugs, impl], color: cyan}
   - {name: arch+quality-gemini, lenses: [architecture, quality], model: cursor/gemini-4-argon-high:high, color: magenta}
-  - {name: docs+tests-composer, lenses: [docs, tests, comments], model: cursor/composer-2.5:medium, color: green}
+  - {name: docs+tests-composer, lenses: [docs, tests, comments], model: cursor/composer-2.5, color: green}
   - {name: adversarial-glm, lenses: [adversarial], model: cursor/glm-5.2-max:max, color: yellow}
 ---
 You are one reviewer on a panel. Other reviewers are working the same change in parallel with

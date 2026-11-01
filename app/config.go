@@ -165,12 +165,12 @@ func parseArgs(args []string) (options, error) {
 		}
 	}
 	o.knobOrigins = origins
-	
+
 	// On Grok Bot, use cursor-regular as the default profile instead of comprehensive
 	if runningOnGrokBot() && origins["profile"] == originDefault {
 		o.Profile = grokBotDefaultProfile()
 	}
-	
+
 	return o, nil
 }
 
@@ -353,7 +353,7 @@ func (o options) promptSet() (*prompt.Set, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load prompts: %w", err)
 	}
-	
+
 	// Apply Grok Bot profile aliases (light -> cursor-light, etc.) only when the profile
 	// came from the default layer. Explicit --profile flags and INI settings are used as-is
 	// so shipped profiles like deep.md are reachable on Grok Bot.
@@ -361,7 +361,7 @@ func (o options) promptSet() (*prompt.Set, error) {
 	if o.knobOrigins["profile"] == originDefault {
 		profileName = grokBotProfileAlias(o.Profile)
 	}
-	
+
 	if _, err := set.Profile(profileName); err != nil {
 		return nil, fmt.Errorf("resolve profile: %w", err)
 	}

@@ -3,7 +3,7 @@ description: low-cost Cursor multi-family review (Kimi, Composer, Gemini, GLM)
 model: cursor/kimi-k3-low:low
 agents:
   - {name: bugs-kimi, lenses: [bugs], color: cyan}
-  - {name: impl-composer, lenses: [impl], model: cursor/composer-2.5-fast:low, color: magenta}
+  - {name: impl-composer, lenses: [impl], model: cursor/composer-2.5-fast, color: magenta}
   - {name: docs+tests-gemini, lenses: [docs, tests], model: cursor/gemini-4-argon-low:low, color: green}
   - {name: adversarial-glm, lenses: [adversarial], model: cursor/glm-5.2-high:high, color: yellow}
 ---

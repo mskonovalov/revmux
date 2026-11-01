@@ -67,39 +67,39 @@ func TestPromptSet_GrokBotProfileAliases(t *testing.T) {
 	dir := isolate(t)
 
 	tests := []struct {
-		name           string
-		isGrokBot      bool
-		profileArg     string
+		name             string
+		isGrokBot        bool
+		profileArg       string
 		expectedResolved string
 	}{
 		{
-			name:           "explicit deep unchanged on Grok Bot (ships as deep.md)",
-			isGrokBot:      true,
-			profileArg:     "deep",
+			name:             "explicit deep unchanged on Grok Bot (ships as deep.md)",
+			isGrokBot:        true,
+			profileArg:       "deep",
 			expectedResolved: "deep",
 		},
 		{
-			name:           "explicit cursor-deep works on Grok Bot",
-			isGrokBot:      true,
-			profileArg:     "cursor-deep",
+			name:             "explicit cursor-deep works on Grok Bot",
+			isGrokBot:        true,
+			profileArg:       "cursor-deep",
 			expectedResolved: "cursor-deep",
 		},
 		{
-			name:           "focused unchanged on Grok Bot",
-			isGrokBot:      true,
-			profileArg:     "focused",
+			name:             "focused unchanged on Grok Bot",
+			isGrokBot:        true,
+			profileArg:       "focused",
 			expectedResolved: "focused",
 		},
 		{
-			name:           "lite profile works off Grok Bot",
-			isGrokBot:      false,
-			profileArg:     "lite",
+			name:             "lite profile works off Grok Bot",
+			isGrokBot:        false,
+			profileArg:       "lite",
 			expectedResolved: "lite",
 		},
 		{
-			name:           "deep unchanged off Grok Bot (resolves to existing deep profile)",
-			isGrokBot:      false,
-			profileArg:     "deep",
+			name:             "deep unchanged off Grok Bot (resolves to existing deep profile)",
+			isGrokBot:        false,
+			profileArg:       "deep",
 			expectedResolved: "deep",
 		},
 	}
