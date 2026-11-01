@@ -62,13 +62,9 @@ func (c *Cursor) Authenticated(ctx context.Context) (bool, error) {
 	}
 
 	// If the agent binary is available, verify auth with a non-interactive status check
+	// If it's not available (offline), fall back to file check alone
 	cmd := c.runner.Command(ctx, "agent", "status")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// Binary not available or status check failed - fall back to file check
-		// Don't fail the whole auth check on a missing binary since offline unit tests need this
-		return authValid, nil
-	}
+	output, _ := cmd.CombinedOutput() // Error ignored: binary unavailable means we trust file check
 
 	// Check if output indicates not logged in
 	outputStr := string(output)
@@ -77,7 +73,13 @@ func (c *Cursor) Authenticated(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 
-	return true, nil
+	// If we got meaningful output, trust it
+	if len(output) > 0 {
+		return true, nil
+	}
+
+	// No output means binary check didn't run - fall back to file check
+	return authValid, nil
 }
 
 // isValidAuthFile checks if the auth.json file exists, is non-empty, and contains valid JSON.
@@ -87,20 +89,20 @@ func (c *Cursor) isValidAuthFile(path string) bool {
 		return false
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path is from standard Cursor auth locations under HOME
 	if err != nil {
 		return false
 	}
 
 	// Validate it's parseable JSON
-	var auth map[string]interface{}
+	var auth any
 	if err := json.Unmarshal(data, &auth); err != nil {
 		return false
 	}
 
 	// Basic structure validation - should have some auth-related fields
-	// (adjust these field names based on actual Cursor auth.json structure)
-	return len(auth) > 0
+	authMap, ok := auth.(map[string]interface{})
+	return ok && len(authMap) > 0
 }
 
 // Login starts the provider's interactive flow on the controlling terminal.

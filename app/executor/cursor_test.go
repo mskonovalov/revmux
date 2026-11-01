@@ -285,12 +285,12 @@ func TestCursor_authenticated(t *testing.T) {
 				tmpDir := t.TempDir()
 				t.Setenv("HOME", tmpDir)
 
-				if tt.authFileExists {
-					authDir := filepath.Join(tmpDir, ".cursor")
-					require.NoError(t, os.MkdirAll(authDir, 0755))
-					authPath := filepath.Join(authDir, "auth.json")
-					require.NoError(t, os.WriteFile(authPath, []byte(tt.authFileContent), 0600))
-				}
+			if tt.authFileExists {
+				authDir := filepath.Join(tmpDir, ".cursor")
+				require.NoError(t, os.MkdirAll(authDir, 0o750))
+				authPath := filepath.Join(authDir, "auth.json")
+				require.NoError(t, os.WriteFile(authPath, []byte(tt.authFileContent), 0o600))
+			}
 			} else {
 				t.Setenv("HOME", "")
 			}
