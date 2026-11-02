@@ -4,8 +4,9 @@
 
 **[revmux.com](https://revmux.com)** · [Documentation](https://revmux.com/docs) · [Reference](https://revmux.com/reference) · [Releases](https://github.com/umputun/revmux/releases)
 
-revmux runs a structured multi-agent review. It spawns and supervises `claude --print` and `codex exec`
-subprocesses, then returns findings on stdout as JSON or markdown.
+revmux runs a structured multi-agent review. It spawns and supervises `claude --print`, `codex exec` and
+Cursor `agent` subprocesses, then returns findings on stdout as JSON or markdown. The Cursor executor runs
+`agent -p -f` (force-allow workspace trust) because revmux already chose the workdir.
 
 **It is normally launched by a coding agent rather than typed by you.** The [shipped skill](#agent-skills)
 works out what is under review, writes the context to disk, runs revmux and reads the report back. To that
@@ -114,13 +115,29 @@ that check and renew that provider's login instead.
 
 `ANTHROPIC_API_KEY` is stripped from the child environment by default so `claude` uses interactive
 subscription auth; pass `--preserve-anthropic-api-key` if you authenticate by key. The stripped list is
-the `strip-env` config key (default `CLAUDECODE,ANTHROPIC_API_KEY`); launched from the Claude desktop app,
-add `CLAUDE_CODE_ENTRYPOINT`, which makes `claude` reject an `apiKeyHelper` key.
+the `strip-env` config key (default `CLAUDECODE,ANTHROPIC_API_KEY,CURSOR_AUTH_TOKEN`); launched from the
+Claude desktop app, add `CLAUDE_CODE_ENTRYPOINT`, which makes `claude` reject an `apiKeyHelper` key.
 `claude` also runs with `--setting-sources project`, so your user `settings.json` is not loaded, and an
 `apiKeyHelper` set there never reaches the agents. Put the helper in the reviewed repo's
 `.claude/settings.json`, or put a `claude` wrapper first on PATH that runs the real binary, by absolute path,
 with `--settings <file>` added. Or list the keys in `claude-user-settings` (e.g. `apiKeyHelper,env`),
 and revmux copies them from your user `settings.json` into every agent on each run.
+
+**Cursor `agent` CLI authentication:** Run `agent login` once on the machine (browser or device link flow).
+This uses the same Cursor session login as the desktop IDE, **not** a `CURSOR_API_KEY` or `CURSOR_AUTH_TOKEN`.
+The sandbox `CURSOR_AUTH_TOKEN` JWT (type session) is not agent-CLI login, and it overrides `~/.cursor/auth.json`
+and breaks the CLI even after a real login. revmux strips `CURSOR_AUTH_TOKEN` from cursor agents automatically
+(via `--strip-env`, default `CLAUDECODE,ANTHROPIC_API_KEY,CURSOR_AUTH_TOKEN`) so no manual unset is required
+
+The Cursor executor passes `-f` (force-allow workspace trust) because revmux already chose the workdir, and
+model IDs as-is without `[effort=...]` brackets—the current CLI rejects bracket syntax. Use effort-suffixed
+model IDs when needed (e.g. `gpt-5.3-codex-low`).
+
+**On Grok Bot / Sand box environments:** When revmux detects it's running on Grok Bot (via `HOME=/home/box`,
+`USER=box`, or Sand box environment variables), the bare default profile is `cursor-regular` instead of
+`comprehensive`. This makes Cursor multi-family profiles (Kimi, Composer, Gemini, GLM) the default on Grok
+without changing behavior for other environments. Explicit `--profile` flags (including `--profile deep` for
+the shipped `deep.md` profile) and INI config settings are used as-is, so all shipped profiles remain reachable.
 
 ## Quick start
 
@@ -276,16 +293,26 @@ codex mix inside one review.
 | `final` | `bugs+impl` plus the codex peer, nothing below major reported |
 | `claude-only` | the same four lens splits on claude, for a machine with no codex |
 | `codex-only` | the same splits on codex, and synthesis and verify with them |
+| `lite` | lightweight cursor-only (`composer-2.5:low`) review with `bugs` and `impl` lenses |
+| `medium` | balanced cursor-only review with four lenses |
+| `deep` | thorough cursor-only review with five lenses and higher effort |
+| `cursor-light` | low-cost multi-family (Kimi, Composer, Gemini, GLM) with four agents |
+| `cursor-regular` | balanced multi-family (Kimi, Composer, Gemini, GLM) with full lens coverage |
+| `cursor-deep` | quality-first multi-family (Kimi, Composer, Gemini, GLM) at higher effort |
 | `grill-me` | two lens splits, each run once on claude and once on codex |
 | `expert` | two agents at xhigh, each carrying all eight code lenses |
 | `triage` | a four-way panel over a filed item rather than a diff |
 
-**The eight are starting points, not the menu.** A profile is a file under `prompts/profiles/`, so dropping
+**The fourteen are starting points, not the menu.** A profile is a file under `prompts/profiles/`, so dropping
 `.revmux/prompts/profiles/release.md` into a project makes `--profile release` work with no registration step
 anywhere. Its roster can be as wide as you are willing to pay for, each entry carries whatever lenses the job
 needs, and any entry can leave the profile's model for its own. Lenses resolve the same way, so a roster
 naming `payments` picks up `.revmux/lenses/payments.md`, written by whoever knows what goes wrong in that
 code.
+
+**Binary requirements:** Most profiles need both `claude` and `codex`. The `claude-only`, `codex-only`, `lite`,
+`medium`, and `deep` profiles need only their named executor. Cursor profiles (`lite`, `medium`, `deep`,
+`cursor-light`, `cursor-regular`, `cursor-deep`) require the Cursor `agent` CLI.
 
 ```yaml
 ---

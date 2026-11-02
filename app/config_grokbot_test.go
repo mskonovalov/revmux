@@ -1,0 +1,182 @@
+package main
+
+import (
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestParseArgs_GrokBotDefaultProfile(t *testing.T) {
+	t.Run("default profile is cursor-regular on Grok Bot", func(t *testing.T) {
+		dir := isolate(t)
+		// Set Grok Bot environment after isolate() so it takes precedence
+		t.Setenv("HOME", "/home/box")
+		t.Setenv("USER", "box")
+
+		o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir})
+		require.NoError(t, err)
+
+		assert.Equal(t, "cursor-regular", o.Profile)
+		assert.Equal(t, originDefault, o.knobOrigins["profile"])
+	})
+
+	t.Run("default profile is comprehensive off Grok Bot", func(t *testing.T) {
+		dir := isolate(t)
+		// isolate() already clears Grok Bot signals and sets USER=tester, HOME to temp dir
+
+		o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir})
+		require.NoError(t, err)
+
+		assert.Equal(t, "comprehensive", o.Profile)
+		assert.Equal(t, originDefault, o.knobOrigins["profile"])
+	})
+
+	t.Run("explicit --profile flag wins on Grok Bot", func(t *testing.T) {
+		dir := isolate(t)
+		// Set Grok Bot environment after isolate()
+		t.Setenv("HOME", "/home/box")
+		t.Setenv("USER", "box")
+
+		o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir, "--profile", "focused"})
+		require.NoError(t, err)
+
+		assert.Equal(t, "focused", o.Profile)
+		assert.Equal(t, originFlag, o.knobOrigins["profile"])
+	})
+
+	t.Run("INI profile setting wins on Grok Bot", func(t *testing.T) {
+		dir := isolate(t)
+		// Set Grok Bot environment after isolate()
+		t.Setenv("HOME", "/home/box")
+		t.Setenv("USER", "box")
+
+		user := filepath.Join(dir, "user")
+		writeConfig(t, user, "profile = comprehensive\n")
+
+		o, err := parseArgs([]string{"--task", "pr-1", "--config-dir", user})
+		require.NoError(t, err)
+
+		assert.Equal(t, "comprehensive", o.Profile)
+		assert.Equal(t, originUser, o.knobOrigins["profile"])
+	})
+}
+
+func TestPromptSet_GrokBotProfileAliases(t *testing.T) {
+	dir := isolate(t)
+
+	tests := []struct {
+		name             string
+		isGrokBot        bool
+		profileArg       string
+		expectedResolved string
+	}{
+		{
+			name:             "explicit deep unchanged on Grok Bot (ships as deep.md)",
+			isGrokBot:        true,
+			profileArg:       "deep",
+			expectedResolved: "deep",
+		},
+		{
+			name:             "explicit cursor-deep works on Grok Bot",
+			isGrokBot:        true,
+			profileArg:       "cursor-deep",
+			expectedResolved: "cursor-deep",
+		},
+		{
+			name:             "focused unchanged on Grok Bot",
+			isGrokBot:        true,
+			profileArg:       "focused",
+			expectedResolved: "focused",
+		},
+		{
+			name:             "lite profile works off Grok Bot",
+			isGrokBot:        false,
+			profileArg:       "lite",
+			expectedResolved: "lite",
+		},
+		{
+			name:             "deep unchanged off Grok Bot (resolves to existing deep profile)",
+			isGrokBot:        false,
+			profileArg:       "deep",
+			expectedResolved: "deep",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set environment based on test case
+			if tt.isGrokBot {
+				t.Setenv("HOME", "/home/box")
+			} else {
+				t.Setenv("HOME", "/home/alice")
+			}
+			t.Setenv("USER", "alice")
+			t.Setenv("SAND_BOX_CLUSTER", "")
+			t.Setenv("SAND_BOX_ID", "")
+			t.Setenv("SAND_BOX_STORE_ID", "")
+
+			o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir, "--profile", tt.profileArg})
+			require.NoError(t, err)
+
+			// promptSet should resolve the profile successfully.
+			// Since --profile is an explicit flag, no alias is applied (origin is originFlag).
+			set, err := o.promptSet()
+			require.NoError(t, err)
+
+			// Explicit flags don't get aliased, so we expect the profile arg as-is
+			assert.Equal(t, tt.expectedResolved, o.Profile)
+
+			profile, err := set.Profile(o.Profile)
+			require.NoError(t, err)
+			assert.NotNil(t, profile)
+		})
+	}
+}
+
+func TestCatalog_GrokBotReportsCorrectProfile(t *testing.T) {
+	t.Run("catalog reports cursor-regular default on Grok Bot", func(t *testing.T) {
+		dir := isolate(t)
+		// Set Grok Bot environment after isolate() so it takes precedence
+		t.Setenv("HOME", "/home/box")
+		t.Setenv("USER", "box")
+
+		o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir})
+		require.NoError(t, err)
+
+		set, err := o.promptSet()
+		require.NoError(t, err)
+
+		cat := o.catalog(set)
+
+		got := map[string]knob{}
+		for _, k := range cat.Knobs {
+			got[k.Name] = k
+		}
+
+		assert.Equal(t, "cursor-regular", got["profile"].Value)
+		assert.Equal(t, originDefault, got["profile"].Source)
+	})
+
+	t.Run("catalog reports comprehensive default off Grok Bot", func(t *testing.T) {
+		dir := isolate(t)
+		// isolate() already clears Grok Bot signals and sets USER=tester, HOME to temp dir
+
+		o, err := parseArgs([]string{"--task", "pr-1", "--tasks-dir", dir})
+		require.NoError(t, err)
+
+		set, err := o.promptSet()
+		require.NoError(t, err)
+
+		cat := o.catalog(set)
+
+		got := map[string]knob{}
+		for _, k := range cat.Knobs {
+			got[k.Name] = k
+		}
+
+		assert.Equal(t, "comprehensive", got["profile"].Value)
+		assert.Equal(t, originDefault, got["profile"].Source)
+	})
+}

@@ -134,10 +134,15 @@ else
 fi
 
 for exe in $executors; do
-    if command -v "$exe" >/dev/null 2>&1; then
-        echo "$exe: $(command -v "$exe")"
+    # cursor executor uses the agent binary
+    binary="$exe"
+    if [ "$exe" = "cursor" ]; then
+        binary="agent"
+    fi
+    if command -v "$binary" >/dev/null 2>&1; then
+        echo "$exe: $(command -v "$binary")"
     else
-        fail "$exe: MISSING - required by this invocation"
+        fail "$exe: MISSING - required by this invocation (binary: $binary)"
     fi
 done
 

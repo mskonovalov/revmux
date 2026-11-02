@@ -143,9 +143,9 @@ not the session happened to be split.
 
 ### Why the launcher forwards PATH
 
-revmux spawns `claude` and `codex` itself, and overlay backends start children from a server process
-whose environment predates the user's shell rc files. Without forwarding, every agent degrades on a
-binary that is plainly installed and the run exits `2`.
+revmux spawns `claude`, `codex`, and `agent` (Cursor) itself, and overlay backends start children from
+a server process whose environment predates the user's shell rc files. Without forwarding, every agent
+degrades on a binary that is plainly installed and the run exits `2`.
 
 `HOME`, `XDG_CONFIG_HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `TMPDIR` are forwarded for the same
 reason — they decide where the CLIs and revmux look for configuration and auth.
@@ -219,6 +219,12 @@ will not read, and an unwritable `./.revmux/` under `revmux init`.
 | `comprehensive` | `bugs+impl`, `arch+quality`, `docs+tests` on claude, plus an adversarial codex peer | default; a real change with real risk |
 | `focused` | one `bugs` agent plus the codex peer | small or time-boxed change, correctness is the concern |
 | `final` | `bugs+impl` plus the codex peer, nothing below major reported | last look before merging |
+| `lite` | `bugs`, `impl` on Cursor `composer-2.5:low` | lightweight Cursor-only, quick iteration |
+| `medium` | `bugs+impl`, `arch+quality`, `docs+tests` on Cursor `composer-2.5` | balanced Cursor-only, mid-tier |
+| `deep` | `bugs+impl`, `arch+quality`, `docs+tests+comments`, `adversarial` on Cursor | thorough Cursor-only, high effort |
+| `cursor-light` | Cursor only, Composer low effort | lightweight multi-model (Grok Bot alias) |
+| `cursor-regular` | Cursor multi-family (Kimi, Composer, Gemini, GLM) | balanced multi-model (Grok Bot default) |
+| `cursor-deep` | Cursor multi-family, high effort | thorough multi-model (Grok Bot alias) |
 | `claude-only` | `bugs+impl`, `arch+quality`, `docs+tests`, `adversarial` — all on claude | codex is unavailable or unwanted |
 | `codex-only` | the same four splits on codex, synthesis and verify included — no claude anywhere | claude is unavailable or unwanted |
 | `grill-me` | `bugs+impl` and `architecture+quality`, each run once on claude and once on codex, every agent reading against the change | the user asked to be grilled; corroboration between two vendors on one lens pair is the point |
@@ -458,9 +464,9 @@ It prints JSON on stdout and writes nothing outside `./.revmux/`:
   template so an upgrade can still move a default the user never set. One carrying an actual setting is
   left alone. Prompt files ship live, because they are the text agents execute
 
-Take the paths from that output. Twelve prompt files and the config is the shipped tree's size, but a
-user with his own lenses has more, and composing a path from this document rather than reading one
-back is how a caller ends up writing a file nothing loads.
+Take the paths from that output. Eighteen prompt files (fourteen profiles, four stages) and the config
+is the shipped tree's size, but a user with his own lenses has more, and composing a path from this
+document rather than reading one back is how a caller ends up writing a file nothing loads.
 
 `--dump-defaults <dir>` is the other direction: it extracts the **embedded** tree at an arbitrary path,
 which is how a customized file is diffed against the shipped one.
@@ -568,9 +574,12 @@ form: the decision is the user's, one task per call.
 
 revmux drives the model CLIs as subprocesses, so the configured ones must be installed:
 
-- `claude` — every lens agent and both model stages run on it by default
+- `agent` (Cursor agent CLI) — needed when a profile, roster entry or stage uses `cursor` executor.
+  `lite`, `medium`, `deep`, `cursor-light`, `cursor-regular`, `cursor-deep` need cursor alone
+- `claude` — every lens agent and both model stages run on it by default in `comprehensive`, `focused`, `final`
 - `codex` — needed when a profile, a roster entry or a stage names it in its `model:`. `claude-only`
-  needs claude alone and `codex-only` needs codex alone; the other six shipped profiles need both.
+  needs claude alone and `codex-only` needs codex alone; `comprehensive`, `focused`, `final`, `grill-me`,
+  `expert`, and `triage` need both claude and codex.
   `preflight.sh <profile>` checks binaries for the profile that will actually run
 
 Before a review round is claimed, revmux checks authentication for the configured roster and enabled
@@ -585,9 +594,11 @@ renew the provider's own login instead.
 `ANTHROPIC_API_KEY` is stripped from the child environment by default so `claude` uses interactive
 subscription auth; `--preserve-anthropic-api-key` passes it through for key-based auth. `CLAUDECODE`
 is always stripped — a `claude` child refuses to start when it believes it is a nested session, which
-is exactly the situation when an agent invokes revmux. Both come from the `strip-env` config key
-(default `CLAUDECODE,ANTHROPIC_API_KEY`); launched from the Claude desktop app, add
-`CLAUDE_CODE_ENTRYPOINT`, under which a `claude` child rejects its `apiKeyHelper` key with "Invalid API key".
+is exactly the situation when an agent invokes revmux. `CURSOR_AUTH_TOKEN` is also stripped, since the
+sandbox JWT (type session) overrides `~/.cursor/auth.json` and breaks the CLI even after a real login.
+All three come from the `strip-env` config key (default `CLAUDECODE,ANTHROPIC_API_KEY,CURSOR_AUTH_TOKEN`);
+launched from the Claude desktop app, add `CLAUDE_CODE_ENTRYPOINT`, under which a `claude` child rejects
+its `apiKeyHelper` key with "Invalid API key".
 
 Agent processes start in their own session, so the terminal never signals them directly; revmux tears
 each process group down itself rather than leaving model CLIs running unsupervised after it exits.

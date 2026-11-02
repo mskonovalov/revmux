@@ -776,6 +776,11 @@ func isolate(t *testing.T) string {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	t.Setenv("HOME", filepath.Join(dir, "home"))
+	// Clear Grok Bot detection signals so tests pass on a real Grok box
+	t.Setenv("USER", "tester")
+	t.Setenv("SAND_BOX_CLUSTER", "")
+	t.Setenv("SAND_BOX_ID", "")
+	t.Setenv("SAND_BOX_STORE_ID", "")
 	return dir
 }
 

@@ -68,7 +68,7 @@ type options struct {
 	Profile       string        `long:"profile" ini-name:"profile" default:"comprehensive" description:"profile naming the roster to run"`
 	CodexSandbox  string        `long:"codex-sandbox" ini-name:"codex-sandbox" choice:"read-only" choice:"workspace-write" choice:"danger-full-access" default:"read-only" description:"sandbox codex agents run their commands under"`
 
-	StripEnv           string `long:"strip-env" ini-name:"strip-env" default:"CLAUDECODE,ANTHROPIC_API_KEY" description:"comma-separated environment variables removed from every agent's environment"`
+	StripEnv           string `long:"strip-env" ini-name:"strip-env" default:"CLAUDECODE,ANTHROPIC_API_KEY,CURSOR_AUTH_TOKEN" description:"comma-separated environment variables removed from every agent's environment"`
 	ClaudeUserSettings string `long:"claude-user-settings" ini-name:"claude-user-settings" description:"comma-separated top-level keys of the user's claude settings.json passed to every claude agent, such as apiKeyHelper,env"`
 	GatewayCheck       string `long:"gateway-check" ini-name:"gateway-check" description:"command that exits 0 while an external model provider's credentials are valid"`
 	GatewayLogin       string `long:"gateway-login" ini-name:"gateway-login" description:"command that logs in to an external model provider"`
@@ -165,6 +165,12 @@ func parseArgs(args []string) (options, error) {
 		}
 	}
 	o.knobOrigins = origins
+
+	// On Grok Bot, use cursor-regular as the default profile instead of comprehensive
+	if runningOnGrokBot() && origins["profile"] == originDefault {
+		o.Profile = grokBotDefaultProfile()
+	}
+
 	return o, nil
 }
 
@@ -347,7 +353,16 @@ func (o options) promptSet() (*prompt.Set, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load prompts: %w", err)
 	}
-	if _, err := set.Profile(o.Profile); err != nil {
+
+	// Apply Grok Bot profile aliases (light -> cursor-light, etc.) only when the profile
+	// came from the default layer. Explicit --profile flags and INI settings are used as-is
+	// so shipped profiles like deep.md are reachable on Grok Bot.
+	profileName := o.Profile
+	if o.knobOrigins["profile"] == originDefault {
+		profileName = grokBotProfileAlias(o.Profile)
+	}
+
+	if _, err := set.Profile(profileName); err != nil {
 		return nil, fmt.Errorf("resolve profile: %w", err)
 	}
 	return set, nil

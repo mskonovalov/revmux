@@ -13,8 +13,9 @@ and get the same review, and change a timeout without touching a prompt.
 
 ```
 prompts/profiles/comprehensive.md   focused.md   final.md   claude-only.md   codex-only.md   grill-me.md
-prompts/profiles/expert.md
-prompts/profiles/triage.md
+prompts/profiles/expert.md   triage.md
+prompts/profiles/lite.md   medium.md   deep.md
+prompts/profiles/cursor-light.md   cursor-regular.md   cursor-deep.md
 prompts/synthesis.md   prompts/verify.md
 lenses/bugs.md  impl.md  architecture.md  quality.md  docs.md  tests.md  comments.md  adversarial.md
 lenses/grounding.md  precedent.md  thesis.md  antithesis.md  cost.md
@@ -60,6 +61,8 @@ claude                   the binary's own default model and effort
 claude/opus:high         fully specified
 codex/gpt-6.1-sol          effort falls back to the profile's, then the binary's
 codex:high               the binary's default model at high effort
+cursor/composer-2.5:low  Cursor agent CLI with effort suffix
+cursor/kimi-k3-high:high effort already in model name
 ```
 
 **The binary leads and is mandatory, which is what makes the value validate itself.**
@@ -203,7 +206,7 @@ See `.claude/rules/pipeline.md`.
 
 ### Executor and lens are orthogonal
 
-A `model:` names `claude` or `codex` and nothing else.
+A `model:` names `claude`, `codex`, or `cursor` (executor), and nothing else.
 Anything else is a **load-time** error with a clear message, never a runtime surprise.
 
 There is no codex-specific prompt file and no per-entry prompt-path override.
@@ -395,7 +398,7 @@ the `revmux config` payload, where an untagged field would emit `URL` rather tha
 - every lens named by a roster entry exists
 - every stage named by a profile's `stages:` block is one the pipeline dispatches — `synthesis` or
   `verify`, not merely a `prompts/*.md` that loaded
-- every `model:` parses: the binary is `claude` or `codex`, and an effort suffix is one of `low`,
+- every `model:` parses: the binary is `claude`, `codex`, or `cursor`, and an effort suffix is one of `low`,
   `medium`, `high`, `xhigh`, `max`. `parseRunner` is the only way a runner is built, so it is the only
   place either vocabulary is checked — a second check elsewhere is unreachable code pretending to guard
 - `color`, when present, is an ANSI-16 name (`red`, `bright-blue`, …) or `#RRGGBB`
